@@ -122,6 +122,7 @@ ZONES: dict[str, dict] = {
         "emitter": "fancoil",
         "bedroom": True,  # camere silenziose (#2b)
         "manuale_switch": "switch.fancoil_camera_gabriele_manuale",
+        "window": "cover.vasistas_gabriele",  # #4 window pause (only wired zone)
     },
     "studio_v": {
         "name": "Studio V",
@@ -337,3 +338,12 @@ DEFAULT_AUTO_WAKE_TIME = "08:00:00"
 PRESENCE_GROUP = "group.presenza_adulti"  # person.mattia_pontacolone + person.ehi
 OPT_AWAY_HOURS = "away_escalation_hours"
 DEFAULT_AWAY_HOURS = 18
+
+# --- Window pause (#4) -------------------------------------------------------
+# An open window/vasistas in a zone pauses that zone's cooling (building_protection)
+# until it closes. Per-zone opening entity is the `window` key in ZONES (only
+# gabriroom wired today; add more `window` entries as contact sensors are fitted).
+# Openings can be a cover (vasistas) or a binary_sensor (contact).
+WINDOW_OPEN_DELAY = timedelta(minutes=1)  # debounce: open this long before pausing
+WINDOW_OPEN_STATES = ("open", "opening", "on")
+WINDOW_CLOSED_STATES = ("closed", "off")

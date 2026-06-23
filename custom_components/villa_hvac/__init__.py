@@ -10,6 +10,7 @@ from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .night import NightController
+from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
 VillaHvacConfigEntry = ConfigEntry[VillaHvacCoordinator]
@@ -32,6 +33,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     away = AwayController(hass, entry)
     away.start()
     entry.async_on_unload(away.stop)
+
+    # Window pause (#4): open window -> pause that zone's cooling.
+    window = WindowController(hass, entry)
+    coordinator.window = window
+    window.start()
+    entry.async_on_unload(window.stop)
 
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 

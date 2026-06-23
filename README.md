@@ -6,10 +6,10 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.5.1 — full house-mode setback, quiet nights, away escalation.**
+> **Status: 0.6.0 — setback, quiet nights, away escalation, window pause.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
-> switch (#10), and the complete #2: house-mode presets (#2a), camere silenziose
-> (#2b), and away auto-escalation (#2c).
+> switch (#10), the complete #2 (house-mode presets, camere silenziose, away
+> escalation), and the #4 window-pause mechanism (gabriroom wired).
 
 ## Why a custom component (and the caveat)
 
@@ -40,7 +40,11 @@ higher maintenance cost of owning a real HA integration.
   on the 2 bedrooms (manuale + fan off, heat-guard, auto-wake); long absence
   auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
   _(Cleanup pending: remove the now-replaced HA automations/scripts.)_
-- [ ] #4 Window-open pause (bidirectional)
+- [~] #4 Window-open pause — mechanism done: an open window pauses that zone's
+  cooling (→ building_protection) after a debounce, restores to the current house
+  mode on close, and stays paused across mode changes. Only `gabriroom`
+  (`cover.vasistas_gabriele`) wired so far; add a `window` entry per zone as
+  contact sensors are fitted.
 - [ ] #3 Fan-stage modulation (pending ETS spike)
 - [ ] #9 PdC demand coalescing
 - [ ] #5/#6 Outdoor shutoff + solar shading
@@ -102,6 +106,7 @@ villa-hvac/
    ├─ controller.py     # house-mode → KNX preset driver (#2a)
    ├─ night.py          # camere silenziose: bedroom silence + heat-guard (#2b)
    ├─ away.py           # away auto-escalation: presence → Via/Casa (#2c)
+   ├─ window.py         # window-open pause per zone (#4)
    ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
    ├─ select.py         # house-mode select: Casa/Via/Notte/Vacanza (#2a)
    ├─ config_flow.py    # single-instance setup + options (night threshold/wake)

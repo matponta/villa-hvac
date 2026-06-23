@@ -76,7 +76,14 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        clima_rientro_in_casa, clima_risincronizza, notte_guardia_caldo_camera_*,
        notte_sveglia_automatica_camere, buonanotte/sveglia scripts. Then add a
        startup re-sync so a restart in Notte re-enters camere silenziose.)
-5. [ ] #4 Window pause (bidirectional) — vasistas/contacts OR EP↔KNX divergence
+5. [~] #4 Window pause — mechanism done (`window.py`): open window → zone cooling
+       paused (building_protection) after debounce; close → restore current house
+       mode; stays paused across mode changes (apply_house_mode skips paused
+       zones). Only `gabriroom` wired (`cover.vasistas_gabriele`). NOTE: the only
+       window-open signals in HA are 3 `cover.vasistas_*` + 1 mystery
+       `binary_sensor.up_sense_contact`; main cooled rooms have none. Add a
+       `window` key per zone as contact sensors get fitted. Known edge: night
+       heat-guard can still run the fan in a window-open bedroom during Notte.
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
 7. [ ] #3 Fan-stage modulation — BLOCKED on ETS spike
 8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt + sun + south/west labels)

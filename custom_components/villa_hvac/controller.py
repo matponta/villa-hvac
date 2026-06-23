@@ -73,6 +73,11 @@ def auto_setback_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "auto_setback") != STATE_OFF
 
 
+def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
+    """True if the zone's #10 enable switch is off."""
+    return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF
+
+
 def current_house_mode(hass: HomeAssistant, entry: ConfigEntry) -> str:
     """Current house-mode select value (defaults to Home if unavailable)."""
     registry = er.async_get(hass)
@@ -99,9 +104,13 @@ async def apply_house_mode(
     if preset is None:
         _LOGGER.warning("Unknown house mode %s; not applying", mode)
         return
+    window = getattr(entry.runtime_data, "window", None)
+    paused = window.paused if window is not None else set()
     for zone_id, climate in controllable_zones():
-        if _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF:
+        if is_zone_disabled(hass, entry, zone_id):
             continue  # #10 disabled this zone -> leave it in building_protection
+        if zone_id in paused:
+            continue  # #4 window open -> keep cooling paused across mode changes
         await hass.services.async_call(
             CLIMATE_DOMAIN,
             SERVICE_SET_PRESET_MODE,
