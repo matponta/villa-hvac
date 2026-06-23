@@ -108,6 +108,8 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.ep_main_bedroom_temperature",
         "ep_occ": "binary_sensor.ep_main_bedroom_occupancy",
         "emitter": "fancoil",
+        "bedroom": True,  # camere silenziose (#2b)
+        "manuale_switch": "switch.fancoil_camera_padronale_manuale",
     },
     "gabriroom": {
         "name": "Camera Gabriele",
@@ -118,6 +120,8 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_a8c8d0_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_a8c8d0_occupancy",
         "emitter": "fancoil",
+        "bedroom": True,  # camere silenziose (#2b)
+        "manuale_switch": "switch.fancoil_camera_gabriele_manuale",
     },
     "studio_v": {
         "name": "Studio V",
@@ -309,3 +313,19 @@ EP_TEMP_OFFSETS: dict[str, dict] = {
     "office": {"offset": -5.0, "verdict": "time"},  # tight stddev -> usable as static
     "stairs_p1": {"offset": 2.6, "verdict": "time"},  # noisy stairwell, provisional
 }
+
+# --- Camere silenziose / night heat-guard (#2b) ------------------------------
+# Bedrooms = ONLY main_bedroom (Padronale) + gabriroom (Gabriele); flagged
+# `bedroom` in ZONES with their `manuale_switch`. (Camera Ospiti is now Studio V,
+# an office -> NOT a bedroom.) Entering Notte silences them (manuale on + fan
+# off); a heat-guard runs the fan at a low stage if the room overheats, then
+# silences again once it cools; leaving Notte (or auto-wake) restores AUTO.
+NIGHT_GUARD_HIGH = timedelta(minutes=3)   # above threshold this long -> low cooling
+NIGHT_GUARD_LOW = timedelta(minutes=10)   # below threshold this long -> silence
+NIGHT_GUARD_FAN_PCT = 33                  # lowest fancoil stage
+
+# Options-flow tunables (entry.options) + defaults.
+OPT_NIGHT_THRESHOLD = "night_heat_threshold"
+OPT_AUTO_WAKE_TIME = "auto_wake_time"
+DEFAULT_NIGHT_THRESHOLD = 26.0            # °C (was input_number.soglia_caldo_notte)
+DEFAULT_AUTO_WAKE_TIME = "08:00:00"

@@ -65,9 +65,10 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        `automation.clima_applica_modalita_casa`). Global `Auto setback` switch
        (default ON); respects #10 (skips disabled zones).
        - [x] #2a house-mode → preset driver
-       - [ ] #2b camere silenziose: 2 bedrooms ONLY (Padronale, Gabriele — Ospiti
+       - [x] #2b camere silenziose: 2 bedrooms ONLY (Padronale, Gabriele — Ospiti
              is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
-             + fan off + heat-guard hysteresis at `input_number.soglia_caldo_notte`.
+             + fan off + heat-guard hysteresis; threshold + auto-wake in options
+             flow (defaults 26 °C / 08:00). See `night.py`.
        - [ ] #2c away auto-escalation (presenza_adulti not_home 18h → Via)
        (Cleanup: delete the embedded HA automations/scripts afterward.)
 5. [ ] #4 Window pause (bidirectional) — vasistas/contacts OR EP↔KNX divergence

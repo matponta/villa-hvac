@@ -25,6 +25,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     DOMAIN,
     HOUSE_MODE_HOME,
+    HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     MODE_PRESET,
     PRESET_CONTROLLABLE_EMITTERS,
@@ -107,3 +108,11 @@ async def apply_house_mode(
             {ATTR_ENTITY_ID: climate, ATTR_PRESET_MODE: preset},
             blocking=True,
         )
+
+    # Camere silenziose overlay for the bedrooms (#2b).
+    night = getattr(entry.runtime_data, "night", None)
+    if night is not None:
+        if mode == HOUSE_MODE_NIGHT:
+            await night.enter()
+        else:
+            await night.exit()

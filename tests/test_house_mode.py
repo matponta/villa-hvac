@@ -59,6 +59,9 @@ async def _select_mode(hass, mode):
 async def test_selecting_night_applies_economy_to_all_controllable(hass):
     await _setup(hass)
     calls = async_mock_service(hass, "climate", "set_preset_mode")
+    # Notte also triggers the camere-silenziose overlay (#2b) on the bedrooms.
+    async_mock_service(hass, "switch", "turn_on")
+    async_mock_service(hass, "fan", "turn_off")
 
     await _select_mode(hass, "Notte")
 
