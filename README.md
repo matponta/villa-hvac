@@ -6,10 +6,10 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.4.0 — diagnostics, sensing, house-mode setback + quiet nights.**
+> **Status: 0.5.0 — full house-mode setback, quiet nights, away escalation.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
-> switch (#10), house-mode select driving KNX presets (#2a), and camere
-> silenziose night silence + heat-guard for the bedrooms (#2b).
+> switch (#10), and the complete #2: house-mode presets (#2a), camere silenziose
+> (#2b), and away auto-escalation (#2c).
 
 ## Why a custom component (and the caveat)
 
@@ -35,11 +35,11 @@ higher maintenance cost of owning a real HA integration.
 - [x] #10 Long-term zone disable (`switch` per zone: off → `building_protection`)
 - [x] #1 Fused zone temperature (`sensor` per zone, thermostat-primary)¹
 - [ ] _circle back_: EP-primary temperature with time-varying offset calibration
-- [~] #2 Occupancy / night setback — **#2a + #2b done**: house-mode `select`
-  (Casa/Via/Notte/Vacanza) drives KNX presets + global `Auto setback` switch;
-  Notte runs *camere silenziose* on the 2 bedrooms (manuale + fan off, heat-guard
-  hysteresis, auto-wake). Tunables in the options flow. #2c away auto-escalation
-  to follow.
+- [x] #2 Occupancy / night setback — house-mode `select` (Casa/Via/Notte/Vacanza)
+  drives KNX presets + global `Auto setback` switch; Notte runs *camere silenziose*
+  on the 2 bedrooms (manuale + fan off, heat-guard, auto-wake); long absence
+  auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
+  _(Cleanup pending: remove the now-replaced HA automations/scripts.)_
 - [ ] #4 Window-open pause (bidirectional)
 - [ ] #3 Fan-stage modulation (pending ETS spike)
 - [ ] #9 PdC demand coalescing
@@ -101,6 +101,7 @@ villa-hvac/
    ├─ temperature.py    # pure temperature-fusion logic (#1)
    ├─ controller.py     # house-mode → KNX preset driver (#2a)
    ├─ night.py          # camere silenziose: bedroom silence + heat-guard (#2b)
+   ├─ away.py           # away auto-escalation: presence → Via/Casa (#2c)
    ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
    ├─ select.py         # house-mode select: Casa/Via/Notte/Vacanza (#2a)
    ├─ config_flow.py    # single-instance setup + options (night threshold/wake)

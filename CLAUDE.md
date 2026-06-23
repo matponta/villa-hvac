@@ -69,8 +69,13 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
              is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
              + fan off + heat-guard hysteresis; threshold + auto-wake in options
              flow (defaults 26 °C / 08:00). See `night.py`.
-       - [ ] #2c away auto-escalation (presenza_adulti not_home 18h → Via)
-       (Cleanup: delete the embedded HA automations/scripts afterward.)
+       - [x] #2c away auto-escalation (presenza_adulti not_home 18h → Via;
+             home → Casa only from auto-Via). Delay in options. See `away.py`.
+       (Cleanup TODO: delete the now-replaced HA automations/scripts —
+       clima_applica_modalita_casa, clima_backup_via_quando_esco,
+       clima_rientro_in_casa, clima_risincronizza, notte_guardia_caldo_camera_*,
+       notte_sveglia_automatica_camere, buonanotte/sveglia scripts. Then add a
+       startup re-sync so a restart in Notte re-enters camere silenziose.)
 5. [ ] #4 Window pause (bidirectional) — vasistas/contacts OR EP↔KNX divergence
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
 7. [ ] #3 Fan-stage modulation — BLOCKED on ETS spike

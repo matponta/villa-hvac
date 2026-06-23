@@ -15,9 +15,11 @@ from homeassistant.core import callback
 
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
+    DEFAULT_AWAY_HOURS,
     DEFAULT_NIGHT_THRESHOLD,
     DOMAIN,
     OPT_AUTO_WAKE_TIME,
+    OPT_AWAY_HOURS,
     OPT_NIGHT_THRESHOLD,
 )
 
@@ -63,6 +65,10 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_AUTO_WAKE_TIME,
                     default=options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME),
                 ): str,
+                vol.Optional(
+                    OPT_AWAY_HOURS,
+                    default=options.get(OPT_AWAY_HOURS, DEFAULT_AWAY_HOURS),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=72)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

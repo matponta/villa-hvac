@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .away import AwayController
 from .const import PLATFORMS
 from .coordinator import VillaHvacCoordinator
 from .night import NightController
@@ -24,6 +25,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     coordinator.night = night
     night.start()
     entry.async_on_unload(night.stop)
+
+    # Away auto-escalation (#2c): presence -> Via / Casa.
+    away = AwayController(hass, entry)
+    away.start()
+    entry.async_on_unload(away.stop)
+
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)

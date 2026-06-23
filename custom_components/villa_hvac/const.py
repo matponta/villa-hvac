@@ -329,3 +329,11 @@ OPT_NIGHT_THRESHOLD = "night_heat_threshold"
 OPT_AUTO_WAKE_TIME = "auto_wake_time"
 DEFAULT_NIGHT_THRESHOLD = 26.0            # °C (was input_number.soglia_caldo_notte)
 DEFAULT_AUTO_WAKE_TIME = "08:00:00"
+
+# --- Away auto-escalation (#2c) ----------------------------------------------
+# After the adults are away this long (while in Casa/Notte) -> Via; when they
+# return and the house is in the auto-set Via, restore Casa. Replaces the legacy
+# automation.clima_backup_via_quando_esco.
+PRESENCE_GROUP = "group.presenza_adulti"  # person.mattia_pontacolone + person.ehi
+OPT_AWAY_HOURS = "away_escalation_hours"
+DEFAULT_AWAY_HOURS = 18
