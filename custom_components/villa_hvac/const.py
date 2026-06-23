@@ -12,8 +12,8 @@ from homeassistant.const import Platform
 
 DOMAIN = "villa_hvac"
 
-# Read-only diagnostics + the first control platform (#10 long-term zone disable).
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
+# Diagnostics + control platforms (#10 zone disable, #1 temp, #2a house mode).
+PLATFORMS: list[Platform] = [Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
 
 # --- KNX climate presets -----------------------------------------------------
 # Setting a thermostat to building_protection drives its fancoil fan to 0 while
@@ -21,6 +21,32 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
 PRESET_BUILDING_PROTECTION = "building_protection"
 # Preset to restore when a zone is re-enabled and we have no captured prior one.
 PRESET_DEFAULT_ENABLED = "comfort"
+
+# --- House mode (#2a) --------------------------------------------------------
+# Integration-owned house-mode select; drives a KNX preset on every thermostat
+# zone. Mapping verified live 2026-06-23 (each preset carries its own setpoint
+# offset: comfort~24, standby +2, economy +4, building_protection = frost/off).
+# Option strings match the legacy input_select.modalita_casa for easy migration.
+HOUSE_MODE_HOME = "Casa"
+HOUSE_MODE_AWAY = "Via"
+HOUSE_MODE_NIGHT = "Notte"
+HOUSE_MODE_VACATION = "Vacanza"
+HOUSE_MODES: list[str] = [
+    HOUSE_MODE_HOME,
+    HOUSE_MODE_AWAY,
+    HOUSE_MODE_NIGHT,
+    HOUSE_MODE_VACATION,
+]
+MODE_PRESET: dict[str, str] = {
+    HOUSE_MODE_HOME: "comfort",
+    HOUSE_MODE_AWAY: "standby",
+    HOUSE_MODE_NIGHT: "economy",
+    HOUSE_MODE_VACATION: PRESET_BUILDING_PROTECTION,
+}
+
+# Zone emitters whose KNX thermostat accepts the comfort/standby/economy ladder
+# (the 17 *_termostato_2). Split-AC zones (aircon_*) are excluded from #2.
+PRESET_CONTROLLABLE_EMITTERS = ("fancoil", "radiant")
 
 # --- Real call signals (KNX) -------------------------------------------------
 CONSENSO_FREDDO = "binary_sensor.ct_consenso_freddo_villa"  # cooling call to PdC

@@ -28,6 +28,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
 from .const import PRESET_BUILDING_PROTECTION, PRESET_DEFAULT_ENABLED, ZONES
+from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,11 +45,49 @@ async def async_setup_entry(
     lever is only verified for fancoils, not radiant or split-AC zones.
     """
     coordinator = entry.runtime_data
-    async_add_entities(
+    entities: list[SwitchEntity] = [AutoSetbackSwitch(entry)]
+    entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
-    )
+    ]
+    async_add_entities(entities)
+
+
+class AutoSetbackSwitch(SwitchEntity, RestoreEntity):
+    """Global enable for the #2 house-mode setback automation (default ON).
+
+    When off, changing the house mode writes nothing. Turning it on re-applies
+    the current mode immediately.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Auto setback"
+    _attr_icon = "mdi:home-clock"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_auto_setback"
+        self._attr_is_on = True  # opt-out, not opt-in
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        # force=True: our own state write may not be readable back yet.
+        await apply_house_mode(
+            self.hass, self._entry, current_house_mode(self.hass, self._entry),
+            force=True,
+        )
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class ZoneEnableSwitch(

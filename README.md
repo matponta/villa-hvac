@@ -6,9 +6,9 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.2.0 — read-only diagnostics + first control & sensing.**
-> Exposes the cooling-demand diagnostic sensor, a per-zone fused temperature
-> sensor (#1) and a per-zone enable switch (#10); more behaviors added incrementally.
+> **Status: 0.3.0 — diagnostics, sensing, and house-mode setback.**
+> Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
+> switch (#10), and a house-mode select that drives KNX presets (#2a).
 
 ## Why a custom component (and the caveat)
 
@@ -34,7 +34,10 @@ higher maintenance cost of owning a real HA integration.
 - [x] #10 Long-term zone disable (`switch` per zone: off → `building_protection`)
 - [x] #1 Fused zone temperature (`sensor` per zone, thermostat-primary)¹
 - [ ] _circle back_: EP-primary temperature with time-varying offset calibration
-- [ ] #2 Occupancy / night setback (preset lever)
+- [~] #2 Occupancy / night setback — **#2a done**: house-mode `select`
+  (Casa/Via/Notte/Vacanza) drives KNX presets (comfort/standby/economy/
+  building_protection) + global `Auto setback` switch. #2b camere silenziose
+  (2 bedrooms) and #2c away auto-escalation to follow.
 - [ ] #4 Window-open pause (bidirectional)
 - [ ] #3 Fan-stage modulation (pending ETS spike)
 - [ ] #9 PdC demand coalescing
@@ -94,6 +97,8 @@ villa-hvac/
    ├─ config_flow.py    # single-instance UI setup
    ├─ coordinator.py    # polls call signals + fancoil demand + fused zone temps
    ├─ temperature.py    # pure temperature-fusion logic (#1)
+   ├─ controller.py     # house-mode → KNX preset driver (#2a)
    ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
-   └─ switch.py         # per-zone enable switch (#10 long-term disable)
+   ├─ select.py         # house-mode select: Casa/Via/Notte/Vacanza (#2a)
+   └─ switch.py         # per-zone enable (#10) + global Auto setback (#2a)
 ```

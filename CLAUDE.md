@@ -59,7 +59,17 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        staleness. EP NOT used for absolute temp (measured ~5 °C, time-correlated
        bias — see `EP_TEMP_OFFSETS`); reserved for occupancy (#2). TODO: circle
        back to EP-primary with time-varying offset.
-4. [ ] #2 Occupancy / night setback — preset lever, guardrail anti short-cycling
+4. [~] #2 Occupancy / night setback. Integration owns a house-mode `select`
+       (Casa/Via/Notte/Vacanza) → KNX presets comfort/standby/economy/
+       building_protection (validated map; replaces legacy
+       `automation.clima_applica_modalita_casa`). Global `Auto setback` switch
+       (default ON); respects #10 (skips disabled zones).
+       - [x] #2a house-mode → preset driver
+       - [ ] #2b camere silenziose: 2 bedrooms ONLY (Padronale, Gabriele — Ospiti
+             is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
+             + fan off + heat-guard hysteresis at `input_number.soglia_caldo_notte`.
+       - [ ] #2c away auto-escalation (presenza_adulti not_home 18h → Via)
+       (Cleanup: delete the embedded HA automations/scripts afterward.)
 5. [ ] #4 Window pause (bidirectional) — vasistas/contacts OR EP↔KNX divergence
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
 7. [ ] #3 Fan-stage modulation — BLOCKED on ETS spike
@@ -82,7 +92,10 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 
 ## Open questions to resolve
 
-- #3: does HA hold a fancoil fan stage, or does KNX re-assert? (likely ETS needed)
+- #3: does HA hold a fancoil fan stage, or does KNX re-assert? PARTIAL ANSWER:
+  there ARE per-fancoil `switch.fancoil_*_manuale` switches (ON = HA holds the
+  fan, KNX won't re-assert) — used by the camere-silenziose logic. Revisit #3
+  with this lever instead of assuming an ETS change is required.
 - Heating (`caldo`) consenso mechanism — radiant zone valves, not fan>0. Verify.
 - ~~Per-zone EP temperature offset calibration values~~ — measured 2026-06-23,
   recorded in `EP_TEMP_OFFSETS`; mostly time-correlated so EP-primary deferred.

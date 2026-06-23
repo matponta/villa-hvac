@@ -32,8 +32,12 @@ async def test_switch_created_only_for_zones_with_climate(hass):
         for z in ZONES.values()
         if z.get("climate") and z.get("emitter") == "fancoil"
     )
-    switches = [s for s in hass.states.async_entity_ids("switch")]
-    assert len(switches) == expected
+    enabled = [
+        s for s in hass.states.async_entity_ids("switch") if s.endswith("_enabled")
+    ]
+    assert len(enabled) == expected
+    # The global #2 auto-setback switch exists alongside the per-zone ones.
+    assert hass.states.get("switch.auto_setback") is not None
     # Kitchen follows the Salotto thermostat (climate is None) -> no switch.
     assert hass.states.get("switch.kitchen_enabled") is None
     # Radiant zones (e.g. lavanderia) are excluded even though they have a climate.
