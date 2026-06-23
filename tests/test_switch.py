@@ -26,11 +26,18 @@ async def test_switch_created_only_for_zones_with_climate(hass):
     """A switch exists for each zone with a thermostat, not for the kitchen."""
     await _setup(hass)
 
-    expected = sum(1 for z in ZONES.values() if z.get("climate"))
+    # Only fancoil zones with a thermostat get a switch (the verified lever).
+    expected = sum(
+        1
+        for z in ZONES.values()
+        if z.get("climate") and z.get("emitter") == "fancoil"
+    )
     switches = [s for s in hass.states.async_entity_ids("switch")]
     assert len(switches) == expected
     # Kitchen follows the Salotto thermostat (climate is None) -> no switch.
     assert hass.states.get("switch.kitchen_enabled") is None
+    # Radiant zones (e.g. lavanderia) are excluded even though they have a climate.
+    assert hass.states.get("switch.lavanderia_enabled") is None
     assert hass.states.get(SWITCH).state == "on"
 
 

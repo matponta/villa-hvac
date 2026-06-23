@@ -51,10 +51,14 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 ## Roadmap (incremental, small testable PRs)
 
 1. [x] 0.1 Phase 0 — read-only KPI sensor
-2. [ ] #10 Long-term zone disable — `switch` per zone (`input_boolean`-like);
-       off → force `building_protection`, keep frost protection
-3. [ ] #1 Fused zone temperature — `sensor` per zone: EP (offset-calibrated) with
-       fallback to the KNX thermostat sensor when EP is unavailable
+2. [x] #10 Long-term zone disable — `switch` per **fancoil** zone;
+       off → force `building_protection`, keep frost protection (radiant/split-AC
+       zones excluded: lever unverified there)
+3. [x] #1 Fused zone temperature — `sensor` per zone, **thermostat-primary**:
+       `sensor.clima_*` twin → climate `current_temperature` fallback, 30-min
+       staleness. EP NOT used for absolute temp (measured ~5 °C, time-correlated
+       bias — see `EP_TEMP_OFFSETS`); reserved for occupancy (#2). TODO: circle
+       back to EP-primary with time-varying offset.
 4. [ ] #2 Occupancy / night setback — preset lever, guardrail anti short-cycling
 5. [ ] #4 Window pause (bidirectional) — vasistas/contacts OR EP↔KNX divergence
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
@@ -80,8 +84,12 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 
 - #3: does HA hold a fancoil fan stage, or does KNX re-assert? (likely ETS needed)
 - Heating (`caldo`) consenso mechanism — radiant zone valves, not fan>0. Verify.
-- Per-zone EP temperature offset calibration values.
-- Per-zone EP temp/occupancy entity_ids to complete in `ZONES`.
+- ~~Per-zone EP temperature offset calibration values~~ — measured 2026-06-23,
+  recorded in `EP_TEMP_OFFSETS`; mostly time-correlated so EP-primary deferred.
+- ~~Per-zone EP temp/occupancy entity_ids~~ — resolved & filled into `ZONES`
+  (`ep_temp`/`ep_occ`). MEDIUM-confidence room matches flagged inline:
+  pianerottolo_p2 (7c59ac), bagno_giochi (5a7d68), bagno_padronale_01/02 (shared
+  626788). cantina_vini split AC has no `clima_*` twin / no reliable offset.
 
 ## Dev / deploy
 

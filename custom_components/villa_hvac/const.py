@@ -6,6 +6,8 @@ cooling consenso turns on when any fancoil fan > 0.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from homeassistant.const import Platform
 
 DOMAIN = "villa_hvac"
@@ -36,80 +38,248 @@ FANCOILS: list[str] = [
     "fan.fancoil_locale_rack",             # Rack + Pianerottolo P1 (dual outlet)
 ]
 
-# --- Zone map (verified 2026-06-23) ------------------------------------------
-# The lever to stop a zone calling = set its KNX thermostat preset to
-# 'building_protection' (validated: drives the fancoil fan to 0 -> consenso off).
-# ep_temp / ep_occ entity_ids to be completed from each EP device where present.
+# --- Zone map (verified live 2026-06-23) -------------------------------------
+# Temperature fusion (#1) is THERMOSTAT-PRIMARY: each zone's fused current
+# temperature reads `temp_sensor` (the clean `sensor.clima_*` twin of the KNX
+# thermostat, or a dedicated room sensor) and falls back to the climate's
+# `current_temperature` attribute when the primary is missing/stale.
+# EP temperature is intentionally NOT the absolute source: measured
+# EP-vs-thermostat offsets are large (~5 C) and vary with time of day
+# (see EP_TEMP_OFFSETS). EP entities are recorded here for occupancy (#2) and a
+# future EP-primary revisit (TODO: circle back to EP calibration).
+#
+# The #10 enable switch is created only for zones with emitter == "fancoil"
+# (the validated building_protection -> fan 0 lever); radiant / split-AC zones
+# are excluded because that lever is not verified for them.
 ZONES: dict[str, dict] = {
     "living_room": {
         "name": "Salotto",
         "floor": "terra",
         "climate": "climate.salotto_termostato_2",
-        "fancoils": ["fan.fancoil_salotto", "fan.fancoil_cucina"],  # kitchen follows salotto
-        "ep_device": "EP Living Room",
+        "temp_sensor": "sensor.clima_salotto",
+        "fancoils": ["fan.fancoil_salotto", "fan.fancoil_cucina"],  # kitchen follows
+        "ep_temp": "sensor.everything_presence_one_626794_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_626794_occupancy",
         "emitter": "fancoil",  # summer
     },
     "kitchen": {
         "name": "Kitchen",
         "floor": "terra",
-        "climate": None,  # open-space: follows Salotto
-        "fancoils": ["fan.fancoil_cucina"],
-        "ep_device": "EP Kitchen",
+        "climate": None,  # open-space: follows Salotto thermostat (no own #10 switch)
         "follows": "living_room",
+        "temp_sensor": "sensor.clima_salotto",
+        "temp_fallback_climate": "climate.salotto_termostato_2",
+        "fancoils": ["fan.fancoil_cucina"],
+        "ep_temp": "sensor.everything_presence_one_626130_temperature",
+        "ep_occ": "binary_sensor.ep_kitchen_occupancy_filtered",
     },
     "main_bedroom": {
         "name": "Camera Padronale",
         "floor": "secondo",
         "climate": "climate.camera_padronale_termostato_2",
+        "temp_sensor": "sensor.clima_camera",
         "fancoils": ["fan.fancoil_camera_padronale"],
-        "ep_device": "EP Main Bedroom",
+        "ep_temp": "sensor.ep_main_bedroom_temperature",
+        "ep_occ": "binary_sensor.ep_main_bedroom_occupancy",
         "emitter": "fancoil",
     },
     "gabriroom": {
         "name": "Camera Gabriele",
         "floor": "secondo",
         "climate": "climate.camera_gabriele_termostato_2",
+        "temp_sensor": "sensor.clima_gabri",
         "fancoils": ["fan.fancoil_camera_gabriele"],
-        "ep_device": "EP GabriRoom",
+        "ep_temp": "sensor.everything_presence_one_a8c8d0_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_a8c8d0_occupancy",
         "emitter": "fancoil",
     },
     "studio_v": {
         "name": "Studio V",
         "floor": "secondo",
         "climate": "climate.studio_v_termostato_2",
+        "temp_sensor": "sensor.clima_studio_v",
         "fancoils": ["fan.fancoil_camera_ospiti"],
-        "ep_device": "EP Studio V",
+        "ep_temp": "sensor.everything_presence_one_a8c910_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_a8c910_occupancy",
         "emitter": "fancoil",
     },
     "sala_giochi": {
         "name": "Sala Giochi",
         "floor": "primo",
         "climate": "climate.sala_giochi_termostato_2",
+        "temp_sensor": "sensor.clima_sala_giochi",
         "fancoils": ["fan.fancoil_sala_giochi"],
-        "ep_device": "EP Sala Giochi",
+        "ep_temp": "sensor.everything_presence_one_616a74_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_616a74_occupancy",
         "emitter": "fancoil",
     },
     "office": {
         "name": "Office (Studio)",
         "floor": "primo",
         "climate": "climate.studio_termostato_2",
+        "temp_sensor": "sensor.clima_studio",
         "fancoils": ["fan.fancoil_studio_pianerottolo_p1"],
-        "ep_device": "EP Office",
+        "ep_temp": "sensor.everything_presence_one_a8c850_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_a8c850_occupancy",
         "emitter": "fancoil",
     },
     "stairs_p1": {
         "name": "Pianerottolo P1",
         "floor": "primo",
         "climate": "climate.pianerottolo_p1_termostato_2",
+        "temp_sensor": "sensor.clima_pianerottolo_p1",
         "fancoils": ["fan.fancoil_locale_rack"],  # rack fancoil also cools P1
-        "ep_device": "EP Stairs P1",
+        "ep_temp": "sensor.everything_presence_one_7c4b0c_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_7c4b0c_occupancy",
         "emitter": "fancoil",
-        "rack_temp": "sensor.rack_t_h_temperature",  # OR condition: rack protection
     },
-    # Radiant-only / no fancoil zones (winter heating): bagni, lavanderia, ingresso,
-    # pianerottolo P2, palestra (also split AC), cantina vini (split AC), garage (split AC).
-    # Added once cooling-side MVP is proven.
+    "rack": {
+        "name": "Locale Rack",
+        "floor": "primo",
+        "climate": None,  # no thermostat/EP -> no #10 switch; cooled by P1 rack fancoil
+        "temp_sensor": "sensor.rack_t_h_temperature",  # dedicated rack T/H probe
+        "fancoils": ["fan.fancoil_locale_rack"],
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "fancoil",
+    },
+    # --- Radiant-only zones (winter heating; cooling not fancoil-gated) --------
+    "pianerottolo_p2": {
+        "name": "Pianerottolo P2",
+        "floor": "secondo",
+        "climate": "climate.pianerottolo_p2_termostato_2",
+        "temp_sensor": "sensor.clima_pianerottolo_p2",
+        "ep_temp": "sensor.everything_presence_one_7c59ac_temperature",  # MEDIUM conf
+        "ep_occ": "binary_sensor.everything_presence_one_7c59ac_occupancy",
+        "emitter": "radiant",
+    },
+    "ingresso": {
+        "name": "Ingresso",
+        "floor": "terra",
+        "climate": "climate.ingresso_termostato_2",
+        "temp_sensor": "sensor.clima_ingresso",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    "lavanderia": {
+        "name": "Lavanderia",
+        "floor": "terra",
+        "climate": "climate.lavanderia_termostato_2",
+        "temp_sensor": "sensor.clima_lavanderia",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    "bagno_gabriele": {
+        "name": "Bagno Gabriele",
+        "floor": "secondo",
+        "climate": "climate.bagno_gabriele_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_gabriele",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    "bagno_giochi": {
+        "name": "Bagno Giochi",
+        "floor": "primo",
+        "climate": "climate.bagno_giochi_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_giochi",
+        "ep_temp": "sensor.everything_presence_one_5a7d68_temperature",  # MEDIUM conf
+        "ep_occ": "binary_sensor.everything_presence_one_5a7d68_occupancy",
+        "emitter": "radiant",
+    },
+    "bagno_ingresso": {
+        "name": "Bagno Ingresso",
+        "floor": "terra",
+        "climate": "climate.bagno_ingresso_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_ingresso",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    "bagno_padronale_01": {
+        "name": "Bagno Padronale 1",
+        "floor": "secondo",
+        "climate": "climate.bagno_padronale_01_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_padronale_01",
+        # EP 626788 covers the shared bagno_camera area (LOW conf; shared with _02)
+        "ep_temp": "sensor.everything_presence_one_626788_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_626788_occupancy",
+        "emitter": "radiant",
+    },
+    "bagno_padronale_02": {
+        "name": "Bagno Padronale 2",
+        "floor": "secondo",
+        "climate": "climate.bagno_padronale_02_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_padronale_02",
+        "ep_temp": "sensor.everything_presence_one_626788_temperature",  # shared, LOW
+        "ep_occ": "binary_sensor.everything_presence_one_626788_occupancy",
+        "emitter": "radiant",
+    },
+    "bagno_palestra": {
+        "name": "Bagno Palestra",
+        "floor": "terra",
+        "climate": "climate.bagno_palestra_termostato_2",
+        "temp_sensor": "sensor.clima_bagno_palestra",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    # --- Split-AC trio (share ONE compressor -> must run in the same mode) -----
+    "palestra": {
+        "name": "Palestra",
+        "floor": "terra",
+        "climate": "climate.palestra_termostato_2",     # radiant thermostat
+        "temp_sensor": "sensor.clima_palestra",
+        "split_climate": "climate.aircon_palestra_2",   # split AC (trio)
+        "ac_group": "split_trio",
+        "ep_temp": None,
+        "ep_occ": None,
+        "emitter": "radiant",
+    },
+    "cantina_vini": {
+        "name": "Cantina Vini",
+        "floor": "terra",
+        "climate": "climate.aircon_cantina_vini_2",     # split AC (trio)
+        "temp_sensor": None,  # no clima_* twin -> uses climate current_temperature
+        "ac_group": "split_trio",
+        "ep_temp": "sensor.ep_cantina_vini_temperature",
+        "ep_occ": "binary_sensor.ep_cantina_vini_occupancy",
+        "emitter": "split_ac",
+    },
+    "garage": {
+        "name": "Garage",
+        "floor": "terra",
+        "climate": "climate.aircon_garage_2",           # split AC (trio)
+        "temp_sensor": None,  # no clima_* twin -> uses climate current_temperature
+        "ac_group": "split_trio",
+        "ep_temp": None,  # EP 3febe8 is 'Garage Grande' (area-ambiguous) -> unmapped
+        "ep_occ": None,
+        "emitter": "split_ac",
+    },
 }
 
 # 3-stage fancoil speeds observed (KNX): low/med/high
 FAN_STAGES = (33, 67, 100)
+
+# A temperature source older than this is treated as stale -> fall back (#1).
+TEMP_STALE_AFTER = timedelta(minutes=30)
+
+# Measured EP-vs-thermostat offsets (offset = thermostat - EP), live 2026-06-23.
+# UNUSED today: #1 is thermostat-primary, so EP is not the absolute source.
+# Kept for the planned EP-primary revisit. Most zones show a large,
+# time-of-day-correlated bias (the EP self-heats while occupied), so a single
+# static offset is only valid where the daily swing is small.
+#   verdict "static" = safe to apply as a constant; "time" = needs a
+#   time-varying correction before EP can be trusted as the absolute source.
+EP_TEMP_OFFSETS: dict[str, dict] = {
+    "living_room": {"offset": -4.9, "verdict": "time"},
+    "kitchen": {"offset": -4.4, "verdict": "time"},
+    "main_bedroom": {"offset": -2.2, "verdict": "time"},
+    "gabriroom": {"offset": 0.7, "verdict": "time"},
+    "studio_v": {"offset": -0.7, "verdict": "time"},
+    "sala_giochi": {"offset": -2.1, "verdict": "static"},
+    "office": {"offset": -5.0, "verdict": "time"},  # tight stddev -> usable as static
+    "stairs_p1": {"offset": 2.6, "verdict": "time"},  # noisy stairwell, provisional
+}

@@ -6,8 +6,9 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.1.0 — Phase 0 skeleton (read-only).**
-> Exposes one diagnostic sensor; control behaviors are added incrementally.
+> **Status: 0.2.0 — read-only diagnostics + first control & sensing.**
+> Exposes the cooling-demand diagnostic sensor, a per-zone fused temperature
+> sensor (#1) and a per-zone enable switch (#10); more behaviors added incrementally.
 
 ## Why a custom component (and the caveat)
 
@@ -31,7 +32,8 @@ higher maintenance cost of owning a real HA integration.
 
 - [x] 0.1 Phase 0: read-only KPI sensor (`Cooling demand zones`)
 - [x] #10 Long-term zone disable (`switch` per zone: off → `building_protection`)
-- [ ] #1 Fused zone temperature (`sensor` per zone: EP + KNX fallback)
+- [x] #1 Fused zone temperature (`sensor` per zone, thermostat-primary)¹
+- [ ] _circle back_: EP-primary temperature with time-varying offset calibration
 - [ ] #2 Occupancy / night setback (preset lever)
 - [ ] #4 Window-open pause (bidirectional)
 - [ ] #3 Fan-stage modulation (pending ETS spike)
@@ -39,6 +41,13 @@ higher maintenance cost of owning a real HA integration.
 - [ ] #5/#6 Outdoor shutoff + solar shading
 - [ ] #7 Anticipatory radiant heating (winter)
 - [ ] #8 Interactive weekend scenes
+
+> ¹ #1 is **thermostat-primary**: the fused temp reads each zone's clean
+> `sensor.clima_*` twin and falls back to the climate `current_temperature`
+> (sources older than 30 min are treated as stale). EP sensors were measured to
+> be ~5 °C biased with a time-of-day-dependent drift, so they are reserved for
+> occupancy (#2); see `EP_TEMP_OFFSETS` in `const.py` for the recorded data and
+> the planned EP-primary revisit.
 
 ## Install (HACS custom repository)
 
@@ -83,7 +92,8 @@ villa-hvac/
    ├─ const.py          # zone map + call signals (verified)
    ├─ __init__.py       # setup/unload, coordinator in runtime_data
    ├─ config_flow.py    # single-instance UI setup
-   ├─ coordinator.py    # polls call signals + fancoil demand
-   ├─ sensor.py         # diagnostic: cooling demand zones
+   ├─ coordinator.py    # polls call signals + fancoil demand + fused zone temps
+   ├─ temperature.py    # pure temperature-fusion logic (#1)
+   ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
    └─ switch.py         # per-zone enable switch (#10 long-term disable)
 ```

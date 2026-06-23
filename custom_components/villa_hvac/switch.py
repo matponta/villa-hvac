@@ -38,12 +38,16 @@ async def async_setup_entry(
     entry: VillaHvacConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create one enable switch for every zone that owns a KNX thermostat."""
+    """Create an enable switch for each fancoil zone that owns a KNX thermostat.
+
+    Restricted to ``emitter == "fancoil"``: the building_protection -> fan 0
+    lever is only verified for fancoils, not radiant or split-AC zones.
+    """
     coordinator = entry.runtime_data
     async_add_entities(
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
-        if zone.get("climate")
+        if zone.get("climate") and zone.get("emitter") == "fancoil"
     )
 
 
