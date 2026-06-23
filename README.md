@@ -6,7 +6,7 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.5.0 — full house-mode setback, quiet nights, away escalation.**
+> **Status: 0.5.1 — full house-mode setback, quiet nights, away escalation.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
 > switch (#10), and the complete #2: house-mode presets (#2a), camere silenziose
 > (#2b), and away auto-escalation (#2c).

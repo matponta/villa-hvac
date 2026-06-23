@@ -86,11 +86,15 @@ class AwayController:
 
     @callback
     def _on_presence(self, event: Event) -> None:
+        old_state = event.data.get("old_state")
         new_state = event.data.get("new_state")
-        state = new_state.state if new_state else None
-        if state == STATE_NOT_HOME:
+        old = old_state.state if old_state else None
+        new = new_state.state if new_state else None
+        if new == old:
+            return  # attribute-only churn: don't reset the absence timer
+        if new == STATE_NOT_HOME:
             self._schedule()
-        elif state == STATE_HOME:
+        elif new == STATE_HOME:
             self._clear_timer()
             self.hass.async_create_task(self._restore())
 

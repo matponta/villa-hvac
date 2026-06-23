@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.core import Event, HomeAssistant
 
 from .away import AwayController
 from .const import PLATFORMS
+from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .night import NightController
 
@@ -34,6 +36,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Re-apply the restored house mode once HA has fully started (re-enters
+    # camere silenziose after a reboot in Notte). Mirrors the legacy
+    # clima_risincronizza; no-op if HA is already running (e.g. options reload).
+    async def _startup_resync(_event: Event) -> None:
+        await apply_house_mode(hass, entry, current_house_mode(hass, entry))
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _startup_resync)
+    )
     return True
 
 
