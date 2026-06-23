@@ -4,7 +4,7 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, PLATFORMS
+from .const import PLATFORMS
 from .coordinator import VillaHvacCoordinator
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data

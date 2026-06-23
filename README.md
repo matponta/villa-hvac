@@ -30,7 +30,7 @@ higher maintenance cost of owning a real HA integration.
 ## Roadmap
 
 - [x] 0.1 Phase 0: read-only KPI sensor (`Cooling demand zones`)
-- [ ] #10 Long-term zone disable (`switch` per zone)
+- [x] #10 Long-term zone disable (`switch` per zone: off → `building_protection`)
 - [ ] #1 Fused zone temperature (`sensor` per zone: EP + KNX fallback)
 - [ ] #2 Occupancy / night setback (preset lever)
 - [ ] #4 Window-open pause (bidirectional)
@@ -53,10 +53,24 @@ here with the real GitHub path (replace `CHANGEME`), and `codeowners`.
 
 ## Dev / deploy loop
 
-Claude authors the code in this repo; deployment to the live HA is manual:
+Develop in **Claude Code** (runs locally with your git/GitHub auth and can deploy
+to `/config`). See [`CLAUDE.md`](./CLAUDE.md) for full project context.
+
+Deployment to the live HA is manual:
 - **Fast loop:** sync `custom_components/villa_hvac/` to `/config/custom_components/`
   (Samba / Studio Code Server App / `git pull`) and restart HA.
 - **Release loop:** tag a GitHub **release**; HACS picks up the new version.
+
+### First-time git push (run locally)
+
+```bash
+cd "<...>/Documents/Claude/Projects/Home Assistant/villa-hvac"
+rm -f .git/index.lock          # clear the stale lock from the sandbox init
+git remote add origin git@github.com:matponta/villa-hvac.git
+git push -u origin main
+# or, with the GitHub CLI:
+# gh repo create villa-hvac --public --source=. --push
+```
 
 ## Layout
 
@@ -70,5 +84,6 @@ villa-hvac/
    ├─ __init__.py       # setup/unload, coordinator in runtime_data
    ├─ config_flow.py    # single-instance UI setup
    ├─ coordinator.py    # polls call signals + fancoil demand
-   └─ sensor.py         # diagnostic: cooling demand zones
+   ├─ sensor.py         # diagnostic: cooling demand zones
+   └─ switch.py         # per-zone enable switch (#10 long-term disable)
 ```

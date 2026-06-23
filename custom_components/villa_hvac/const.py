@@ -10,8 +10,15 @@ from homeassistant.const import Platform
 
 DOMAIN = "villa_hvac"
 
-# Start with read-only diagnostics. Control platforms (switch/number) added later.
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+# Read-only diagnostics + the first control platform (#10 long-term zone disable).
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
+
+# --- KNX climate presets -----------------------------------------------------
+# Setting a thermostat to building_protection drives its fancoil fan to 0 while
+# keeping frost/building protection active (the lever for disabling a zone).
+PRESET_BUILDING_PROTECTION = "building_protection"
+# Preset to restore when a zone is re-enabled and we have no captured prior one.
+PRESET_DEFAULT_ENABLED = "comfort"
 
 # --- Real call signals (KNX) -------------------------------------------------
 CONSENSO_FREDDO = "binary_sensor.ct_consenso_freddo_villa"  # cooling call to PdC

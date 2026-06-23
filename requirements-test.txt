@@ -1,0 +1,4 @@
+# Dev/test dependencies for the villa_hvac custom component.
+# Pin the harness to the matching Home Assistant release (2026.4.x / Python 3.13).
+pytest-homeassistant-custom-component
+ruff
