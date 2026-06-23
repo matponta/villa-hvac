@@ -122,7 +122,6 @@ ZONES: dict[str, dict] = {
         "emitter": "fancoil",
         "bedroom": True,  # camere silenziose (#2b)
         "manuale_switch": "switch.fancoil_camera_gabriele_manuale",
-        "window": "cover.vasistas_gabriele",  # #4 window pause (only wired zone)
     },
     "studio_v": {
         "name": "Studio V",
@@ -201,6 +200,7 @@ ZONES: dict[str, dict] = {
         "ep_temp": None,
         "ep_occ": None,
         "emitter": "radiant",
+        "window": "cover.vasistas_lavanderia",  # #4 window pause
     },
     "bagno_gabriele": {
         "name": "Bagno Gabriele",
@@ -210,6 +210,7 @@ ZONES: dict[str, dict] = {
         "ep_temp": None,
         "ep_occ": None,
         "emitter": "radiant",
+        "window": "cover.vasistas_gabriele",  # #4: vasistas is in the bathroom
     },
     "bagno_giochi": {
         "name": "Bagno Giochi",
@@ -219,6 +220,7 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_5a7d68_temperature",  # MEDIUM conf
         "ep_occ": "binary_sensor.everything_presence_one_5a7d68_occupancy",
         "emitter": "radiant",
+        "window": "cover.vasistas_bagno_sala_giochi",  # #4 window pause
     },
     "bagno_ingresso": {
         "name": "Bagno Ingresso",

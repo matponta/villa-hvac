@@ -79,11 +79,14 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 5. [~] #4 Window pause — mechanism done (`window.py`): open window → zone cooling
        paused (building_protection) after debounce; close → restore current house
        mode; stays paused across mode changes (apply_house_mode skips paused
-       zones). Only `gabriroom` wired (`cover.vasistas_gabriele`). NOTE: the only
-       window-open signals in HA are 3 `cover.vasistas_*` + 1 mystery
-       `binary_sensor.up_sense_contact`; main cooled rooms have none. Add a
-       `window` key per zone as contact sensors get fitted. Known edge: night
-       heat-guard can still run the fan in a window-open bedroom during Notte.
+       zones). Wired: the 3 `cover.vasistas_*` → their radiant zones
+       (vasistas_gabriele is in **bagno_gabriele** NOT gabriroom; bagno_sala_giochi
+       → bagno_giochi; vasistas_lavanderia → lavanderia). NOTE: all 3 are radiant
+       (no summer cooling to pause — useful in winter); the main cooled fancoil
+       rooms have NO window sensor (only those 3 covers + 1 mystery
+       `binary_sensor.up_sense_contact` exist). Add a `window` key per zone as
+       contact sensors get fitted. Known edge: night heat-guard can still run the
+       fan in a window-open bedroom during Notte.
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
 7. [ ] #3 Fan-stage modulation — BLOCKED on ETS spike
 8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt + sun + south/west labels)

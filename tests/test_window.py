@@ -13,13 +13,17 @@ from homeassistant.util import dt as dt_util
 from custom_components.villa_hvac.const import DOMAIN, WINDOW_OPEN_DELAY
 from custom_components.villa_hvac.window import window_zones
 
-WINDOW = "cover.vasistas_gabriele"
-CLIMATE = "climate.camera_gabriele_termostato_2"
+WINDOW = "cover.vasistas_gabriele"  # this vasistas is in the Gabriele BATHROOM
+CLIMATE = "climate.bagno_gabriele_termostato_2"
 
 
-def test_window_zones_maps_gabriroom():
+def test_window_zones_maps_the_three_vasistas():
     mapping = dict(window_zones())
-    assert mapping == {"gabriroom": WINDOW}  # only zone wired today
+    assert mapping == {
+        "bagno_gabriele": "cover.vasistas_gabriele",
+        "bagno_giochi": "cover.vasistas_bagno_sala_giochi",
+        "lavanderia": "cover.vasistas_lavanderia",
+    }
 
 
 async def _setup(hass):

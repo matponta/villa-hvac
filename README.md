@@ -9,7 +9,7 @@ condominial heat-pump signals.
 > **Status: 0.6.0 — setback, quiet nights, away escalation, window pause.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
 > switch (#10), the complete #2 (house-mode presets, camere silenziose, away
-> escalation), and the #4 window-pause mechanism (gabriroom wired).
+> escalation), and the #4 window-pause mechanism (3 vasistas wired).
 
 ## Why a custom component (and the caveat)
 
@@ -42,9 +42,9 @@ higher maintenance cost of owning a real HA integration.
   _(Cleanup pending: remove the now-replaced HA automations/scripts.)_
 - [~] #4 Window-open pause — mechanism done: an open window pauses that zone's
   cooling (→ building_protection) after a debounce, restores to the current house
-  mode on close, and stays paused across mode changes. Only `gabriroom`
-  (`cover.vasistas_gabriele`) wired so far; add a `window` entry per zone as
-  contact sensors are fitted.
+  mode on close, and stays paused across mode changes. Wired for the 3 vasistas
+  (bagno_gabriele, bagno_giochi, lavanderia — all radiant); the main cooled rooms
+  have no window sensor yet — add a `window` entry per zone as they're fitted.
 - [ ] #3 Fan-stage modulation (pending ETS spike)
 - [ ] #9 PdC demand coalescing
 - [ ] #5/#6 Outdoor shutoff + solar shading
