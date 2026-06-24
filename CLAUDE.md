@@ -100,7 +100,9 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        contact sensors get fitted. Known edge: night heat-guard can still run the
        fan in a window-open bedroom during Notte.
 6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
-7. [ ] #3 Fan-stage modulation — BLOCKED on ETS spike
+7. [ ] #3 Fan-stage modulation — UNBLOCKED: use `switch.fancoil_*_manuale` +
+       `fan.set_percentage` (33/67/100) driven by demand/ΔT (no ETS change
+       needed; the manuale lever is proven by #2b's heat-guard).
 8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt + sun + south/west labels)
 9. [ ] #7 Anticipatory radiant heating (winter) — caldo consenso mechanism TBD
 10. [ ] #8 Interactive weekend scenes (actionable notification)
