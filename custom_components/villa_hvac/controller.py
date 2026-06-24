@@ -25,12 +25,18 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     DOMAIN,
+    HOUSE_MODE_AWAY,
     HOUSE_MODE_HOME,
     HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     MODE_PRESET,
-    MODE_SETBACK_OFFSET,
+    OPT_SEASON,
     PRESET_CONTROLLABLE_EMITTERS,
+    SEASON_OFFSET_DEFAULTS,
+    SEASON_OFFSET_OPTS,
+    SEASON_REFERENCE_CLIMATE,
+    SEASON_SUMMER,
+    SEASON_WINTER,
     ZONES,
 )
 
@@ -40,6 +46,35 @@ _LOGGER = logging.getLogger(__name__)
 def preset_for_mode(mode: str) -> str | None:
     """KNX preset for a house mode (None if the mode is unknown)."""
     return MODE_PRESET.get(mode)
+
+
+def current_season(hass: HomeAssistant, entry: ConfigEntry) -> str:
+    """Season for offset selection: options override, else auto from the PdC mode."""
+    forced = entry.options.get(OPT_SEASON)
+    if forced in (SEASON_SUMMER, SEASON_WINTER):
+        return forced
+    state = hass.states.get(SEASON_REFERENCE_CLIMATE)
+    if state is not None and state.state == "heat":
+        return SEASON_WINTER
+    return SEASON_SUMMER
+
+
+def mode_offset(hass: HomeAssistant, entry: ConfigEntry, mode: str) -> float | None:
+    """Setpoint offset for a mode (season-aware, options-editable).
+
+    Casa -> +0; Vacanza -> None (building_protection, no setpoint). Via/Notte use
+    the current season's editable offset.
+    """
+    if mode == HOUSE_MODE_HOME:
+        return 0.0
+    if mode not in (HOUSE_MODE_AWAY, HOUSE_MODE_NIGHT):
+        return None  # Vacanza / unknown
+    season = current_season(hass, entry)
+    default = SEASON_OFFSET_DEFAULTS[season][mode]
+    try:
+        return float(entry.options.get(SEASON_OFFSET_OPTS[season][mode], default))
+    except (TypeError, ValueError):
+        return default
 
 
 def controllable_zones() -> list[tuple[str, str]]:
@@ -122,7 +157,7 @@ async def apply_house_mode(
         return
     window = getattr(entry.runtime_data, "window", None)
     paused = window.paused if window is not None else set()
-    offset = MODE_SETBACK_OFFSET.get(mode)
+    offset = mode_offset(hass, entry, mode)
     setpoint = current_house_setpoint(hass, entry)
     for zone_id, climate in controllable_zones():
         if is_zone_disabled(hass, entry, zone_id):

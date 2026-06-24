@@ -35,8 +35,8 @@ async def test_setpoint_pushes_temperature_to_all_zones(hass):
     assert all(t == 23.0 for t in targeted.values())  # Casa: base + 0
 
 
-async def test_mode_offset_is_added_to_setpoint(hass):
-    await _setup(hass)  # default setpoint 24
+async def test_summer_via_offset(hass):
+    await _setup(hass)  # default setpoint 24; no climate state -> season auto=summer
     async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 
@@ -45,7 +45,23 @@ async def test_mode_offset_is_added_to_setpoint(hass):
     )
     await hass.async_block_till_done()
 
-    # Via = standby = base(24) + 2 = 26 on every controllable zone.
+    # Summer Via = base(24) + 5 = 29 on every controllable zone.
+    assert {c.data["temperature"] for c in temps} == {29.0}
+
+
+async def test_winter_via_offset_when_thermostat_heating(hass):
+    await _setup(hass)  # default setpoint 24
+    # Reference thermostat in heat -> auto season = winter.
+    hass.states.async_set("climate.salotto_termostato_2", "heat")
+    async_mock_service(hass, "climate", "set_preset_mode")
+    temps = async_mock_service(hass, "climate", "set_temperature")
+
+    await hass.services.async_call(
+        "select", "select_option", {"entity_id": SELECT, "option": "Via"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    # Winter Via = base(24) + 2 = 26.
     assert {c.data["temperature"] for c in temps} == {26.0}
 
 

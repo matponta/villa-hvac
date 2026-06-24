@@ -6,7 +6,7 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.7.0 — setback + setpoints, quiet nights, away, window pause.**
+> **Status: 0.8.0 — setback + season-aware setpoints, quiet nights, away, window pause.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
 > switch (#10), the complete #2 (house-mode presets + setpoint push + House
 > setpoint slider, camere silenziose, away escalation), and the #4 window-pause
@@ -39,7 +39,8 @@ higher maintenance cost of owning a real HA integration.
 - [x] #2 Occupancy / night setback — house-mode `select` (Casa/Via/Notte/Vacanza)
   drives KNX presets **and pushes setpoints** + global `Auto setback` switch; a
   `House setpoint` number (dashboard slider) sets the comfort base, and each mode
-  applies `base + offset` (Casa +0 / Via +2 / Notte +4); Notte runs *camere
+  applies `base + offset` with **season-aware, options-editable offsets**
+  (summer Via +5/Notte +3, winter Via +2/Notte +4); Notte runs *camere
   silenziose* (2 bedrooms: manuale + fan off, heat-guard, auto-wake); long absence
   auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
   _(Cleanup pending: remove the now-replaced HA automations/scripts.)_

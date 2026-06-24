@@ -49,14 +49,36 @@ MODE_PRESET: dict[str, str] = {
     HOUSE_MODE_VACATION: PRESET_BUILDING_PROTECTION,
 }
 
-# When a mode is applied we also push set_temperature = house_setpoint + offset
-# (so the integration, not ETS, owns the setpoints). Offsets mirror the measured
-# preset ladder (comfort/standby/economy ≈ +0/+2/+4). Vacanza is omitted: it maps
-# to building_protection (frost), where pushing a setpoint is meaningless.
-MODE_SETBACK_OFFSET: dict[str, float] = {
-    HOUSE_MODE_HOME: 0.0,
-    HOUSE_MODE_AWAY: 2.0,
-    HOUSE_MODE_NIGHT: 4.0,
+# When a mode is applied we also push set_temperature = house_setpoint + offset.
+# Setback DEPTH differs by season (cooling wants deeper away setback than
+# heating), so offsets are season-specific and editable in the options flow.
+# Casa is always +0; Vacanza maps to building_protection (frost) -> no setpoint.
+SEASON_AUTO = "auto"
+SEASON_SUMMER = "summer"
+SEASON_WINTER = "winter"
+# Reference thermostat for auto season detection (state "heat" -> winter).
+SEASON_REFERENCE_CLIMATE = "climate.salotto_termostato_2"
+
+OPT_SEASON = "season"
+OPT_SUMMER_VIA_OFFSET = "summer_via_offset"
+OPT_SUMMER_NOTTE_OFFSET = "summer_notte_offset"
+OPT_WINTER_VIA_OFFSET = "winter_via_offset"
+OPT_WINTER_NOTTE_OFFSET = "winter_notte_offset"
+
+# Defaults: summer (cooling) sets back harder when away; winter (heating) softer.
+SEASON_OFFSET_DEFAULTS: dict[str, dict[str, float]] = {
+    SEASON_SUMMER: {HOUSE_MODE_AWAY: 5.0, HOUSE_MODE_NIGHT: 3.0},
+    SEASON_WINTER: {HOUSE_MODE_AWAY: 2.0, HOUSE_MODE_NIGHT: 4.0},
+}
+SEASON_OFFSET_OPTS: dict[str, dict[str, str]] = {
+    SEASON_SUMMER: {
+        HOUSE_MODE_AWAY: OPT_SUMMER_VIA_OFFSET,
+        HOUSE_MODE_NIGHT: OPT_SUMMER_NOTTE_OFFSET,
+    },
+    SEASON_WINTER: {
+        HOUSE_MODE_AWAY: OPT_WINTER_VIA_OFFSET,
+        HOUSE_MODE_NIGHT: OPT_WINTER_NOTTE_OFFSET,
+    },
 }
 
 # House comfort setpoint slider (number.villa_hvac_house_setpoint) for dashboards.

@@ -18,9 +18,20 @@ from .const import (
     DEFAULT_AWAY_HOURS,
     DEFAULT_NIGHT_THRESHOLD,
     DOMAIN,
+    HOUSE_MODE_AWAY,
+    HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
     OPT_NIGHT_THRESHOLD,
+    OPT_SEASON,
+    OPT_SUMMER_NOTTE_OFFSET,
+    OPT_SUMMER_VIA_OFFSET,
+    OPT_WINTER_NOTTE_OFFSET,
+    OPT_WINTER_VIA_OFFSET,
+    SEASON_AUTO,
+    SEASON_OFFSET_DEFAULTS,
+    SEASON_SUMMER,
+    SEASON_WINTER,
 )
 
 
@@ -69,6 +80,38 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_AWAY_HOURS,
                     default=options.get(OPT_AWAY_HOURS, DEFAULT_AWAY_HOURS),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=72)),
+                vol.Optional(
+                    OPT_SEASON,
+                    default=options.get(OPT_SEASON, SEASON_AUTO),
+                ): vol.In([SEASON_AUTO, SEASON_SUMMER, SEASON_WINTER]),
+                vol.Optional(
+                    OPT_SUMMER_VIA_OFFSET,
+                    default=options.get(
+                        OPT_SUMMER_VIA_OFFSET,
+                        SEASON_OFFSET_DEFAULTS[SEASON_SUMMER][HOUSE_MODE_AWAY],
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    OPT_SUMMER_NOTTE_OFFSET,
+                    default=options.get(
+                        OPT_SUMMER_NOTTE_OFFSET,
+                        SEASON_OFFSET_DEFAULTS[SEASON_SUMMER][HOUSE_MODE_NIGHT],
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    OPT_WINTER_VIA_OFFSET,
+                    default=options.get(
+                        OPT_WINTER_VIA_OFFSET,
+                        SEASON_OFFSET_DEFAULTS[SEASON_WINTER][HOUSE_MODE_AWAY],
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    OPT_WINTER_NOTTE_OFFSET,
+                    default=options.get(
+                        OPT_WINTER_NOTTE_OFFSET,
+                        SEASON_OFFSET_DEFAULTS[SEASON_WINTER][HOUSE_MODE_NIGHT],
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
