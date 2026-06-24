@@ -65,10 +65,12 @@ OPT_SUMMER_NOTTE_OFFSET = "summer_notte_offset"
 OPT_WINTER_VIA_OFFSET = "winter_via_offset"
 OPT_WINTER_NOTTE_OFFSET = "winter_notte_offset"
 
-# Defaults: summer (cooling) sets back harder when away; winter (heating) softer.
+# Defaults: setpoint = base + offset. Summer (cooling) setback = WARMER (positive
+# offset); winter (heating) setback = COOLER (negative offset). So the signs are
+# opposite by season.
 SEASON_OFFSET_DEFAULTS: dict[str, dict[str, float]] = {
     SEASON_SUMMER: {HOUSE_MODE_AWAY: 5.0, HOUSE_MODE_NIGHT: 3.0},
-    SEASON_WINTER: {HOUSE_MODE_AWAY: 2.0, HOUSE_MODE_NIGHT: 4.0},
+    SEASON_WINTER: {HOUSE_MODE_AWAY: -2.0, HOUSE_MODE_NIGHT: -4.0},
 }
 SEASON_OFFSET_OPTS: dict[str, dict[str, str]] = {
     SEASON_SUMMER: {

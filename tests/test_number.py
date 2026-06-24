@@ -61,8 +61,8 @@ async def test_winter_via_offset_when_thermostat_heating(hass):
     )
     await hass.async_block_till_done()
 
-    # Winter Via = base(24) + 2 = 26.
-    assert {c.data["temperature"] for c in temps} == {26.0}
+    # Winter Via = base(24) + (-2) = 22 (heating setback is cooler).
+    assert {c.data["temperature"] for c in temps} == {22.0}
 
 
 async def test_vacation_pushes_no_temperature(hass):

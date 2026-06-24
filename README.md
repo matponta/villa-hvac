@@ -40,7 +40,8 @@ higher maintenance cost of owning a real HA integration.
   drives KNX presets **and pushes setpoints** + global `Auto setback` switch; a
   `House setpoint` number (dashboard slider) sets the comfort base, and each mode
   applies `base + offset` with **season-aware, options-editable offsets**
-  (summer Via +5/Notte +3, winter Via +2/Notte +4); Notte runs *camere
+  (summer Via +5/Notte +3, winter Via −2/Notte −4 — opposite signs since heating
+  setback is cooler); Notte runs *camere
   silenziose* (2 bedrooms: manuale + fan off, heat-guard, auto-wake); long absence
   auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
   _(Cleanup pending: remove the now-replaced HA automations/scripts.)_

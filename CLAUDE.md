@@ -66,8 +66,14 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        `number.villa_hvac_house_setpoint` (dashboard slider) + a SEASON-AWARE
        offset so the integration, not ETS, owns setpoints. Offsets editable in the
        options flow; season auto-detected from the reference thermostat's
-       cool/heat state (or forced via the `season` option). Defaults: summer
-       Via +5 / Notte +3, winter Via +2 / Notte +4 (Casa +0, Vacanza none).
+       cool/heat state (or forced via the `season` option). setpoint = base +
+       offset, so summer (cooling) offsets are POSITIVE and winter (heating)
+       NEGATIVE. Defaults: summer Via +5 / Notte +3, winter Via -2 / Notte -4
+       (Casa +0, Vacanza none).
+       - TODO: per-room comfort override. The single house setpoint flattens
+         per-room comfort tuning (matches legacy `temperatura_casa`); add optional
+         per-zone setpoint controls (e.g. a number per zone, or a per-zone offset
+         from the house base) so rooms can differ.
        Global `Auto setback` switch (default ON); respects #10 (skips disabled
        zones) and #4 (skips window-paused zones).
        - [x] #2a house-mode → preset driver
