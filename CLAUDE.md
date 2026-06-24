@@ -20,19 +20,64 @@ Target: Home Assistant **2026.4.3** (Python 3.13). Single instance, config-flow.
   *mode* (cool/heat). The real call signals are KNX binary_sensors:
   - `binary_sensor.ct_consenso_freddo_villa` — cooling call
   - `binary_sensor.ct_consenso_caldo_villa` — heating call
-- **Cooling consenso turns ON when any fancoil fan > 0.** So a zone's cooling
-  demand == its fancoil `percentage > 0`.
-- **The lever (NO ETS needed):** setting a KNX thermostat preset to
-  `building_protection` drives its fancoil fan to **0** → cooling consenso drops
-  off after a **~1–2 min KNX off-delay**. Verified house-wide on all 6
-  fancoil-driving thermostats. This is how #2/#9/#10 gate the call.
-- Fancoils are **3-speed** (33/67/100 = low/med/high). HA `fan.set_percentage`
-  is accepted but the KNX actuator **quantizes** it and likely **re-asserts** on
-  its own control cycle → continuous smooth modulation (#3) probably needs an
-  **ETS change** (fan from external value). STILL OPEN — verify before building #3.
+- **CORRECTION (ETS-verified 2026-06-24): fan % is NOT the cooling-demand
+  signal.** The real per-room cooling actuator is the fancoil **chilled-water
+  valve (EV FAN, on/off)** — see "Cooling actuation" below. The fan runs ~constant
+  100% in AUTO (its commanded % only "holds" in MANUAL); the valve cycles to hold
+  setpoint. So `fan.percentage>0` ≠ demand; the **valve state (4/7/x)** is demand.
+- **The disable lever:** setting a KNX thermostat preset to `building_protection`
+  drives the zone off → cooling consenso drops after a **~1–2 min KNX off-delay**
+  (how #10 gates a zone). Note presets and the `temperature` setpoint are
+  INDEPENDENT on these climates (changing preset doesn't change `temperature`).
+- **#3 fan-stage modulation is moot:** the water valve is on/off and the fan is
+  constant — there is no per-room "cooling intensity" to modulate. Drop #3.
 - KNX climates: `hvac_modes: [cool, heat]` (no `off`), `supported_features: 17`
   (target temp + preset), presets `[building_protection, auto, economy, comfort,
   standby]`. Fan speed is a **separate `fan.*` entity**, not on the climate.
+
+## Cooling actuation — the real signal chain (ETS-verified 2026-06-24)
+
+From `../knx/GroupAddressesReport_2026-03-12` (group 4 VALVOLE):
+- **EV FAN water valves = per-room cooling demand/actuator** (on/off OPEN-CLOSE):
+  command `4/6/x`, **state `4/7/x`**. Local index x: Salotto 1 · Studio+P1 2 ·
+  Rack 3 · Sala Giochi 4 · Cucina 10 · Padronale 11 · Ospiti 12 · Gabriele 13.
+  Valve OPEN = that room is actually cooling. **This is the true demand signal**
+  (exposed as `binary_sensor.fancoil_*_valvola` via `knx/knx_fancoil_valves.yaml`).
+- `consenso_freddo` (2/1/213) ≈ **OR of the EV FAN valves** → PdC chilled water.
+- **Central lever: Consenso Freddo BLOCCO `2/2/213`** — force-stop the villa
+  cooling call (exposed as `switch.ct_blocco_freddo_villa`). ⚠️ verify polarity
+  (block vs enable) live before actuating. This is #9's real actuator.
+- EV HEAT valves (4/0/4/1) are the **winter radiant** testine — not cooling.
+- Season changeover per thermostat `7/6/x` (cooling/heating) + global `0/0/5`
+  ESTATE / `0/0/6` INVERNO.
+- **Thermal mass, not capacity:** camera_padronale best-case (evening, ~0 sun,
+  fan 100%) cooled a steady **~0.85 °C/h with no plateau** 26.6→25.9 over 50 min.
+  Rooms are mass-bound (soaked at ~26 all day), not capacity-limited → levers are
+  anticipatory pre-cool + shading (#6), not fan tricks. (Peak-sun rate: see the
+  scheduled 2026-06-25 16:00 test.)
+
+## Summer cooling control plan (valve-based) — supersedes old #3/#9 framing
+
+OBJECTIVE: keep the villa in a summer temperature envelope efficiently (fewer/
+longer compressor runs, quieter, mass-aware), driven by the REAL signals —
+per-room EV FAN valves + the central Consenso BLOCCO — letting the KNX thermostats
+do local bang-bang regulation.
+
+- **Stage 1 — expose signals+lever in HA (KNX yaml).** 8× `binary_sensor` valve
+  state (4/7/x) = real demand; 1× `switch` BLOCCO (2/2/213) = central lever. File:
+  `knx/knx_fancoil_valves.yaml`; user pastes → reload KNX; then wire entity_ids
+  into `villa_hvac` (`cool_valve` per zone, `CONSENSO_BLOCCO`).
+- **Stage 2 — measure on the real signals.** Re-run demand analysis on 4/7/x
+  (true per-room duty cycle, staggering, valve↔consenso); fold in the
+  camera_padronale mass tests (best-case + peak). Output: data to design control.
+- **Stage 3 — design control law (data-grounded, user-reviewed).** Per-room =
+  setpoint/preset only (#2, done). Central = PdC duty-cycle via BLOCCO (rest
+  windows when in-envelope + comfort override + weather feed-forward). Load =
+  anticipatory pre-cool + shading (#6).
+- **Stage 4 — implement** in the integration: consume valve binary_sensors as
+  demand; coalescing/duty controller actuating BLOCCO; envelope+pre-cool. Opt-in,
+  guardrailed, tested, versioned.
+- **Stage 5 — validate live + tune.**
 
 ## Architecture
 
@@ -99,10 +144,11 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        `binary_sensor.up_sense_contact` exist). Add a `window` key per zone as
        contact sensors get fitted. Known edge: night heat-guard can still run the
        fan in a window-open bedroom during Notte.
-6. [ ] #9 Demand coalescing — batch single-zone calls (the ~1–2 min off-delay helps)
-7. [ ] #3 Fan-stage modulation — UNBLOCKED: use `switch.fancoil_*_manuale` +
-       `fan.set_percentage` (33/67/100) driven by demand/ΔT (no ETS change
-       needed; the manuale lever is proven by #2b's heat-guard).
+6. [~] #9 Demand coalescing → reborn as **central cooling duty-cycle via the
+       Consenso BLOCCO (2/2/213)**, driven by real valve demand + weather. See
+       "Summer cooling control plan" above. Stage 1 = expose valves+BLOCCO.
+7. [x] ~~#3 Fan-stage modulation~~ DROPPED — water valve is on/off, fan is
+       constant; no per-room cooling intensity to modulate (ETS-verified).
 8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt + sun + south/west labels)
 9. [ ] #7 Anticipatory radiant heating (winter) — caldo consenso mechanism TBD
 10. [ ] #8 Interactive weekend scenes (actionable notification)

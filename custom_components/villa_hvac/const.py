@@ -97,6 +97,25 @@ PRESET_CONTROLLABLE_EMITTERS = ("fancoil", "radiant")
 CONSENSO_FREDDO = "binary_sensor.ct_consenso_freddo_villa"  # cooling call to PdC
 CONSENSO_CALDO = "binary_sensor.ct_consenso_caldo_villa"    # heating call to PdC
 
+# --- #9 valve-based cooling signals (Stage 1; verify entity_ids after reload) -
+# The REAL per-room cooling demand is the fancoil chilled-water valve (EV FAN,
+# on/off), exposed via knx/knx_fancoil_valves.yaml. ON = valve open = cooling.
+# (fan.percentage is NOT demand — it runs constant in AUTO.)
+COOL_VALVES: dict[str, str] = {
+    "living_room": "binary_sensor.fancoil_salotto_valvola",
+    "kitchen": "binary_sensor.fancoil_cucina_valvola",
+    "main_bedroom": "binary_sensor.fancoil_camera_padronale_valvola",
+    "gabriroom": "binary_sensor.fancoil_camera_gabriele_valvola",
+    "studio_v": "binary_sensor.fancoil_camera_ospiti_valvola",
+    "sala_giochi": "binary_sensor.fancoil_sala_giochi_valvola",
+    "office": "binary_sensor.fancoil_studio_pianerottolo_p1_valvola",
+    "stairs_p1": "binary_sensor.fancoil_locale_rack_valvola",  # rack fancoil cools P1
+    "rack": "binary_sensor.fancoil_locale_rack_valvola",
+}
+# Central lever (#9): force-stop the villa cooling call to the PdC.
+# WARNING: verify polarity (block vs enable) live before actuating.
+CONSENSO_BLOCCO = "switch.ct_blocco_freddo_villa"
+
 # Cooling demand of a zone == its fancoil fan percentage > 0.
 FANCOILS: list[str] = [
     "fan.fancoil_salotto",
