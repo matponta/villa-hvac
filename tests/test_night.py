@@ -86,6 +86,7 @@ async def _select_mode(hass, mode):
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
     await _setup(hass)
     async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
     sw_on = async_mock_service(hass, "switch", "turn_on")
     sw_off = async_mock_service(hass, "switch", "turn_off")
     fan_off = async_mock_service(hass, "fan", "turn_off")

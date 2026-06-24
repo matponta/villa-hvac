@@ -16,9 +16,10 @@ from homeassistant.components.climate import (
     ATTR_PRESET_MODE,
     DOMAIN as CLIMATE_DOMAIN,
     SERVICE_SET_PRESET_MODE,
+    SERVICE_SET_TEMPERATURE,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID, STATE_OFF
+from homeassistant.const import ATTR_ENTITY_ID, ATTR_TEMPERATURE, STATE_OFF
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
@@ -28,6 +29,7 @@ from .const import (
     HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     MODE_PRESET,
+    MODE_SETBACK_OFFSET,
     PRESET_CONTROLLABLE_EMITTERS,
     ZONES,
 )
@@ -90,6 +92,20 @@ def current_house_mode(hass: HomeAssistant, entry: ConfigEntry) -> str:
     return HOUSE_MODE_HOME
 
 
+def current_house_setpoint(hass: HomeAssistant, entry: ConfigEntry) -> float | None:
+    """House comfort setpoint from the number entity (None if unavailable)."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        "number", DOMAIN, f"{entry.entry_id}_house_setpoint"
+    )
+    if entity_id and (state := hass.states.get(entity_id)) is not None:
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 async def apply_house_mode(
     hass: HomeAssistant, entry: ConfigEntry, mode: str, *, force: bool = False
 ) -> None:
@@ -106,6 +122,8 @@ async def apply_house_mode(
         return
     window = getattr(entry.runtime_data, "window", None)
     paused = window.paused if window is not None else set()
+    offset = MODE_SETBACK_OFFSET.get(mode)
+    setpoint = current_house_setpoint(hass, entry)
     for zone_id, climate in controllable_zones():
         if is_zone_disabled(hass, entry, zone_id):
             continue  # #10 disabled this zone -> leave it in building_protection
@@ -117,6 +135,14 @@ async def apply_house_mode(
             {ATTR_ENTITY_ID: climate, ATTR_PRESET_MODE: preset},
             blocking=True,
         )
+        # Push the setpoint too (skip building_protection / Vacanza: frost-fixed).
+        if offset is not None and setpoint is not None:
+            await hass.services.async_call(
+                CLIMATE_DOMAIN,
+                SERVICE_SET_TEMPERATURE,
+                {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: round(setpoint + offset, 1)},
+                blocking=True,
+            )
 
     # Camere silenziose overlay for the bedrooms (#2b).
     night = getattr(entry.runtime_data, "night", None)

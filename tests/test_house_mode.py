@@ -59,6 +59,7 @@ async def _select_mode(hass, mode):
 async def test_selecting_night_applies_economy_to_all_controllable(hass):
     await _setup(hass)
     calls = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
     # Notte also triggers the camere-silenziose overlay (#2b) on the bedrooms.
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "fan", "turn_off")
@@ -88,6 +89,7 @@ async def test_auto_setback_off_writes_nothing(hass):
 async def test_disabled_zone_is_skipped(hass):
     await _setup(hass)
     calls = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
     # #10-disable one zone (this itself sets building_protection on it).
     await hass.services.async_call(
         "switch", "turn_off",

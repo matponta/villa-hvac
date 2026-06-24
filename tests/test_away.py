@@ -45,6 +45,7 @@ async def _setup(hass):
 async def test_long_absence_escalates_to_via(hass):
     await _setup(hass)  # mode defaults to Casa
     async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
 
     hass.states.async_set(PRESENCE_GROUP, "not_home")
     await hass.async_block_till_done()
@@ -58,6 +59,7 @@ async def test_long_absence_escalates_to_via(hass):
 async def test_brief_absence_does_not_escalate(hass):
     await _setup(hass)
     async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
 
     hass.states.async_set(PRESENCE_GROUP, "not_home")
     await hass.async_block_till_done()
@@ -70,6 +72,7 @@ async def test_brief_absence_does_not_escalate(hass):
 async def test_return_home_restores_casa_from_via(hass):
     await _setup(hass)
     async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
     await hass.services.async_call(
         "select", "select_option", {"entity_id": SELECT, "option": "Via"}, blocking=True
     )

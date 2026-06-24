@@ -13,7 +13,12 @@ from homeassistant.const import Platform
 DOMAIN = "villa_hvac"
 
 # Diagnostics + control platforms (#10 zone disable, #1 temp, #2a house mode).
-PLATFORMS: list[Platform] = [Platform.SELECT, Platform.SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [
+    Platform.NUMBER,
+    Platform.SELECT,
+    Platform.SENSOR,
+    Platform.SWITCH,
+]
 
 # --- KNX climate presets -----------------------------------------------------
 # Setting a thermostat to building_protection drives its fancoil fan to 0 while
@@ -43,6 +48,22 @@ MODE_PRESET: dict[str, str] = {
     HOUSE_MODE_NIGHT: "economy",
     HOUSE_MODE_VACATION: PRESET_BUILDING_PROTECTION,
 }
+
+# When a mode is applied we also push set_temperature = house_setpoint + offset
+# (so the integration, not ETS, owns the setpoints). Offsets mirror the measured
+# preset ladder (comfort/standby/economy ≈ +0/+2/+4). Vacanza is omitted: it maps
+# to building_protection (frost), where pushing a setpoint is meaningless.
+MODE_SETBACK_OFFSET: dict[str, float] = {
+    HOUSE_MODE_HOME: 0.0,
+    HOUSE_MODE_AWAY: 2.0,
+    HOUSE_MODE_NIGHT: 4.0,
+}
+
+# House comfort setpoint slider (number.villa_hvac_house_setpoint) for dashboards.
+DEFAULT_HOUSE_SETPOINT = 24.0
+HOUSE_SETPOINT_MIN = 16.0
+HOUSE_SETPOINT_MAX = 28.0
+HOUSE_SETPOINT_STEP = 0.5
 
 # Zone emitters whose KNX thermostat accepts the comfort/standby/economy ladder
 # (the 17 *_termostato_2). Split-AC zones (aircon_*) are excluded from #2.

@@ -6,10 +6,11 @@ solar shading, demand coalescing and long-term zone disable — driven by the
 Everything Presence One sensors, the Ecowitt weather station and the S5A
 condominial heat-pump signals.
 
-> **Status: 0.6.0 — setback, quiet nights, away escalation, window pause.**
+> **Status: 0.7.0 — setback + setpoints, quiet nights, away, window pause.**
 > Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
-> switch (#10), the complete #2 (house-mode presets, camere silenziose, away
-> escalation), and the #4 window-pause mechanism (3 vasistas wired).
+> switch (#10), the complete #2 (house-mode presets + setpoint push + House
+> setpoint slider, camere silenziose, away escalation), and the #4 window-pause
+> mechanism (3 vasistas wired).
 
 ## Why a custom component (and the caveat)
 
@@ -36,8 +37,10 @@ higher maintenance cost of owning a real HA integration.
 - [x] #1 Fused zone temperature (`sensor` per zone, thermostat-primary)¹
 - [ ] _circle back_: EP-primary temperature with time-varying offset calibration
 - [x] #2 Occupancy / night setback — house-mode `select` (Casa/Via/Notte/Vacanza)
-  drives KNX presets + global `Auto setback` switch; Notte runs *camere silenziose*
-  on the 2 bedrooms (manuale + fan off, heat-guard, auto-wake); long absence
+  drives KNX presets **and pushes setpoints** + global `Auto setback` switch; a
+  `House setpoint` number (dashboard slider) sets the comfort base, and each mode
+  applies `base + offset` (Casa +0 / Via +2 / Notte +4); Notte runs *camere
+  silenziose* (2 bedrooms: manuale + fan off, heat-guard, auto-wake); long absence
   auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
   _(Cleanup pending: remove the now-replaced HA automations/scripts.)_
 - [~] #4 Window-open pause — mechanism done: an open window pauses that zone's
@@ -109,6 +112,7 @@ villa-hvac/
    ├─ window.py         # window-open pause per zone (#4)
    ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
    ├─ select.py         # house-mode select: Casa/Via/Notte/Vacanza (#2a)
+   ├─ number.py         # house comfort-setpoint slider (#2 setpoint push)
    ├─ config_flow.py    # single-instance setup + options (night threshold/wake)
    └─ switch.py         # per-zone enable (#10) + global Auto setback (#2a)
 ```

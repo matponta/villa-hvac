@@ -62,8 +62,11 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 4. [~] #2 Occupancy / night setback. Integration owns a house-mode `select`
        (Casa/Via/Notte/Vacanza) → KNX presets comfort/standby/economy/
        building_protection (validated map; replaces legacy
-       `automation.clima_applica_modalita_casa`). Global `Auto setback` switch
-       (default ON); respects #10 (skips disabled zones).
+       `automation.clima_applica_modalita_casa`). Also pushes set_temperature =
+       `number.villa_hvac_house_setpoint` (dashboard slider) + MODE_SETBACK_OFFSET
+       (Casa +0/Via +2/Notte +4; Vacanza none) so the integration, not ETS, owns
+       setpoints. Global `Auto setback` switch (default ON); respects #10
+       (skips disabled zones) and #4 (skips window-paused zones).
        - [x] #2a house-mode → preset driver
        - [x] #2b camere silenziose: 2 bedrooms ONLY (Padronale, Gabriele — Ospiti
              is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
