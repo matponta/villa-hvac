@@ -34,6 +34,15 @@ Target: Home Assistant **2026.4.3** (Python 3.13). Single instance, config-flow.
 - KNX climates: `hvac_modes: [cool, heat]` (no `off`), `supported_features: 17`
   (target temp + preset), presets `[building_protection, auto, economy, comfort,
   standby]`. Fan speed is a **separate `fan.*` entity**, not on the climate.
+- **GOTCHA — season/"are-we-cooling" signal (bit us 2026-06-24):** do NOT gate on
+  `sensor.s5a_villa_modo` — it's a *dynamic operating state* that reads `Off` when
+  the PdC isn't actively running, so a condition on `== "Raffrescamento"` silently
+  fails and the cooling branch is skipped. Use the **thermostat hvac mode**
+  (`climate.*` state `cool`/`heat` — local & robust, what #2's season auto-detect
+  already does) or `sensor.s5a_stagione` (`Estate`/`Inverno`). This broke the
+  legacy `clima_applica_modalita_casa` Via→28 branch; fixed by gating on
+  `climate.salotto_termostato_2 == "cool"`. Keep the integration's season-aware
+  map on the same robust signal — don't reintroduce `s5a_villa_modo`.
 
 ## Cooling actuation — the real signal chain (ETS-verified 2026-06-24)
 
@@ -50,11 +59,16 @@ From `../knx/GroupAddressesReport_2026-03-12` (group 4 VALVOLE):
 - EV HEAT valves (4/0/4/1) are the **winter radiant** testine — not cooling.
 - Season changeover per thermostat `7/6/x` (cooling/heating) + global `0/0/5`
   ESTATE / `0/0/6` INVERNO.
-- **Thermal mass, not capacity:** camera_padronale best-case (evening, ~0 sun,
-  fan 100%) cooled a steady **~0.85 °C/h with no plateau** 26.6→25.9 over 50 min.
-  Rooms are mass-bound (soaked at ~26 all day), not capacity-limited → levers are
-  anticipatory pre-cool + shading (#6), not fan tricks. (Peak-sun rate: see the
-  scheduled 2026-06-25 16:00 test.)
+- **Mass-bound AND gain-limited at peak (camera_padronale, two tests):**
+  - best-case (evening, ~0 sun, fan 100%, setpoint 22): steady **~0.85 °C/h, no
+    plateau** (26.6→25.9 / 50 min) → mass-bound, NOT a hard capacity ceiling.
+  - peak-sun (2026-06-25 16:00, outdoor 34.5 °C, solar ~300–400 W/m², setpoint 22,
+    30 min): **~ZERO net cooling — held 27.1 °C flat** (even drifted up). At peak
+    the fancoil only offsets the solar+envelope gain to a draw.
+  ⇒ Dominant levers for the hard rooms are **load reduction: solar shading (#6) +
+  anticipatory pre-cool (#7)** (bank coolth in cool hours), NOT coalescing/fan
+  tricks. (Tests run via a one-shot HA automation; Claude harvest task can't reach
+  the connector headless — see [[scheduled-tasks-no-ha-connector]].)
 
 ## Summer cooling control plan (valve-based) — supersedes old #3/#9 framing
 
