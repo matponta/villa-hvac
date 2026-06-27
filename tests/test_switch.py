@@ -8,6 +8,8 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.villa_hvac.const import DOMAIN, ZONES
 
+from .helpers import enable_supervisor, seed_thermostats
+
 CLIMATE = "climate.salotto_termostato_2"
 SWITCH = "switch.salotto_enabled"
 
@@ -46,33 +48,40 @@ async def test_switch_created_only_for_zones_with_climate(hass):
 
 
 async def test_turn_off_forces_building_protection(hass):
-    """Disabling a zone forces building_protection on its thermostat."""
+    """Disabling a zone -> the engine forces building_protection on it."""
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort")
     calls = async_mock_service(hass, "climate", "set_preset_mode")
 
     await hass.services.async_call(
         "switch", "turn_off", {"entity_id": SWITCH}, blocking=True
     )
 
+    # Only Salotto changes (others already in the Casa preset): forced to BP.
     assert len(calls) == 1
     assert calls[0].data["entity_id"] == CLIMATE
     assert calls[0].data["preset_mode"] == "building_protection"
     assert hass.states.get(SWITCH).state == "off"
 
 
-async def test_turn_on_restores_previous_preset(hass):
-    """Re-enabling restores the preset that was active before disabling."""
+async def test_turn_on_restores_mode_preset(hass):
+    """Re-enabling -> the engine restores the current house-mode preset."""
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort")
     calls = async_mock_service(hass, "climate", "set_preset_mode")
 
     await hass.services.async_call(
         "switch", "turn_off", {"entity_id": SWITCH}, blocking=True
     )
+    # Simulate the KNX thermostat actually applying building_protection.
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "building_protection"})
     await hass.services.async_call(
         "switch", "turn_on", {"entity_id": SWITCH}, blocking=True
     )
 
-    assert len(calls) == 2
-    # Captured 'comfort' at disable time -> restored on enable.
-    assert calls[1].data["preset_mode"] == "comfort"
+    # Last write to Salotto restores the Casa preset (comfort).
+    salotto = [c for c in calls if c.data["entity_id"] == CLIMATE]
+    assert salotto[-1].data["preset_mode"] == "comfort"
     assert hass.states.get(SWITCH).state == "on"

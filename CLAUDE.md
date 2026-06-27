@@ -112,15 +112,28 @@ do local bang-bang regulation.
 
 - `const.py` — DOMAIN, PLATFORMS, call signals, `FANCOILS`, the verified `ZONES`
   map (zone → climate/fancoils/floor/EP device/emitter), `FAN_STAGES`.
-- `coordinator.py` — `DataUpdateCoordinator` (30 s). Phase 0: read-only (fan
-  speeds, cooling zones, consenso states).
-- `__init__.py` — `async_setup_entry`/`async_unload_entry`; coordinator stored in
-  `entry.runtime_data`; forwards to `PLATFORMS`.
-- `sensor.py` — diagnostic `Cooling demand zones` (count of fancoils > 0).
-- `config_flow.py` — single-instance, no fields.
+- `coordinator.py` — `DataUpdateCoordinator` (30 s): read-only (fan speeds,
+  cooling zones, consenso, fused zone temps). The engine ticks off this.
+- `supervisor.py` — **pure** write-arbiter core (no HA imports): `reconcile`
+  (manual-override re-assert state machine), `merge_desired` (priority), the
+  `HouseState`/`ZoneSnapshot` model, lever-key helpers. Unit-tested in isolation.
+- `engine.py` — `SupervisorEngine`: builds `HouseState` each tick/`request_run`,
+  runs the policy stack, applies the merged result via `reconcile` one lever at a
+  time (preset/temperature/fan/BLOCCO). Gated by `switch.supervisor`; `async_fail_safe`
+  releases BLOCCO on unload.
+- `policies.py` — pure preset policies (`disabled_zones` #10 > `window_pause` #4 >
+  `house_mode` #2a), priority-merged. `PRESET_POLICIES` registered in `__init__`.
+- `controller.py`/`window.py`/`switch.py`/`night.py`/`away.py` — now **triggers**:
+  they update state (paused set, #10 flag, mode) and call `engine.request_run()`;
+  the engine is the single writer. (#2b night fan/manuale still direct, master-gated.)
+- `__init__.py` — wires coordinator + engine (policies=PRESET_POLICIES) + the
+  legacy controllers; `async_unload_entry`.
+- `sensor.py` — diagnostic `Cooling demand zones`. `config_flow.py` — single-instance.
 
-Control will WRITE via `climate.set_preset_mode` (validated lever), never by
-fighting KNX fan staging directly (until/unless the ETS question is resolved).
+Control WRITES through the engine's arbiter (idempotent, manual-override-robust),
+never by fighting KNX. **Strict deploy-dark (v0.9.0):** nothing actuates until
+`switch.supervisor` is on — on deploy, flip it to light up the migrated #2/#4/#10
+at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
 
 ## Roadmap (incremental, small testable PRs)
 

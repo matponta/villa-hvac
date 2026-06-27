@@ -12,14 +12,8 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.climate import (
-    ATTR_PRESET_MODE,
-    DOMAIN as CLIMATE_DOMAIN,
-    SERVICE_SET_PRESET_MODE,
-    SERVICE_SET_TEMPERATURE,
-)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID, ATTR_TEMPERATURE, STATE_OFF
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
@@ -110,6 +104,15 @@ def auto_setback_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "auto_setback") != STATE_OFF
 
 
+def supervisor_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True only when the master Supervisor switch is on (strict deploy-dark).
+
+    The whole engine — including the migrated #2/#4/#10 — is a no-op until this
+    is turned on; then the entire organism lights up at once.
+    """
+    return _switch_state(hass, entry, "supervisor") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF
@@ -144,42 +147,21 @@ def current_house_setpoint(hass: HomeAssistant, entry: ConfigEntry) -> float | N
 async def apply_house_mode(
     hass: HomeAssistant, entry: ConfigEntry, mode: str, *, force: bool = False
 ) -> None:
-    """Set the mode's preset on every controllable zone (honoring guardrails).
+    """Trigger a supervisor pass for `mode` + the camere-silenziose overlay.
 
-    No-op if Auto setback is off (unless `force`, used when the switch itself is
-    being turned on). Zones disabled via #10 are skipped.
+    Preset/setpoint actuation now belongs to the engine's policy stack
+    (`house_mode_policy` #2a, with #4/#10 as higher-priority overrides), so this
+    just nudges the engine to recompute against current state. Strict
+    deploy-dark: a no-op while the master Supervisor switch is off. `force` is
+    kept for call-site compatibility — the engine reads live Auto-setback state,
+    so no forced write is needed.
     """
-    if not force and not auto_setback_enabled(hass, entry):
+    engine = getattr(entry.runtime_data, "engine", None)
+    if engine is None or not engine.enabled:
         return
-    preset = preset_for_mode(mode)
-    if preset is None:
-        _LOGGER.warning("Unknown house mode %s; not applying", mode)
-        return
-    window = getattr(entry.runtime_data, "window", None)
-    paused = window.paused if window is not None else set()
-    offset = mode_offset(hass, entry, mode)
-    setpoint = current_house_setpoint(hass, entry)
-    for zone_id, climate in controllable_zones():
-        if is_zone_disabled(hass, entry, zone_id):
-            continue  # #10 disabled this zone -> leave it in building_protection
-        if zone_id in paused:
-            continue  # #4 window open -> keep cooling paused across mode changes
-        await hass.services.async_call(
-            CLIMATE_DOMAIN,
-            SERVICE_SET_PRESET_MODE,
-            {ATTR_ENTITY_ID: climate, ATTR_PRESET_MODE: preset},
-            blocking=True,
-        )
-        # Push the setpoint too (skip building_protection / Vacanza: frost-fixed).
-        if offset is not None and setpoint is not None:
-            await hass.services.async_call(
-                CLIMATE_DOMAIN,
-                SERVICE_SET_TEMPERATURE,
-                {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: round(setpoint + offset, 1)},
-                blocking=True,
-            )
+    await engine.request_run()
 
-    # Camere silenziose overlay for the bedrooms (#2b).
+    # Camere silenziose overlay for the bedrooms (#2b) on Notte transitions.
     night = getattr(entry.runtime_data, "night", None)
     if night is not None:
         if mode == HOUSE_MODE_NIGHT:

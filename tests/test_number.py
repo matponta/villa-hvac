@@ -8,6 +8,8 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.villa_hvac.const import DOMAIN
 
+from .helpers import enable_supervisor, seed_thermostats
+
 NUMBER = "number.house_setpoint"
 SELECT = "select.house_mode"
 
@@ -22,6 +24,8 @@ async def _setup(hass):
 
 async def test_setpoint_pushes_temperature_to_all_zones(hass):
     await _setup(hass)  # mode defaults to Casa (offset 0)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort", temperature=20.0)
     async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 
@@ -36,7 +40,9 @@ async def test_setpoint_pushes_temperature_to_all_zones(hass):
 
 
 async def test_summer_via_offset(hass):
-    await _setup(hass)  # default setpoint 24; no climate state -> season auto=summer
+    await _setup(hass)  # salotto seeded 'cool' -> season auto=summer
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort", temperature=20.0)
     async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 
@@ -51,8 +57,13 @@ async def test_summer_via_offset(hass):
 
 async def test_winter_via_offset_when_thermostat_heating(hass):
     await _setup(hass)  # default setpoint 24
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort", temperature=20.0)
     # Reference thermostat in heat -> auto season = winter.
-    hass.states.async_set("climate.salotto_termostato_2", "heat")
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "heat",
+        {"preset_mode": "comfort", "temperature": 20.0},
+    )
     async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 
@@ -67,6 +78,8 @@ async def test_winter_via_offset_when_thermostat_heating(hass):
 
 async def test_vacation_pushes_no_temperature(hass):
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort", temperature=20.0)
     async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 

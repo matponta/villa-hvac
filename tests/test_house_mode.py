@@ -12,6 +12,8 @@ from custom_components.villa_hvac.controller import (
     preset_for_mode,
 )
 
+from .helpers import enable_supervisor, seed_thermostats
+
 SELECT = "select.house_mode"
 AUTO = "switch.auto_setback"
 
@@ -58,6 +60,8 @@ async def _select_mode(hass, mode):
 
 async def test_selecting_night_applies_economy_to_all_controllable(hass):
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort")
     calls = async_mock_service(hass, "climate", "set_preset_mode")
     async_mock_service(hass, "climate", "set_temperature")
     # Notte also triggers the camere-silenziose overlay (#2b) on the bedrooms.
@@ -76,29 +80,33 @@ async def test_selecting_night_applies_economy_to_all_controllable(hass):
 
 async def test_auto_setback_off_writes_nothing(hass):
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="comfort")
     await hass.services.async_call(
         "switch", "turn_off", {"entity_id": AUTO}, blocking=True
     )
     calls = async_mock_service(hass, "climate", "set_preset_mode")
 
-    await _select_mode(hass, "Vacanza")
+    await _select_mode(hass, "Vacanza")  # would force BP everywhere if auto were on
 
     assert calls == []
 
 
-async def test_disabled_zone_is_skipped(hass):
+async def test_disabled_zone_forced_to_building_protection(hass):
     await _setup(hass)
-    calls = async_mock_service(hass, "climate", "set_preset_mode")
-    async_mock_service(hass, "climate", "set_temperature")
-    # #10-disable one zone (this itself sets building_protection on it).
+    # Disable a zone while the master is off (just flips the #10 flag).
     await hass.services.async_call(
         "switch", "turn_off",
         {"entity_id": "switch.sala_giochi_enabled"}, blocking=True,
     )
-    calls.clear()  # ignore the building_protection write from the disable
+    await enable_supervisor(hass)
+    seed_thermostats(hass, preset="standby")  # so the Casa apply actually writes
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
 
     await _select_mode(hass, "Casa")
 
-    targeted = {c.data["entity_id"] for c in calls}
-    assert "climate.sala_giochi_termostato_2" not in targeted
-    assert "climate.salotto_termostato_2" in targeted  # others still driven
+    targeted = {c.data["entity_id"]: c.data["preset_mode"] for c in calls}
+    # #10 (priority) overrides the house mode: disabled -> building_protection.
+    assert targeted["climate.sala_giochi_termostato_2"] == "building_protection"
+    assert targeted["climate.salotto_termostato_2"] == "comfort"  # others driven

@@ -35,13 +35,11 @@ from homeassistant.const import (
     STATE_ON,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONSENSO_BLOCCO,
     COOL_VALVES,
-    DOMAIN,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
     SOLAR_RADIATION,
@@ -54,6 +52,7 @@ from .controller import (
     current_season,
     is_zone_disabled,
     mode_offset,
+    supervisor_enabled,
 )
 from .supervisor import (
     BLOCCO_LEVER,
@@ -161,20 +160,10 @@ class SupervisorEngine:
             self._unsub = None
 
     # -- enable gate ----------------------------------------------------------
-    def _master_switch_id(self) -> str | None:
-        registry = er.async_get(self.hass)
-        return registry.async_get_entity_id(
-            "switch", DOMAIN, f"{self.entry.entry_id}_supervisor"
-        )
-
     @property
     def enabled(self) -> bool:
         """True only when the master switch is explicitly on (deploy-dark)."""
-        entity_id = self._master_switch_id()
-        if not entity_id:
-            return False
-        state = self.hass.states.get(entity_id)
-        return state is not None and state.state == STATE_ON
+        return supervisor_enabled(self.hass, self.entry)
 
     # -- main loop ------------------------------------------------------------
     @callback
@@ -182,6 +171,16 @@ class SupervisorEngine:
         if not self.enabled or self._busy:
             return
         self.hass.async_create_task(self._run())
+
+    async def request_run(self) -> None:
+        """Run a supervisor pass immediately (event-driven responsiveness).
+
+        Lets event sources — a window opening, a mode change, a zone toggle —
+        get an instant pass instead of waiting for the 30 s tick, while the
+        engine stays the single writer. No-op while disabled or mid-pass.
+        """
+        if self.enabled and not self._busy:
+            await self._run()
 
     async def _run(self) -> None:
         self._busy = True

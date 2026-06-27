@@ -15,6 +15,8 @@ from custom_components.villa_hvac.const import (
 )
 from custom_components.villa_hvac.night import GuardState, bedrooms, evaluate_guard
 
+from .helpers import enable_supervisor, seed_thermostats
+
 T0 = datetime(2026, 6, 23, 2, 0, 0, tzinfo=timezone.utc)
 THRESHOLD = 26.0
 
@@ -85,6 +87,8 @@ async def _select_mode(hass, mode):
 
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
     await _setup(hass)
+    await enable_supervisor(hass)
+    seed_thermostats(hass)
     async_mock_service(hass, "climate", "set_preset_mode")
     async_mock_service(hass, "climate", "set_temperature")
     sw_on = async_mock_service(hass, "switch", "turn_on")

@@ -35,7 +35,7 @@ from .const import (
     OPT_NIGHT_THRESHOLD,
     ZONES,
 )
-from .controller import auto_setback_enabled
+from .controller import auto_setback_enabled, supervisor_enabled
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -139,6 +139,12 @@ class NightController:
     async def _run_guard(self) -> None:
         self._busy = True
         try:
+            # Strict deploy-dark: if the master is off, release (manuale off) and
+            # stop guarding.
+            if not supervisor_enabled(self.hass, self.entry):
+                if self.active:
+                    await self.exit()
+                return
             if not auto_setback_enabled(self.hass, self.entry):
                 if self.active:
                     await self.exit()

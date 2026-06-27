@@ -16,13 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.climate import (
-    ATTR_PRESET_MODE,
-    DOMAIN as CLIMATE_DOMAIN,
-    SERVICE_SET_PRESET_MODE,
-)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers.event import (
     async_call_later,
@@ -30,17 +24,10 @@ from homeassistant.helpers.event import (
 )
 
 from .const import (
-    PRESET_BUILDING_PROTECTION,
     WINDOW_CLOSED_STATES,
     WINDOW_OPEN_DELAY,
     WINDOW_OPEN_STATES,
     ZONES,
-)
-from .controller import (
-    auto_setback_enabled,
-    current_house_mode,
-    is_zone_disabled,
-    preset_for_mode,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -119,30 +106,20 @@ class WindowController:
         return _fire
 
     async def _pause(self, zone_id: str) -> None:
-        if not auto_setback_enabled(self.hass, self.entry):
-            return
-        if is_zone_disabled(self.hass, self.entry, zone_id):
-            return  # already off via #10
+        """Mark the zone paused and let the engine apply it.
+
+        Actuation is the engine's `window_pause_policy` (building_protection for
+        a paused, still-enabled zone); here we only flip the flag the policy
+        reads and nudge an immediate pass. No-op write while the master is off.
+        """
         self.paused.add(zone_id)
-        await self._set_preset(zone_id, PRESET_BUILDING_PROTECTION)
+        await self._request_run()
 
     async def _restore(self, zone_id: str) -> None:
         self.paused.discard(zone_id)
-        if not auto_setback_enabled(self.hass, self.entry):
-            return
-        if is_zone_disabled(self.hass, self.entry, zone_id):
-            return
-        preset = preset_for_mode(current_house_mode(self.hass, self.entry))
-        if preset:
-            await self._set_preset(zone_id, preset)
+        await self._request_run()
 
-    async def _set_preset(self, zone_id: str, preset: str) -> None:
-        climate = ZONES[zone_id].get("climate")
-        if not climate:
-            return
-        await self.hass.services.async_call(
-            CLIMATE_DOMAIN,
-            SERVICE_SET_PRESET_MODE,
-            {ATTR_ENTITY_ID: climate, ATTR_PRESET_MODE: preset},
-            blocking=True,
-        )
+    async def _request_run(self) -> None:
+        engine = getattr(self.entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()

@@ -13,13 +13,8 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.climate import (
-    ATTR_PRESET_MODE,
-    DOMAIN as CLIMATE_DOMAIN,
-    SERVICE_SET_PRESET_MODE,
-)
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.const import ATTR_ENTITY_ID, STATE_ON
+from homeassistant.const import STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -27,7 +22,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
-from .const import PRESET_BUILDING_PROTECTION, PRESET_DEFAULT_ENABLED, ZONES
+from .const import ZONES
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 
@@ -108,6 +103,7 @@ class SupervisorEnableSwitch(SwitchEntity, RestoreEntity):
     _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_supervisor"
         self._attr_is_on = False  # opt-in: nothing actuates until enabled
 
@@ -119,6 +115,10 @@ class SupervisorEnableSwitch(SwitchEntity, RestoreEntity):
     async def async_turn_on(self, **kwargs) -> None:
         self._attr_is_on = True
         self.async_write_ha_state()
+        # Light up immediately rather than waiting for the next 30 s tick.
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False
@@ -128,7 +128,11 @@ class SupervisorEnableSwitch(SwitchEntity, RestoreEntity):
 class ZoneEnableSwitch(
     CoordinatorEntity[VillaHvacCoordinator], SwitchEntity, RestoreEntity
 ):
-    """Enable/disable a zone. Off -> force building_protection (frost-safe)."""
+    """Enable/disable a zone (#10). The flag is read by the engine's
+    `disabled_zones_policy`, which forces building_protection while off and lets
+    `house_mode_policy` restore the mode preset on re-enable. This entity only
+    flips the flag and nudges the engine — no direct service writes.
+    """
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:home-thermometer"
@@ -143,53 +147,28 @@ class ZoneEnableSwitch(
     ) -> None:
         super().__init__(coordinator)
         self._zone_id = zone_id
-        self._climate: str = zone["climate"]
         self._attr_name = f"{zone['name']} enabled"
         self._attr_unique_id = f"{entry.entry_id}_{zone_id}_enabled"
         # Default enabled; corrected from restored state in async_added_to_hass.
         self._attr_is_on = True
-        self._preset_before_disable: str | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Restore the enabled/disabled flag across restarts.
-
-        We only restore the flag — we do not re-issue the preset service on
-        startup, to avoid fighting whatever the KNX thermostats already hold.
-        """
+        """Restore the enabled/disabled flag across restarts (no preset reissue)."""
         await super().async_added_to_hass()
         if (last_state := await self.async_get_last_state()) is not None:
             self._attr_is_on = last_state.state == STATE_ON
 
-    def _current_preset(self) -> str | None:
-        """Read the preset the KNX thermostat is currently in, if available."""
-        state = self.hass.states.get(self._climate)
-        if state is None:
-            return None
-        return state.attributes.get(ATTR_PRESET_MODE)
-
-    async def _async_set_preset(self, preset: str) -> None:
-        await self.hass.services.async_call(
-            CLIMATE_DOMAIN,
-            SERVICE_SET_PRESET_MODE,
-            {ATTR_ENTITY_ID: self._climate, ATTR_PRESET_MODE: preset},
-            blocking=True,
-        )
+    async def _request_run(self) -> None:
+        engine = getattr(self.coordinator, "engine", None)
+        if engine is not None:
+            await engine.request_run()
 
     async def async_turn_on(self, **kwargs) -> None:
-        """Re-enable the zone: restore the preset captured at disable time."""
-        preset = self._preset_before_disable or PRESET_DEFAULT_ENABLED
-        await self._async_set_preset(preset)
-        self._preset_before_disable = None
         self._attr_is_on = True
         self.async_write_ha_state()
+        await self._request_run()
 
     async def async_turn_off(self, **kwargs) -> None:
-        """Disable the zone: force building_protection, keep frost protection."""
-        # Capture the current preset so we can restore it on re-enable, but
-        # never capture building_protection itself.
-        current = self._current_preset()
-        if current and current != PRESET_BUILDING_PROTECTION:
-            self._preset_before_disable = current
-        await self._async_set_preset(PRESET_BUILDING_PROTECTION)
         self._attr_is_on = False
         self.async_write_ha_state()
+        await self._request_run()
