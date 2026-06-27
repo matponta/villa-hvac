@@ -236,6 +236,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
 9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
        consenso mechanism TBD (behind a flag, verify in heating season)
 10. [ ] #8 Interactive weekend scenes (actionable notification)
+11. [ ] #11 Plan visualization — show the next-12h heating/cooling PLAN: forecast
+        temp curve + peak (`RunPlan.peak_eta`/`forecast_peak`) + pre-cool window +
+        duty run/rest (stint/cooloff) windows + per-zone setpoints/shading. Expose
+        the plan as a sensor (state + attributes) so a dashboard timeline card can
+        render it; makes the organism's 12h intent visible. Builds on #9's
+        RunPlan + DutyState + precool.
 
 ## Guardrails / domain rules
 
