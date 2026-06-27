@@ -113,8 +113,18 @@ COOL_VALVES: dict[str, str] = {
     "rack": "binary_sensor.fancoil_locale_rack_valvola",
 }
 # Central lever (#9): force-stop the villa cooling call to the PdC.
-# WARNING: verify polarity (block vs enable) live before actuating.
+# WARNING: verify polarity (block vs enable) live before actuating. Observed live
+# 2026-06-27: switch OFF while cooling ran normally -> OFF = released (not
+# blocking). The fail-safe releases by turning it OFF; confirm with one
+# supervised toggle before #9 actuates it.
 CONSENSO_BLOCCO = "switch.ct_blocco_freddo_villa"
+BLOCCO_RELEASED = "off"  # state that lets the villa cool (fail-safe target)
+
+# --- Outdoor / weather (Ecowitt GW3000A; #5/#6/#9 weather feed-forward) -------
+# Richer than the PdC's own probe (solar + rain + humidity); s5a is the fallback.
+OUTDOOR_TEMP = "sensor.gw3000a_outdoor_temperature"
+OUTDOOR_TEMP_FALLBACK = "sensor.s5a_temperatura_esterna"
+SOLAR_RADIATION = "sensor.gw3000a_solar_radiation"
 
 # Cooling demand of a zone == its fancoil fan percentage > 0.
 FANCOILS: list[str] = [

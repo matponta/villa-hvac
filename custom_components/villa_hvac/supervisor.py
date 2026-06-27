@@ -23,7 +23,7 @@ lives in later increments; nothing here imports homeassistant.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 # --- Tunable defaults (move to the options flow later) -----------------------
@@ -160,3 +160,57 @@ def merge_desired(
             if lever not in merged:
                 merged[lever] = value
     return merged
+
+
+# --- House-state model (pure data) -------------------------------------------
+# The Supervisor builds one snapshot per cycle; policies read it and return
+# desired lever settings. Keep this a plain data carrier — building it from
+# Home Assistant lives in engine.py so this module stays import-pure.
+
+
+@dataclass(frozen=True)
+class ZoneSnapshot:
+    """Per-zone slice of the house state."""
+
+    zone_id: str
+    name: str
+    climate: str | None
+    emitter: str | None
+    temp: float | None = None      # fused current temperature (#1)
+    demand: bool | None = None     # EV FAN valve open = actually cooling
+    enabled: bool = True           # #10 zone enable switch
+    paused: bool = False           # #4 window pause
+
+
+@dataclass(frozen=True)
+class HouseState:
+    """Unified per-cycle snapshot the policy stack reasons over."""
+
+    now: datetime
+    zones: dict[str, ZoneSnapshot] = field(default_factory=dict)
+    season: str | None = None          # summer / winter
+    house_mode: str | None = None      # Casa / Via / Notte / Vacanza
+    outdoor_temp: float | None = None  # Ecowitt gw3000a
+    solar: float | None = None         # Ecowitt solar radiation W/m²
+    consenso_freddo: str | None = None
+    consenso_caldo: str | None = None
+    blocco: str | None = None          # central BLOCCO switch state
+
+
+# --- Lever-key helpers -------------------------------------------------------
+# A lever is addressed by "<kind>:<entity>"; the engine reads/writes by kind.
+# The global cooling block has no entity in its key.
+
+BLOCCO_LEVER = "blocco"
+
+
+def preset_lever(climate_entity: str) -> str:
+    return f"preset:{climate_entity}"
+
+
+def temperature_lever(climate_entity: str) -> str:
+    return f"temperature:{climate_entity}"
+
+
+def fan_lever(fan_entity: str) -> str:
+    return f"fan:{fan_entity}"

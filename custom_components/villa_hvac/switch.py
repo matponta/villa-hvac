@@ -45,7 +45,10 @@ async def async_setup_entry(
     lever is only verified for fancoils, not radiant or split-AC zones.
     """
     coordinator = entry.runtime_data
-    entities: list[SwitchEntity] = [AutoSetbackSwitch(entry)]
+    entities: list[SwitchEntity] = [
+        AutoSetbackSwitch(entry),
+        SupervisorEnableSwitch(entry),
+    ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
@@ -84,6 +87,38 @@ class AutoSetbackSwitch(SwitchEntity, RestoreEntity):
             self.hass, self._entry, current_house_mode(self.hass, self._entry),
             force=True,
         )
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class SupervisorEnableSwitch(SwitchEntity, RestoreEntity):
+    """Master enable for the unified Supervisor loop (default OFF = deploy-dark).
+
+    While off, the Supervisor engine builds state but writes nothing. This lets
+    us deploy the integration and light the organism up deliberately, one step
+    at a time, on the live house. The legacy/standalone controllers (#2/#4/#10)
+    are unaffected by this switch until they are migrated onto the engine.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Supervisor"
+    _attr_icon = "mdi:home-automation"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._attr_unique_id = f"{entry.entry_id}_supervisor"
+        self._attr_is_on = False  # opt-in: nothing actuates until enabled
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False

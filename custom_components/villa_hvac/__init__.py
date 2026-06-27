@@ -9,6 +9,7 @@ from .away import AwayController
 from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
+from .engine import SupervisorEngine
 from .night import NightController
 from .window import WindowController
 
@@ -43,6 +44,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Unified Supervisor loop (the "single organism"). Ticks off the coordinator
+    # but writes nothing until the master switch.villa_hvac_supervisor is turned
+    # on (deploy-dark). On unload it releases the central cooling block so the
+    # villa is never left globally blocked without the supervisor alive.
+    engine = SupervisorEngine(hass, entry, coordinator)
+    coordinator.engine = engine
+    engine.start()
+    entry.async_on_unload(engine.stop)
+    entry.async_on_unload(engine.async_fail_safe)
 
     # Re-apply the restored house mode once HA has fully started (re-enters
     # camere silenziose after a reboot in Notte). Mirrors the legacy
