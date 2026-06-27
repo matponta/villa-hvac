@@ -20,6 +20,10 @@ from homeassistant.components.climate import (
     SERVICE_SET_PRESET_MODE,
     SERVICE_SET_TEMPERATURE,
 )
+from homeassistant.components.cover import (
+    DOMAIN as COVER_DOMAIN,
+    SERVICE_CLOSE_COVER,
+)
 from homeassistant.components.fan import (
     ATTR_PERCENTAGE,
     DOMAIN as FAN_DOMAIN,
@@ -31,10 +35,16 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
+    STATE_CLOSED,
     STATE_OFF,
     STATE_ON,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+)
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -42,10 +52,16 @@ from .const import (
     COOL_VALVES,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
+    DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_SOLAR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_SHADING_ENABLED,
+    OPT_SHADING_SOLAR,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
+    SHADING_ORIENTATIONS,
+    SHADING_SKIP_AREAS,
     SOLAR_RADIATION,
     ZONES,
 )
@@ -60,6 +76,7 @@ from .controller import (
 )
 from .supervisor import (
     BLOCCO_LEVER,
+    CoverInfo,
     HouseState,
     LeverState,
     ZoneSnapshot,
@@ -85,6 +102,44 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
     """Ecowitt outdoor temp, falling back to the PdC's own probe."""
     val = _num(hass, OUTDOOR_TEMP)
     return val if val is not None else _num(hass, OUTDOOR_TEMP_FALLBACK)
+
+
+def shadeable_covers(hass: HomeAssistant) -> tuple[CoverInfo, ...]:
+    """Resolve shadeable covers from the registries (#6) — not hardcoded.
+
+    Per cover: zone = entity.area_id else device.area_id; orientation =
+    (entity.labels ∪ device.labels) ∩ {north,east,south,west}; floor =
+    area.floor_id. Covers with no area / an unassigned area (the orphan
+    `cover.tapparella`) or no orientation label are skipped.
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    area_reg = ar.async_get(hass)
+    covers: list[CoverInfo] = []
+    for entity in ent_reg.entities.values():
+        if entity.domain != "cover":
+            continue
+        labels = set(entity.labels or ())
+        area_id = entity.area_id
+        if entity.device_id and (device := dev_reg.async_get(entity.device_id)):
+            labels |= set(device.labels or ())
+            if area_id is None:
+                area_id = device.area_id
+        if not area_id or area_id in SHADING_SKIP_AREAS:
+            continue
+        orientation = next((lbl for lbl in labels if lbl in SHADING_ORIENTATIONS), None)
+        if orientation is None:
+            continue
+        area = area_reg.async_get_area(area_id)
+        covers.append(
+            CoverInfo(
+                entity_id=entity.entity_id,
+                orientation=orientation,
+                zone=area_id,
+                floor=area.floor_id if area else None,
+            )
+        )
+    return tuple(covers)
 
 
 def build_house_state(
@@ -116,9 +171,19 @@ def build_house_state(
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     mode = current_house_mode(hass, entry)
+    sun = hass.states.get("sun.sun")
     return HouseState(
         now=dt_util.utcnow(),
         zones=zones,
+        covers=shadeable_covers(hass),
+        sun_azimuth=sun.attributes.get("azimuth") if sun else None,
+        sun_elevation=sun.attributes.get("elevation") if sun else None,
+        shading_enabled=bool(
+            entry.options.get(OPT_SHADING_ENABLED, DEFAULT_SHADING_ENABLED)
+        ),
+        shading_solar_threshold=float(
+            entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
+        ),
         season=current_season(hass, entry),
         house_mode=mode,
         auto_setback=auto_setback_enabled(hass, entry),
@@ -227,6 +292,8 @@ class SupervisorEngine:
             return s.attributes.get(ATTR_TEMPERATURE)
         if kind == "fan":
             return s.attributes.get(ATTR_PERCENTAGE)
+        if kind == "cover":
+            return s.state  # open / closed / opening / closing
         return None
 
     async def _dispatch_write(self, lever: str, value) -> None:
@@ -248,6 +315,10 @@ class SupervisorEngine:
             await self._call(
                 FAN_DOMAIN, SERVICE_SET_PERCENTAGE,
                 {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: int(float(value))},
+            )
+        elif kind == "cover" and str(value) == STATE_CLOSED:
+            await self._call(
+                COVER_DOMAIN, SERVICE_CLOSE_COVER, {ATTR_ENTITY_ID: entity}
             )
 
     async def _call(self, domain: str, service: str, data: dict) -> None:

@@ -189,11 +189,26 @@ class ZoneSnapshot:
 
 
 @dataclass(frozen=True)
+class CoverInfo:
+    """A shadeable cover, resolved from the registries (#6)."""
+
+    entity_id: str
+    orientation: str            # north / east / south / west (device label)
+    zone: str | None = None     # area_id
+    floor: str | None = None    # area.floor_id
+
+
+@dataclass(frozen=True)
 class HouseState:
     """Unified per-cycle snapshot the policy stack reasons over."""
 
     now: datetime
     zones: dict[str, ZoneSnapshot] = field(default_factory=dict)
+    covers: tuple[CoverInfo, ...] = ()
+    sun_azimuth: float | None = None
+    sun_elevation: float | None = None
+    shading_enabled: bool = False
+    shading_solar_threshold: float | None = None
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
     auto_setback: bool = True          # #2 global Auto setback switch
@@ -225,3 +240,7 @@ def temperature_lever(climate_entity: str) -> str:
 
 def fan_lever(fan_entity: str) -> str:
     return f"fan:{fan_entity}"
+
+
+def cover_lever(cover_entity: str) -> str:
+    return f"cover:{cover_entity}"

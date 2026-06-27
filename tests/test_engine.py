@@ -147,6 +147,48 @@ async def test_free_cool_suppresses_fancoil_via_engine(hass):
     assert salotto and salotto[-1].data["preset_mode"] == "building_protection"
 
 
+async def test_shading_resolver_and_close_via_engine(hass):
+    """#6: a west-labeled cover device is resolved from the registries; with the
+    sun in the west and bright, the engine closes it. An orphan (no area) is
+    excluded."""
+    from homeassistant.helpers import (
+        area_registry as ar,
+        device_registry as dr,
+        entity_registry as er,
+    )
+
+    from custom_components.villa_hvac.engine import shadeable_covers
+    from custom_components.villa_hvac.policies import POLICIES
+
+    entry = await _setup(hass)  # salotto 'cool' -> summer
+    coordinator = entry.runtime_data
+    area_reg, dev_reg, ent_reg = ar.async_get(hass), dr.async_get(hass), er.async_get(hass)
+
+    area = area_reg.async_get_or_create("Test West Room")
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("knx", "shade-test")}
+    )
+    dev_reg.async_update_device(device.id, area_id=area.id, labels={"west"})
+    cover = ent_reg.async_get_or_create("cover", "knx", "shade-uid", device_id=device.id)
+    orphan = ent_reg.async_get_or_create("cover", "knx", "orphan-uid")  # no area
+
+    resolved = {c.entity_id: c.orientation for c in shadeable_covers(hass)}
+    assert resolved.get(cover.entity_id) == "west"
+    assert orphan.entity_id not in resolved  # unassigned area -> skipped
+
+    hass.states.async_set(cover.entity_id, "open")
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"azimuth": 260.0, "elevation": 30.0}
+    )
+    hass.states.async_set("sensor.gw3000a_solar_radiation", "500")
+    closes = async_mock_service(hass, "cover", "close_cover")
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=POLICIES)
+    await engine._run()
+
+    assert any(c.data["entity_id"] == cover.entity_id for c in closes)
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

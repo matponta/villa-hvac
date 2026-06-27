@@ -20,8 +20,16 @@ from .const import (
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_SUMMER,
+    SHADING_AZIMUTH_BANDS,
+    SHADING_MIN_ELEVATION,
 )
-from .supervisor import HouseState, ZoneSnapshot, preset_lever, temperature_lever
+from .supervisor import (
+    HouseState,
+    ZoneSnapshot,
+    cover_lever,
+    preset_lever,
+    temperature_lever,
+)
 
 Desired = dict[str, str | float | None]
 
@@ -108,11 +116,52 @@ def house_mode_policy(state: HouseState) -> Desired:
     return out
 
 
+def _azimuth_in_band(azimuth: float, orientation: str) -> bool:
+    """True if the sun's compass azimuth is within the facade's band."""
+    band = SHADING_AZIMUTH_BANDS.get(orientation)
+    if band is None:
+        return False
+    lo, hi = band
+    if lo < hi:
+        return lo <= azimuth < hi
+    return azimuth >= lo or azimuth < hi  # wraps through 0/360 (north)
+
+
+def shading_policy(state: HouseState) -> Desired:
+    """#6: close a sun-facing cover when the sun is on its facade and it's bright.
+
+    Summer only; requires the sun above the horizon, its azimuth in the cover's
+    orientation band, and solar radiation over the threshold. Acts on the cover
+    lever (independent of the preset levers). Releases (no opinion) otherwise —
+    we don't force-reopen, so existing morning/dusk cover automations and the
+    user keep control.
+    """
+    if not state.shading_enabled or state.season != SEASON_SUMMER:
+        return {}
+    if state.sun_elevation is None or state.sun_elevation <= SHADING_MIN_ELEVATION:
+        return {}
+    if state.sun_azimuth is None:
+        return {}
+    if state.solar is None or state.shading_solar_threshold is None:
+        return {}
+    if state.solar < state.shading_solar_threshold:
+        return {}
+    return {
+        cover_lever(cover.entity_id): "closed"
+        for cover in state.covers
+        if _azimuth_in_band(state.sun_azimuth, cover.orientation)
+    }
+
+
 # Ordered HIGH→LOW priority for the engine's merge_desired:
-# #10 disable > #4 window > #5 free-cool > #2a house mode.
+# #10 disable > #4 window > #5 free-cool > #2a house mode. (Shading acts on the
+# independent cover lever, so its order vs the preset policies is immaterial.)
 PRESET_POLICIES = (
     disabled_zones_policy,
     window_pause_policy,
     free_cool_policy,
     house_mode_policy,
 )
+
+# The full stack the engine runs (presets + the cover-lever shading policy).
+POLICIES = (*PRESET_POLICIES, shading_policy)

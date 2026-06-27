@@ -24,10 +24,14 @@ from .const import (
     HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
+    DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_SOLAR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_NIGHT_THRESHOLD,
     OPT_SEASON,
+    OPT_SHADING_ENABLED,
+    OPT_SHADING_SOLAR,
     OPT_SUMMER_NOTTE_OFFSET,
     OPT_SUMMER_VIA_OFFSET,
     OPT_WINTER_NOTTE_OFFSET,
@@ -128,6 +132,14 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=10, max=30)),
+                vol.Optional(
+                    OPT_SHADING_ENABLED,
+                    default=options.get(OPT_SHADING_ENABLED, DEFAULT_SHADING_ENABLED),
+                ): bool,
+                vol.Optional(
+                    OPT_SHADING_SOLAR,
+                    default=options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR),
+                ): vol.All(vol.Coerce(float), vol.Range(min=50, max=1000)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

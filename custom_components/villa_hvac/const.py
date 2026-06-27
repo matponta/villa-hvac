@@ -424,6 +424,27 @@ OPT_FREE_COOL_OUTDOOR = "free_cool_outdoor"
 DEFAULT_FREE_COOL_ENABLED = True
 DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
 
+# --- #6 Solar shading --------------------------------------------------------
+# Summer: close a sun-facing shutter when the sun is on its facade and it's
+# bright, to cut the solar gain on the cooled rooms (the proven lever for the
+# gain-limited rooms). Cover -> zone/orientation/floor is resolved at runtime
+# from the registries (device label = orientation), not hardcoded.
+OPT_SHADING_ENABLED = "shading_enabled"
+OPT_SHADING_SOLAR = "shading_solar_threshold"
+DEFAULT_SHADING_ENABLED = True
+DEFAULT_SHADING_SOLAR = 200.0   # W/m²: close sun-facing covers above this
+SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
+SHADING_ORIENTATIONS = ("north", "east", "south", "west")
+# Compass azimuth band per facade (deg); north wraps through 0/360.
+SHADING_AZIMUTH_BANDS: dict[str, tuple[float, float]] = {
+    "north": (315.0, 45.0),
+    "east": (45.0, 135.0),
+    "south": (135.0, 225.0),
+    "west": (225.0, 315.0),
+}
+# Area ids that mean "unassigned" -> skip the cover (e.g. the orphan tapparella).
+SHADING_SKIP_AREAS = ("da_trovare",)
+
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)
 # until it closes. Per-zone opening entity is the `window` key in ZONES (only

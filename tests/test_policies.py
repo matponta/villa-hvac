@@ -9,14 +9,18 @@ from custom_components.villa_hvac.const import (
 )
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
+    _azimuth_in_band,
     disabled_zones_policy,
     free_cool_policy,
     house_mode_policy,
+    shading_policy,
     window_pause_policy,
 )
 from custom_components.villa_hvac.supervisor import (
+    CoverInfo,
     HouseState,
     ZoneSnapshot,
+    cover_lever,
     merge_desired,
     preset_lever,
     temperature_lever,
@@ -35,6 +39,8 @@ def _zone(zid, climate="climate.x", emitter="fancoil", enabled=True, paused=Fals
 def _state(
     zones, *, mode="Casa", auto=True, setpoint=24.0, offset=0.0,
     season=None, outdoor=None, free_cool=False, free_cool_threshold=None,
+    covers=(), azimuth=None, elevation=None, solar=None,
+    shading=False, shading_solar=None,
 ):
     return HouseState(
         now=T0,
@@ -47,6 +53,12 @@ def _state(
         outdoor_temp=outdoor,
         free_cool_enabled=free_cool,
         free_cool_threshold=free_cool_threshold,
+        covers=tuple(covers),
+        sun_azimuth=azimuth,
+        sun_elevation=elevation,
+        solar=solar,
+        shading_enabled=shading,
+        shading_solar_threshold=shading_solar,
     )
 
 
@@ -178,3 +190,40 @@ def test_merged_priority_overrides():
     assert temperature_lever("climate.dis") not in merged
     assert temperature_lever("climate.pause") not in merged
     assert merged[temperature_lever("climate.ok")] == 24.0
+
+
+# --- solar shading (#6) ------------------------------------------------------
+
+def test_azimuth_in_band():
+    assert _azimuth_in_band(180, "south") and not _azimuth_in_band(130, "south")
+    assert _azimuth_in_band(270, "west") and not _azimuth_in_band(200, "west")
+    assert _azimuth_in_band(90, "east")
+    # north wraps through 0/360
+    assert _azimuth_in_band(350, "north") and _azimuth_in_band(10, "north")
+    assert not _azimuth_in_band(90, "north")
+
+
+_SOUTH = CoverInfo(entity_id="cover.s", orientation="south")
+_WEST = CoverInfo(entity_id="cover.w", orientation="west")
+_SHADE = dict(
+    season=SEASON_SUMMER, azimuth=180.0, elevation=30.0, solar=500.0,
+    shading=True, shading_solar=200.0,
+)
+
+
+def test_shading_closes_only_the_sunlit_facade():
+    out = shading_policy(_state([], covers=[_SOUTH, _WEST], **_SHADE))
+    assert out == {cover_lever("cover.s"): "closed"}  # sun at 180 -> south only
+
+
+def test_shading_noop_low_sun_low_solar_winter_or_disabled():
+    assert shading_policy(_state([], covers=[_SOUTH],
+                                 **{**_SHADE, "elevation": 2.0})) == {}
+    assert shading_policy(_state([], covers=[_SOUTH],
+                                 **{**_SHADE, "solar": 50.0})) == {}
+    assert shading_policy(_state([], covers=[_SOUTH],
+                                 **{**_SHADE, "season": "winter"})) == {}
+    assert shading_policy(_state([], covers=[_SOUTH],
+                                 **{**_SHADE, "shading": False})) == {}
+    assert shading_policy(_state([], covers=[_SOUTH],
+                                 **{**_SHADE, "azimuth": None})) == {}
