@@ -29,8 +29,15 @@ Target: Home Assistant **2026.4.3** (Python 3.13). Single instance, config-flow.
   drives the zone off → cooling consenso drops after a **~1–2 min KNX off-delay**
   (how #10 gates a zone). Note presets and the `temperature` setpoint are
   INDEPENDENT on these climates (changing preset doesn't change `temperature`).
-- **#3 fan-stage modulation is moot:** the water valve is on/off and the fan is
-  constant — there is no per-room "cooling intensity" to modulate. Drop #3.
+- **#3 reborn as fan PACING (was "dropped"; verified 2026-06-27):** the fancoil
+  fan is CONTINUOUS (`percentage_step:1`) and in MANUAL (`switch.fancoil_*_manuale`
+  ON) it HOLDS the exact set % — KNX does NOT re-assert it (history: held 33 for
+  hours, only changed when commanded, survived an HA restart). So fan % IS a
+  per-room cooling-RATE lever *in manual*. #3 = pace each room's fan within #9's
+  coalesced run (steady % sized to reach target over the window; two-phase
+  approach→maintain past a configurable extended-run threshold). It is the
+  per-room EXECUTOR of #9, not a separate feature. (In AUTO the % is noisy and ~100%
+  — only manual holds a value; see the manual-override re-assert guardrail below.)
 - KNX climates: `hvac_modes: [cool, heat]` (no `off`), `supported_features: 17`
   (target temp + preset), presets `[building_protection, auto, economy, comfort,
   standby]`. Fan speed is a **separate `fan.*` entity**, not on the climate.
@@ -81,13 +88,20 @@ do local bang-bang regulation.
   state (4/7/x) = real demand; 1× `switch` BLOCCO (2/2/213) = central lever. File:
   `knx/knx_fancoil_valves.yaml`; user pastes → reload KNX; then wire entity_ids
   into `villa_hvac` (`cool_valve` per zone, `CONSENSO_BLOCCO`).
-- **Stage 2 — measure on the real signals.** Re-run demand analysis on 4/7/x
-  (true per-room duty cycle, staggering, valve↔consenso); fold in the
-  camera_padronale mass tests (best-case + peak). Output: data to design control.
-- **Stage 3 — design control law (data-grounded, user-reviewed).** Per-room =
-  setpoint/preset only (#2, done). Central = PdC duty-cycle via BLOCCO (rest
-  windows when in-envelope + comfort override + weather feed-forward). Load =
-  anticipatory pre-cool + shading (#6).
+- **Stage 2 — measure on the real signals. DONE 2026-06-27** (heatwave window,
+  50.2h). Findings: NO compressor short-cycling (consenso = 1 long block/day,
+  11–16h, 4 starts/50h); 5 rooms (padronale, gabriele, studio_v, sala_giochi,
+  rack) hold their valve OPEN the whole block → gain-limited; only salotto+cucina
+  bang-bang the VALVE (~6/h, 192/315 pulses <2min — water-valve chatter, not
+  compressor); demand coincident (5–7 valves together, never 1–3); consenso ==
+  OR(valves) 99.8%. ⇒ at PEAK coalescing has ~0 headroom (load reduction #6/#7 is
+  the lever); in MILD weather demand fragments → sync+rest has headroom. #9 must be
+  DUTY-ADAPTIVE, tuned on post-deploy mild-weather data (no mild history yet).
+- **Stage 3 — control law (designed; in `MASTER_PLAN.md` + the HTML).** Per-room =
+  setpoint/preset (#2, done) + **fan pacing #3** (manual, continuous %). Central =
+  **run-planner** (compute window start+duration from house+weather) + **room sync**
+  (preset alignment) + **BLOCCO** force-off (envelope-rest/peak/night), comfort
+  override + anti-short-cycle. Load = pre-cool (#7) + shading (#6).
 - **Stage 4 — implement** in the integration: consume valve binary_sensors as
   demand; coalescing/duty controller actuating BLOCCO; envelope+pre-cool. Opt-in,
   guardrailed, tested, versioned.
@@ -158,18 +172,45 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
        `binary_sensor.up_sense_contact` exist). Add a `window` key per zone as
        contact sensors get fitted. Known edge: night heat-guard can still run the
        fan in a window-open bedroom during Notte.
-6. [~] #9 Demand coalescing → reborn as **central cooling duty-cycle via the
-       Consenso BLOCCO (2/2/213)**, driven by real valve demand + weather. See
-       "Summer cooling control plan" above. Stage 1 = expose valves+BLOCCO.
-7. [x] ~~#3 Fan-stage modulation~~ DROPPED — water valve is on/off, fan is
-       constant; no per-room cooling intensity to modulate (ETS-verified).
-8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt + sun + south/west labels)
-9. [ ] #7 Anticipatory radiant heating (winter) — caldo consenso mechanism TBD
+   NOTE — build is now organized as a **Supervisor / single-organism** refactor
+   (one arbiter, priority policy stack, idempotent writes) then features as
+   policies. Canonical plan: `../hvac-implementation-plan.html`; build checklist:
+   `MASTER_PLAN.md`. Phases: 0 (test-pin) → A (supervisor) → B #5 → C #6 → D #9+#3
+   → E #7 → F #8 → G deploy. All land as code+tests (not deployed yet).
+6. [~] #9 PdC central control → **run-planner (compute window from house+weather)
+       + room sync (presets) + Consenso BLOCCO (2/2/213) force-off**, duty-adaptive.
+       Stage 1 (expose valves+BLOCCO) + Stage 2 (measure) DONE. BLOCCO actuation
+       gated on a verified-polarity flag.
+7. [~] #3 Fan PACING (was DROPPED, now REBORN) — fan is continuous + holds in
+       MANUAL (verified 2026-06-27); #3 = per-room fan executor of #9's run.
+8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
+       #6 cover map is RUNTIME (not hardcoded). Resolver per `cover.*`: zone =
+       `entity.area_id` else `device.area_id`; orientation =
+       `(entity.labels ∪ device.labels) ∩ {north,east,south,west}`; floor =
+       `area.floor_id`; SKIP covers with unassigned/`da_trovare` area (orphan
+       `cover.tapparella` → drop, don't crash). A zone may own multiple covers w/
+       different orientations (main_bedroom: Grande Camera west + Piccola Camera
+       south). Verified 2026-06-27: the 6 cooled-room covers are labeled south/west.
+9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
+       consenso mechanism TBD (behind a flag, verify in heating season)
 10. [ ] #8 Interactive weekend scenes (actionable notification)
 
 ## Guardrails / domain rules
 
-- **Manual override wins**: if a thermostat is changed by hand, back off for a set time.
+- **Manual override wins — but detect it ROBUSTLY**: never declare "manual" on a
+  single `current != last-written` read. KNX drops telegrams (the salotto write
+  loss) and lags attributes (AUTO fan % bounces in sub-second triplets), which look
+  identical to a hand change. After writing X, expect X within tolerance (ε on
+  setpoint; ignore `unavailable`/`unknown`); if divergent, RE-ASSERT for N cycles
+  before concluding; only divergence that survives re-assert → back off. This is
+  the #1 robustness risk for a 30 s idempotent writer on this bus.
+- **Fail-safe state (define + enforce)**: on unload/crash → release BLOCCO, fans
+  AUTO, thermostats local KNX, no lingering building_protection. `async_unload_entry`
+  MUST release BLOCCO + hand zones back. Watchdog fails open. Startup re-syncs to the
+  safe baseline first. NEVER leave the villa globally blocked without the supervisor alive.
+- **Test on the deploy target**: pin `pytest-homeassistant-custom-component` to HA
+  2026.4.3 (the venv was stale at 2025.1.4 — ~1yr API drift). CI on target; supervised
+  smoke-test on live 2026.4.3 before lighting up any policy.
 - **Anti short-cycling**: min on/off durations — don't pump the compressor.
 - **Season split**: summer = fancoils (fast, aggressive setback OK); winter =
   radiant floor (slow, high mass → anticipatory, soft setback, not on/off).
@@ -182,11 +223,14 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 
 ## Open questions to resolve
 
-- #3: does HA hold a fancoil fan stage, or does KNX re-assert? PARTIAL ANSWER:
-  there ARE per-fancoil `switch.fancoil_*_manuale` switches (ON = HA holds the
-  fan, KNX won't re-assert) — used by the camere-silenziose logic. Revisit #3
-  with this lever instead of assuming an ETS change is required.
-- Heating (`caldo`) consenso mechanism — radiant zone valves, not fan>0. Verify.
+- ~~#3: does HA hold a fancoil fan stage, or does KNX re-assert?~~ ANSWERED
+  2026-06-27: with `switch.fancoil_*_manuale` ON, HA holds the % and KNX does NOT
+  re-assert (fan is continuous, `percentage_step:1`). No ETS change needed. STILL
+  TO VERIFY LIVE (controlled daytime test): does a held LOW % give smooth cooling
+  and stop the valve bang-banging? (All manual history so far is nighttime 0/33.)
+- BLOCCO polarity (block vs enable) — verify with one supervised toggle at deploy.
+- Heating (`caldo`) consenso mechanism — radiant zone valves, not fan>0. Verify in
+  heating season (#7 winter path stays behind a flag until then).
 - ~~Per-zone EP temperature offset calibration values~~ — measured 2026-06-23,
   recorded in `EP_TEMP_OFFSETS`; mostly time-correlated so EP-primary deferred.
 - ~~Per-zone EP temp/occupancy entity_ids~~ — resolved & filled into `ZONES`
@@ -212,8 +256,10 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 
 In the parent folder (`Home Assistant/`), authored during design:
 - `hvac-restructure-status.html` — system status, gaps, To-Be user stories
-- `hvac-implementation-plan.html` — per-story implementation plan, building blocks,
-  build order, open spikes
+- `hvac-implementation-plan.html` — **the build BACKBONE** (rewritten 2026-06-27
+  around the Supervisor / single-organism architecture: policy stack, Stage 2
+  results, #9+#3 fusion, fail-safe, build phases A–G, live-verify gates). Repo-local
+  build checklist mirror: `villa-hvac/MASTER_PLAN.md`.
 
 These were built with the HA MCP connector (live introspection). Live HA control
 during dev can stay in that Cowork session; code + git + deploy live here in
