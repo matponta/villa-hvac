@@ -19,7 +19,13 @@ manual-override detection, the #1 robustness risk on a flaky KNX bus:
     converges on re-assert and never trips the override.
 
 The HA wiring (state-model builder, service calls, enable switches, fail-safe)
-lives in later increments; nothing here imports homeassistant.
+lives in engine.py; nothing here imports homeassistant.
+
+Deploy-dark (decided 2026-06-27): the master `switch.supervisor` gates the
+ENTIRE engine — including the migrated #2/#4/#10 — not just the new optimization
+layer. On deploy nothing actuates until the switch is flipped, then the whole
+organism lights up at once. Every controller path therefore routes through the
+engine and is a no-op while the master is off.
 """
 from __future__ import annotations
 
