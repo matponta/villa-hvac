@@ -113,6 +113,11 @@ def supervisor_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "supervisor") == STATE_ON
 
 
+def duty_cycle_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the #9 duty-cycle switch is on (opt-in, on top of the master)."""
+    return _switch_state(hass, entry, "duty_cycle") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF

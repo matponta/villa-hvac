@@ -191,10 +191,16 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
    policies. Canonical plan: `../hvac-implementation-plan.html`; build checklist:
    `MASTER_PLAN.md`. Phases: 0 (test-pin) → A (supervisor) → B #5 → C #6 → D #9+#3
    → E #7 → F #8 → G deploy. All land as code+tests (not deployed yet).
-6. [~] #9 PdC central control → **run-planner (compute window from house+weather)
-       + room sync (presets) + Consenso BLOCCO (2/2/213) force-off**, duty-adaptive.
-       Stage 1 (expose valves+BLOCCO) + Stage 2 (measure) DONE. BLOCCO actuation
-       gated on a verified-polarity flag.
+6. [~] #9 PdC central control → **duty-cycle via Consenso BLOCCO**, syncing the
+       villa (all rooms run, then all rest together). Stage 1+2 DONE.
+       DONE (v0.12.0): `DutyController` + pure `duty_decision` — cap the
+       continuous cooling stint at `OPT_DUTY_MAX_STINT` (consenso_freddo on-time),
+       then force BLOCCO block for `OPT_DUTY_COOLOFF`, then release; a zone above
+       `OPT_DUTY_COMFORT_MAX` aborts/prevents the cooloff (comfort wins). Opt-in
+       via `switch.duty_cycle` (on top of the master). BLOCCO polarity still to
+       verify live before first real actuation. REMAINING for full #9: fan pacing
+       (#3) — hold a manual fan % during the run (live-gated by the held-low-fan
+       cooling test).
 7. [~] #3 Fan PACING (was DROPPED, now REBORN) — fan is continuous + holds in
        MANUAL (verified 2026-06-27); #3 = per-room fan executor of #9's run.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).

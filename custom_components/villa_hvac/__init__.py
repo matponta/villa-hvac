@@ -11,7 +11,7 @@ from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import SupervisorEngine
 from .night import NightController
-from .policies import POLICIES
+from .policies import POLICIES, DutyController
 from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
@@ -50,7 +50,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # but writes nothing until the master switch.villa_hvac_supervisor is turned
     # on (deploy-dark). On unload it releases the central cooling block so the
     # villa is never left globally blocked without the supervisor alive.
-    engine = SupervisorEngine(hass, entry, coordinator, policies=POLICIES)
+    # DutyController is stateful (per entry), so instantiate it here and append
+    # it to the pure policy stack.
+    engine = SupervisorEngine(
+        hass, entry, coordinator, policies=(*POLICIES, DutyController())
+    )
     coordinator.engine = engine
     engine.start()
     entry.async_on_unload(engine.stop)

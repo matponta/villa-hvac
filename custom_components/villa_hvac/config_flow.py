@@ -16,16 +16,22 @@ from homeassistant.core import callback
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_AWAY_HOURS,
+    DEFAULT_DUTY_COMFORT_MAX,
+    DEFAULT_DUTY_COOLOFF,
+    DEFAULT_DUTY_MAX_STINT,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
+    DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_SOLAR,
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
-    DEFAULT_SHADING_ENABLED,
-    DEFAULT_SHADING_SOLAR,
+    OPT_DUTY_COMFORT_MAX,
+    OPT_DUTY_COOLOFF,
+    OPT_DUTY_MAX_STINT,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_NIGHT_THRESHOLD,
@@ -140,6 +146,18 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_SHADING_SOLAR,
                     default=options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR),
                 ): vol.All(vol.Coerce(float), vol.Range(min=50, max=1000)),
+                vol.Optional(
+                    OPT_DUTY_MAX_STINT,
+                    default=options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT),
+                ): vol.All(vol.Coerce(int), vol.Range(min=15, max=600)),
+                vol.Optional(
+                    OPT_DUTY_COOLOFF,
+                    default=options.get(OPT_DUTY_COOLOFF, DEFAULT_DUTY_COOLOFF),
+                ): vol.All(vol.Coerce(int), vol.Range(min=5, max=240)),
+                vol.Optional(
+                    OPT_DUTY_COMFORT_MAX,
+                    default=options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX),
+                ): vol.All(vol.Coerce(float), vol.Range(min=22, max=32)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -12,6 +12,7 @@ empty policy list (no actuation) behind a master switch that defaults OFF
 """
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 
 from homeassistant.components.climate import (
@@ -50,10 +51,16 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONSENSO_BLOCCO,
     COOL_VALVES,
+    DEFAULT_DUTY_COMFORT_MAX,
+    DEFAULT_DUTY_COOLOFF,
+    DEFAULT_DUTY_MAX_STINT,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_SOLAR,
+    OPT_DUTY_COMFORT_MAX,
+    OPT_DUTY_COOLOFF,
+    OPT_DUTY_MAX_STINT,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_SHADING_ENABLED,
@@ -70,6 +77,7 @@ from .controller import (
     current_house_mode,
     current_house_setpoint,
     current_season,
+    duty_cycle_enabled,
     is_zone_disabled,
     mode_offset,
     supervisor_enabled,
@@ -183,6 +191,16 @@ def build_house_state(
         ),
         shading_solar_threshold=float(
             entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
+        ),
+        duty_enabled=duty_cycle_enabled(hass, entry),
+        duty_max_stint=timedelta(
+            minutes=float(entry.options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT))
+        ),
+        duty_cooloff=timedelta(
+            minutes=float(entry.options.get(OPT_DUTY_COOLOFF, DEFAULT_DUTY_COOLOFF))
+        ),
+        duty_comfort_max=float(
+            entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX)
         ),
         season=current_season(hass, entry),
         house_mode=mode,

@@ -445,6 +445,17 @@ SHADING_AZIMUTH_BANDS: dict[str, tuple[float, float]] = {
 # Area ids that mean "unassigned" -> skip the cover (e.g. the orphan tapparella).
 SHADING_SKIP_AREAS = ("da_trovare",)
 
+# --- #9 Central duty-cycle (max stint + cooloff via the Consenso BLOCCO) ------
+# Cap the villa's continuous cooling stint; when it's exceeded, force a cooloff
+# (BLOCCO block) for a fixed period, then release. Opt-in via switch.duty_cycle.
+# A zone above the comfort-max aborts/prevents the cooloff (comfort wins).
+OPT_DUTY_MAX_STINT = "duty_max_stint_min"   # minutes of continuous cooling
+OPT_DUTY_COOLOFF = "duty_cooloff_min"       # minutes of forced rest
+OPT_DUTY_COMFORT_MAX = "duty_comfort_max"   # °C: abort cooloff above this
+DEFAULT_DUTY_MAX_STINT = 120
+DEFAULT_DUTY_COOLOFF = 30
+DEFAULT_DUTY_COMFORT_MAX = 27.0
+
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)
 # until it closes. Per-zone opening entity is the `window` key in ZONES (only

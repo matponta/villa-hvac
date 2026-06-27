@@ -24,9 +24,12 @@ from .const import (
     SHADING_MIN_ELEVATION,
 )
 from .supervisor import (
+    BLOCCO_LEVER,
+    DutyState,
     HouseState,
     ZoneSnapshot,
     cover_lever,
+    duty_decision,
     preset_lever,
     temperature_lever,
 )
@@ -165,3 +168,44 @@ PRESET_POLICIES = (
 
 # The full stack the engine runs (presets + the cover-lever shading policy).
 POLICIES = (*PRESET_POLICIES, shading_policy)
+
+
+def _comfort_breach(state: HouseState) -> bool:
+    """True if any zone is above the duty comfort-max (overrides the timer)."""
+    if state.duty_comfort_max is None:
+        return False
+    return any(
+        z.temp is not None and z.temp > state.duty_comfort_max
+        for z in state.zones.values()
+    )
+
+
+class DutyController:
+    """#9 central duty-cycle (stateful): cap the continuous cooling stint, then
+    force a cooloff via the Consenso BLOCCO, then release — synchronizing the
+    villa (all rooms run, then all rest). The decision logic is the pure
+    `duty_decision`; this only holds the cross-cycle `DutyState` and reads the
+    enable/params from the snapshot. Returns no opinion while disabled.
+    """
+
+    def __init__(self) -> None:
+        self._duty = DutyState()
+
+    def __call__(self, state: HouseState) -> Desired:
+        if (
+            not state.duty_enabled
+            or state.duty_max_stint is None
+            or state.duty_cooloff is None
+        ):
+            self._duty = DutyState()  # forget timers while disabled
+            return {}
+        cooling = state.consenso_freddo == "on"
+        self._duty, blocco = duty_decision(
+            cooling,
+            _comfort_breach(state),
+            state.now,
+            self._duty,
+            state.duty_max_stint,
+            state.duty_cooloff,
+        )
+        return {BLOCCO_LEVER: blocco}

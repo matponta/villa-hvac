@@ -44,6 +44,11 @@ DEFAULT_OVERRIDE_BACKOFF = timedelta(hours=2)
 # State strings that mean "don't conclude anything this cycle".
 TRANSIENT_STATES: tuple[str | None, ...] = ("unavailable", "unknown", None, "")
 
+# Consenso BLOCCO switch states (verify polarity live before actuating; observed
+# 2026-06-27: OFF = released/cooling allowed).
+BLOCCO_BLOCK = "on"      # block the villa cooling call to the PdC
+BLOCCO_RELEASE = "off"   # allow the villa to cool
+
 
 @dataclass(frozen=True)
 class LeverState:
@@ -168,6 +173,47 @@ def merge_desired(
     return merged
 
 
+# --- #9 central duty-cycle (pure) --------------------------------------------
+# Cap the villa's continuous cooling stint; when it's exceeded, force a cooloff
+# via the Consenso BLOCCO, then release. This also SYNCHRONIZES the rooms — the
+# whole villa runs together during the stint and rests together during cooloff.
+
+
+@dataclass(frozen=True)
+class DutyState:
+    """Duty-cycle bookkeeping across cycles."""
+
+    stint_start: datetime | None = None   # when the current cooling stint began
+    cooloff_until: datetime | None = None  # block until this time
+
+
+def duty_decision(
+    cooling_active: bool,
+    comfort_breach: bool,
+    now: datetime,
+    state: DutyState,
+    max_stint: timedelta,
+    cooloff: timedelta,
+) -> tuple[DutyState, str]:
+    """Advance the duty cycle. Returns (new_state, desired BLOCCO value).
+
+    - In a cooloff: keep blocking until it elapses (or a comfort breach aborts it).
+    - Not cooling, or a room too hot: never block; reset the stint.
+    - Cooling + comfortable: accumulate the stint; once it exceeds `max_stint`,
+      begin a `cooloff` (block). Comfort always wins over the timer.
+    """
+    if state.cooloff_until is not None:
+        if comfort_breach or now >= state.cooloff_until:
+            return DutyState(), BLOCCO_RELEASE
+        return state, BLOCCO_BLOCK
+    if not cooling_active or comfort_breach:
+        return DutyState(), BLOCCO_RELEASE
+    start = state.stint_start or now
+    if now - start >= max_stint:
+        return DutyState(cooloff_until=now + cooloff), BLOCCO_BLOCK
+    return DutyState(stint_start=start), BLOCCO_RELEASE
+
+
 # --- House-state model (pure data) -------------------------------------------
 # The Supervisor builds one snapshot per cycle; policies read it and return
 # desired lever settings. Keep this a plain data carrier — building it from
@@ -209,6 +255,10 @@ class HouseState:
     sun_elevation: float | None = None
     shading_enabled: bool = False
     shading_solar_threshold: float | None = None
+    duty_enabled: bool = False          # #9 duty-cycle switch
+    duty_max_stint: timedelta | None = None
+    duty_cooloff: timedelta | None = None
+    duty_comfort_max: float | None = None  # abort cooloff if a zone exceeds this
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
     auto_setback: bool = True          # #2 global Auto setback switch

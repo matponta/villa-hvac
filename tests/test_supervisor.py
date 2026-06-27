@@ -9,8 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from custom_components.villa_hvac.supervisor import (
+    BLOCCO_BLOCK,
+    BLOCCO_RELEASE,
     DEFAULT_OVERRIDE_BACKOFF,
+    DutyState,
     LeverState,
+    duty_decision,
     merge_desired,
     reconcile,
     values_match,
@@ -174,3 +178,54 @@ def test_merge_explicit_release_none_wins_over_lower():
 def test_merge_empty_outputs():
     assert merge_desired([]) == {}
     assert merge_desired([{}, {}]) == {}
+
+
+# --- duty_decision (#9 central duty-cycle) -----------------------------------
+
+MAX = timedelta(hours=2)
+COOL = timedelta(minutes=30)
+
+
+def test_duty_within_stint_allows():
+    st, blocco = duty_decision(True, False, T0, DutyState(stint_start=T0), MAX, COOL)
+    assert blocco == BLOCCO_RELEASE
+    assert st.stint_start == T0 and st.cooloff_until is None
+
+
+def test_duty_starts_stint_when_cooling_begins():
+    st, blocco = duty_decision(True, False, T0, DutyState(), MAX, COOL)
+    assert blocco == BLOCCO_RELEASE and st.stint_start == T0
+
+
+def test_duty_stint_exceeded_starts_cooloff():
+    st, blocco = duty_decision(
+        True, False, T0, DutyState(stint_start=T0 - MAX), MAX, COOL
+    )
+    assert blocco == BLOCCO_BLOCK
+    assert st.cooloff_until == T0 + COOL and st.stint_start is None
+
+
+def test_duty_cooloff_holds_then_releases():
+    cs = DutyState(cooloff_until=T0 + COOL)
+    st, blocco = duty_decision(True, False, T0, cs, MAX, COOL)
+    assert blocco == BLOCCO_BLOCK and st == cs  # still cooling off
+    st2, blocco2 = duty_decision(True, False, T0 + COOL, cs, MAX, COOL)
+    assert blocco2 == BLOCCO_RELEASE and st2 == DutyState()  # elapsed -> release
+
+
+def test_duty_comfort_breach_aborts_cooloff():
+    cs = DutyState(cooloff_until=T0 + COOL)
+    st, blocco = duty_decision(True, True, T0, cs, MAX, COOL)
+    assert blocco == BLOCCO_RELEASE and st == DutyState()
+
+
+def test_duty_comfort_breach_prevents_cooloff_past_max():
+    st, blocco = duty_decision(
+        True, True, T0, DutyState(stint_start=T0 - MAX), MAX, COOL
+    )
+    assert blocco == BLOCCO_RELEASE and st == DutyState()  # comfort wins
+
+
+def test_duty_not_cooling_releases_and_resets():
+    st, blocco = duty_decision(False, False, T0, DutyState(stint_start=T0), MAX, COOL)
+    assert blocco == BLOCCO_RELEASE and st == DutyState()

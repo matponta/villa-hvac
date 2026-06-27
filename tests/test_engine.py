@@ -189,6 +189,35 @@ async def test_shading_resolver_and_close_via_engine(hass):
     assert any(c.data["entity_id"] == cover.entity_id for c in closes)
 
 
+async def test_duty_switch_defaults_off(hass):
+    await _setup(hass)
+    assert hass.states.get("switch.duty_cycle").state == "off"
+
+
+async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
+    """#9: duty on + stint exceeded -> the engine blocks via the Consenso BLOCCO."""
+    from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
+
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # cooling
+    hass.states.async_set(CONSENSO_BLOCCO, "off")
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={},
+        options={OPT_DUTY_MAX_STINT: 0, OPT_DUTY_COOLOFF: 30},  # stint over at once
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    # Master + duty on; set states directly so we don't intercept switch.turn_on.
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.duty_cycle", "on")
+    on_calls = async_mock_service(hass, "switch", "turn_on")
+
+    await entry.runtime_data.engine.request_run()
+
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in on_calls)
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data
