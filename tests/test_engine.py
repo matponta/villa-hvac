@@ -218,6 +218,37 @@ async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
     assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in on_calls)
 
 
+async def test_fan_pacing_switch_defaults_off(hass):
+    await _setup(hass)
+    assert hass.states.get("switch.fan_pacing").state == "off"
+
+
+async def test_fan_pacing_holds_manuale_and_fan_via_engine(hass):
+    """#3: pacing on + room cooling & hot -> engine forces manuale on + a pull-
+    down fan speed on that fancoil."""
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("sensor.clima_salotto", "26.0")  # fused temp -> 26
+    hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")  # demand
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # run
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
+    hass.states.async_set("switch.fancoil_salotto_manuale", "off")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.fan_pacing", "on")
+    fan_calls = async_mock_service(hass, "fan", "set_percentage")
+    on_calls = async_mock_service(hass, "switch", "turn_on")
+
+    await entry.runtime_data.engine.request_run()
+
+    assert any(c.data["entity_id"] == "fan.fancoil_salotto" for c in fan_calls)
+    assert any(
+        c.data["entity_id"] == "switch.fancoil_salotto_manuale" for c in on_calls
+    )
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

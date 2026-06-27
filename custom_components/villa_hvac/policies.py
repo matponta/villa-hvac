@@ -16,6 +16,10 @@ separate, deliberate step.
 from __future__ import annotations
 
 from .const import (
+    FAN_PACING_APPROACH_BAND,
+    FAN_PACING_APPROACH_PCT,
+    FAN_PACING_MAINTAIN_BAND,
+    FAN_PACING_MAINTAIN_PCT,
     MODE_PRESET,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
@@ -30,7 +34,10 @@ from .supervisor import (
     ZoneSnapshot,
     cover_lever,
     duty_decision,
+    fan_lever,
+    pacing_decision,
     preset_lever,
+    switch_lever,
     temperature_lever,
 )
 
@@ -200,6 +207,11 @@ class DutyController:
             self._duty = DutyState()  # forget timers while disabled
             return {}
         cooling = state.consenso_freddo == "on"
+        at_peak = (
+            state.outdoor_temp is not None
+            and state.duty_peak_outdoor is not None
+            and state.outdoor_temp >= state.duty_peak_outdoor
+        )
         self._duty, blocco = duty_decision(
             cooling,
             _comfort_breach(state),
@@ -207,5 +219,54 @@ class DutyController:
             self._duty,
             state.duty_max_stint,
             state.duty_cooloff,
+            at_peak=at_peak,
         )
         return {BLOCCO_LEVER: blocco}
+
+
+class FanPacingController:
+    """#3 fan pacing (stateful): within a cooling run, hold each cooling fancoil
+    room's fan in MANUAL at a paced speed (two-phase pull-down → maintain) so the
+    valve stops bang-banging. Skips a bedroom while camere silenziose (#2b) owns
+    it. Releases (manuale off) a room it previously paced once it stops cooling.
+    Off while disabled. Speeds/bands are tunable post the live held-low-fan test.
+    """
+
+    def __init__(self) -> None:
+        self._phase: dict[str, str] = {}
+
+    def __call__(self, state: HouseState) -> Desired:
+        if not state.fan_pacing_enabled:
+            self._phase.clear()
+            return {}
+        target = None
+        if state.house_setpoint is not None and state.mode_offset is not None:
+            target = state.house_setpoint + state.mode_offset
+        cooling_run = state.consenso_freddo == "on"
+        out: Desired = {}
+        for z in state.zones.values():
+            if z.emitter != "fancoil" or not z.fancoil or not z.manuale:
+                continue
+            if z.bedroom and state.night_active:
+                self._phase.pop(z.zone_id, None)  # #2b owns the bedroom fan
+                continue
+            pacing = (
+                cooling_run and z.demand and z.enabled and not z.paused
+                and z.temp is not None and target is not None
+            )
+            if pacing:
+                phase, pct = pacing_decision(
+                    self._phase.get(z.zone_id, "approach"),
+                    z.temp - target,
+                    approach_band=FAN_PACING_APPROACH_BAND,
+                    maintain_band=FAN_PACING_MAINTAIN_BAND,
+                    approach_pct=FAN_PACING_APPROACH_PCT,
+                    maintain_pct=FAN_PACING_MAINTAIN_PCT,
+                )
+                self._phase[z.zone_id] = phase
+                out[switch_lever(z.manuale)] = "on"
+                out[fan_lever(z.fancoil)] = pct
+            elif z.zone_id in self._phase:
+                self._phase.pop(z.zone_id)
+                out[switch_lever(z.manuale)] = "off"  # release what we paced
+        return out

@@ -197,12 +197,19 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        continuous cooling stint at `OPT_DUTY_MAX_STINT` (consenso_freddo on-time),
        then force BLOCCO block for `OPT_DUTY_COOLOFF`, then release; a zone above
        `OPT_DUTY_COMFORT_MAX` aborts/prevents the cooloff (comfort wins). Opt-in
-       via `switch.duty_cycle` (on top of the master). BLOCCO polarity still to
-       verify live before first real actuation. REMAINING for full #9: fan pacing
-       (#3) — hold a manual fan % during the run (live-gated by the held-low-fan
-       cooling test).
-7. [~] #3 Fan PACING (was DROPPED, now REBORN) — fan is continuous + holds in
-       MANUAL (verified 2026-06-27); #3 = per-room fan executor of #9's run.
+       via `switch.duty_cycle` (on top of the master). DUTY-ADAPTIVE (v0.13.0):
+       at/above `OPT_DUTY_PEAK_OUTDOOR` (30) `duty_decision` releases — don't
+       coalesce at peak, let the PdC run + lean on #6/#7. BLOCCO polarity still to
+       verify live before first real actuation. (Forecast-based run-window
+       planner = future; reactive stint/cooloff + peak-skip covers the objective.)
+7. [x] #3 Fan PACING (was DROPPED, now REBORN) — DONE (v0.13.0):
+       `FanPacingController` + pure `pacing_decision` (two-phase: pull-down →
+       maintain, hysteresis). Within a cooling run, holds each cooling fancoil
+       room's fan in MANUAL at a paced % (manuale on + fan %), skips a bedroom
+       while camere silenziose owns it, releases manuale when cooling stops.
+       Opt-in `switch.fan_pacing`. Speeds/bands (`FAN_PACING_*`) tunable after the
+       live held-low-fan test (does a held low fan cool smoothly / stop the valve
+       cycling?). manuale switch derived `fan.fancoil_X` → `switch.fancoil_X_manuale`.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to

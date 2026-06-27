@@ -16,6 +16,7 @@ from custom_components.villa_hvac.supervisor import (
     LeverState,
     duty_decision,
     merge_desired,
+    pacing_decision,
     reconcile,
     values_match,
 )
@@ -229,3 +230,33 @@ def test_duty_comfort_breach_prevents_cooloff_past_max():
 def test_duty_not_cooling_releases_and_resets():
     st, blocco = duty_decision(False, False, T0, DutyState(stint_start=T0), MAX, COOL)
     assert blocco == BLOCCO_RELEASE and st == DutyState()
+
+
+def test_duty_at_peak_never_blocks():
+    # duty-adaptive: at peak, don't coalesce even past max stint.
+    st, blocco = duty_decision(
+        True, False, T0, DutyState(stint_start=T0 - MAX), MAX, COOL, at_peak=True
+    )
+    assert blocco == BLOCCO_RELEASE and st == DutyState()
+
+
+# --- pacing_decision (#3 fan pacing) -----------------------------------------
+
+PB = dict(approach_band=1.0, maintain_band=0.3, approach_pct=100, maintain_pct=33)
+
+
+def test_pacing_pulls_down_when_far():
+    assert pacing_decision("approach", 2.0, **PB) == ("approach", 100)
+
+
+def test_pacing_switches_to_maintain_near_target():
+    assert pacing_decision("approach", 0.2, **PB) == ("maintain", 33)
+
+
+def test_pacing_holds_maintain_within_hysteresis_gap():
+    # 0.5 is above maintain_band but below approach_band -> stay in maintain.
+    assert pacing_decision("maintain", 0.5, **PB) == ("maintain", 33)
+
+
+def test_pacing_reenters_approach_when_drifts_up():
+    assert pacing_decision("maintain", 1.5, **PB) == ("approach", 100)

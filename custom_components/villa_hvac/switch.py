@@ -44,6 +44,7 @@ async def async_setup_entry(
         AutoSetbackSwitch(entry),
         SupervisorEnableSwitch(entry),
         DutyCycleSwitch(entry),
+        FanPacingSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -143,6 +144,44 @@ class DutyCycleSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_duty_cycle"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class FanPacingSwitch(SwitchEntity, RestoreEntity):
+    """Opt-in for #3 fan pacing (default OFF).
+
+    When on (and the master is on), the engine holds each cooling room's fan in
+    MANUAL at a paced speed (pull-down then maintain) during a cooling run.
+    Off by default — the pacing speeds want the live held-low-fan test first.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Fan pacing"
+    _attr_icon = "mdi:fan-auto"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_fan_pacing"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

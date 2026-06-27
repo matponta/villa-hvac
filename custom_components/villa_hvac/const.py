@@ -452,9 +452,21 @@ SHADING_SKIP_AREAS = ("da_trovare",)
 OPT_DUTY_MAX_STINT = "duty_max_stint_min"   # minutes of continuous cooling
 OPT_DUTY_COOLOFF = "duty_cooloff_min"       # minutes of forced rest
 OPT_DUTY_COMFORT_MAX = "duty_comfort_max"   # °C: abort cooloff above this
+OPT_DUTY_PEAK_OUTDOOR = "duty_peak_outdoor"  # °C: at/above this -> no duty (peak)
 DEFAULT_DUTY_MAX_STINT = 120
 DEFAULT_DUTY_COOLOFF = 30
 DEFAULT_DUTY_COMFORT_MAX = 27.0
+DEFAULT_DUTY_PEAK_OUTDOOR = 30.0  # duty-adaptive: above this, let the PdC run
+
+# --- #3 Fan pacing -----------------------------------------------------------
+# Within a cooling run, hold the room fan in MANUAL at a paced speed (two-phase:
+# pull down hard, then maintain) instead of letting the valve bang-bang. Opt-in
+# via switch.fan_pacing. Speeds/bands are tunable after the live held-low-fan
+# test (does a held low fan cool smoothly / stop the valve cycling?).
+FAN_PACING_APPROACH_PCT = 100   # pull-down speed while far from target
+FAN_PACING_MAINTAIN_PCT = 33    # maintenance speed near target
+FAN_PACING_APPROACH_BAND = 1.0  # °C above target -> (re)enter pull-down
+FAN_PACING_MAINTAIN_BAND = 0.3  # °C above target -> drop to maintain
 
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)

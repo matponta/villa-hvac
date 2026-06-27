@@ -194,14 +194,19 @@ def duty_decision(
     state: DutyState,
     max_stint: timedelta,
     cooloff: timedelta,
+    at_peak: bool = False,
 ) -> tuple[DutyState, str]:
     """Advance the duty cycle. Returns (new_state, desired BLOCCO value).
 
+    - Duty-adaptive: at peak (hot outside) DON'T coalesce — let the PdC run and
+      lean on load reduction (#6/#7); the gain-limited rooms can't afford a rest.
     - In a cooloff: keep blocking until it elapses (or a comfort breach aborts it).
     - Not cooling, or a room too hot: never block; reset the stint.
     - Cooling + comfortable: accumulate the stint; once it exceeds `max_stint`,
       begin a `cooloff` (block). Comfort always wins over the timer.
     """
+    if at_peak:
+        return DutyState(), BLOCCO_RELEASE
     if state.cooloff_until is not None:
         if comfort_breach or now >= state.cooloff_until:
             return DutyState(), BLOCCO_RELEASE
@@ -212,6 +217,37 @@ def duty_decision(
     if now - start >= max_stint:
         return DutyState(cooloff_until=now + cooloff), BLOCCO_BLOCK
     return DutyState(stint_start=start), BLOCCO_RELEASE
+
+
+# --- #3 fan pacing (pure) ----------------------------------------------------
+# Within a cooling run, hold the room's fan at a paced speed instead of letting
+# the valve bang-bang: pull down hard while far from target, then drop to a
+# maintenance speed near it. Two-phase hysteresis (approach / maintain).
+
+
+def pacing_decision(
+    phase: str,
+    error: float,
+    *,
+    approach_band: float,
+    maintain_band: float,
+    approach_pct: int,
+    maintain_pct: int,
+) -> tuple[str, int]:
+    """Advance the two-phase fan pacing. `error` = temp - target (°C).
+
+    APPROACH (pull down) at approach_pct until error <= maintain_band; MAINTAIN
+    at maintain_pct until error >= approach_band again. The band gap gives
+    hysteresis so the fan doesn't flap at the setpoint. Returns (phase, fan %).
+    """
+    if phase == "maintain":
+        if error >= approach_band:
+            return "approach", approach_pct
+        return "maintain", maintain_pct
+    # approach (default)
+    if error <= maintain_band:
+        return "maintain", maintain_pct
+    return "approach", approach_pct
 
 
 # --- House-state model (pure data) -------------------------------------------
@@ -232,6 +268,9 @@ class ZoneSnapshot:
     demand: bool | None = None     # EV FAN valve open = actually cooling
     enabled: bool = True           # #10 zone enable switch
     paused: bool = False           # #4 window pause
+    bedroom: bool = False          # camere silenziose zone (#2b)
+    fancoil: str | None = None     # fan entity (for #3 pacing)
+    manuale: str | None = None     # manuale switch entity (for #3 pacing)
 
 
 @dataclass(frozen=True)
@@ -259,6 +298,9 @@ class HouseState:
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None
     duty_comfort_max: float | None = None  # abort cooloff if a zone exceeds this
+    duty_peak_outdoor: float | None = None  # at/above this outdoor temp -> no duty
+    night_active: bool = False          # #2b camere silenziose in effect
+    fan_pacing_enabled: bool = False    # #3 fan pacing switch
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
     auto_setback: bool = True          # #2 global Auto setback switch
@@ -294,3 +336,7 @@ def fan_lever(fan_entity: str) -> str:
 
 def cover_lever(cover_entity: str) -> str:
     return f"cover:{cover_entity}"
+
+
+def switch_lever(switch_entity: str) -> str:
+    return f"switch:{switch_entity}"

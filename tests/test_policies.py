@@ -4,11 +4,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from custom_components.villa_hvac.const import (
+    FAN_PACING_APPROACH_PCT,
+    FAN_PACING_MAINTAIN_PCT,
     PRESET_BUILDING_PROTECTION,
     SEASON_SUMMER,
 )
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
+    FanPacingController,
     _azimuth_in_band,
     disabled_zones_policy,
     free_cool_policy,
@@ -41,6 +44,7 @@ def _state(
     season=None, outdoor=None, free_cool=False, free_cool_threshold=None,
     covers=(), azimuth=None, elevation=None, solar=None,
     shading=False, shading_solar=None,
+    consenso=None, night=False, fan_pacing=False,
 ):
     return HouseState(
         now=T0,
@@ -59,6 +63,9 @@ def _state(
         solar=solar,
         shading_enabled=shading,
         shading_solar_threshold=shading_solar,
+        consenso_freddo=consenso,
+        night_active=night,
+        fan_pacing_enabled=fan_pacing,
     )
 
 
@@ -227,3 +234,45 @@ def test_shading_noop_low_sun_low_solar_winter_or_disabled():
                                  **{**_SHADE, "shading": False})) == {}
     assert shading_policy(_state([], covers=[_SOUTH],
                                  **{**_SHADE, "azimuth": None})) == {}
+
+
+# --- fan pacing (#3) ---------------------------------------------------------
+
+def _fanzone(zid, *, temp, demand=True, bedroom=False, emitter="fancoil"):
+    return ZoneSnapshot(
+        zone_id=zid, name=zid, climate=f"climate.{zid}", emitter=emitter,
+        temp=temp, demand=demand, bedroom=bedroom,
+        fancoil=f"fan.{zid}", manuale=f"switch.{zid}_man",
+    )
+
+
+_PACE = dict(consenso="on", fan_pacing=True, setpoint=24.0, offset=0.0)
+
+
+def test_fan_pacing_disabled_returns_nothing():
+    assert FanPacingController()(_state([_fanzone("a", temp=26.0)])) == {}
+
+
+def test_fan_pacing_pulls_down_when_hot():
+    out = FanPacingController()(_state([_fanzone("a", temp=26.0)], **_PACE))
+    assert out["switch:switch.a_man"] == "on"
+    assert out["fan:fan.a"] == FAN_PACING_APPROACH_PCT
+
+
+def test_fan_pacing_maintains_near_target():
+    out = FanPacingController()(_state([_fanzone("a", temp=24.1)], **_PACE))
+    assert out["fan:fan.a"] == FAN_PACING_MAINTAIN_PCT
+
+
+def test_fan_pacing_skips_bedroom_during_night():
+    out = FanPacingController()(
+        _state([_fanzone("bed", temp=26.0, bedroom=True)], night=True, **_PACE)
+    )
+    assert out == {}  # camere silenziose (#2b) owns the bedroom fan
+
+
+def test_fan_pacing_releases_manuale_when_cooling_stops():
+    c = FanPacingController()
+    c(_state([_fanzone("a", temp=26.0)], **_PACE))  # paced (manuale on)
+    out = c(_state([_fanzone("a", temp=26.0, demand=False)], **_PACE))
+    assert out["switch:switch.a_man"] == "off"  # released what we paced

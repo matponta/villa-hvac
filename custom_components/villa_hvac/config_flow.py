@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
+    DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
@@ -32,6 +33,7 @@ from .const import (
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
+    OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_NIGHT_THRESHOLD,
@@ -158,6 +160,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_DUTY_COMFORT_MAX,
                     default=options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX),
                 ): vol.All(vol.Coerce(float), vol.Range(min=22, max=32)),
+                vol.Optional(
+                    OPT_DUTY_PEAK_OUTDOOR,
+                    default=options.get(
+                        OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=24, max=42)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

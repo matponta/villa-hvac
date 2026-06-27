@@ -54,6 +54,7 @@ from .const import (
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
+    DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_SHADING_ENABLED,
@@ -61,6 +62,7 @@ from .const import (
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
+    OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_SHADING_ENABLED,
@@ -78,6 +80,7 @@ from .controller import (
     current_house_setpoint,
     current_season,
     duty_cycle_enabled,
+    fan_pacing_enabled,
     is_zone_disabled,
     mode_offset,
     supervisor_enabled,
@@ -166,6 +169,13 @@ def build_house_state(
         if valve is not None and (vs := hass.states.get(valve)) is not None:
             if vs.state in (STATE_ON, STATE_OFF):
                 demand = vs.state == STATE_ON
+        fancoils = zone.get("fancoils") or []
+        fancoil = fancoils[0] if fancoils else None
+        # manuale switch: explicit in ZONES (bedrooms) else derived from the fan
+        # entity (verified naming: fan.fancoil_X -> switch.fancoil_X_manuale).
+        manuale = zone.get("manuale_switch")
+        if manuale is None and fancoil:
+            manuale = "switch." + fancoil.removeprefix("fan.") + "_manuale"
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
@@ -175,11 +185,15 @@ def build_house_state(
             demand=demand,
             enabled=not is_zone_disabled(hass, entry, zone_id),
             paused=zone_id in paused,
+            bedroom=bool(zone.get("bedroom")),
+            fancoil=fancoil,
+            manuale=manuale,
         )
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     mode = current_house_mode(hass, entry)
     sun = hass.states.get("sun.sun")
+    night = getattr(coordinator, "night", None)
     return HouseState(
         now=dt_util.utcnow(),
         zones=zones,
@@ -202,6 +216,11 @@ def build_house_state(
         duty_comfort_max=float(
             entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX)
         ),
+        duty_peak_outdoor=float(
+            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
+        ),
+        night_active=bool(getattr(night, "active", False)),
+        fan_pacing_enabled=fan_pacing_enabled(hass, entry),
         season=current_season(hass, entry),
         house_mode=mode,
         auto_setback=auto_setback_enabled(hass, entry),
@@ -312,6 +331,8 @@ class SupervisorEngine:
             return s.attributes.get(ATTR_PERCENTAGE)
         if kind == "cover":
             return s.state  # open / closed / opening / closing
+        if kind == "switch":
+            return s.state  # on / off (e.g. a fancoil manuale switch)
         return None
 
     async def _dispatch_write(self, lever: str, value) -> None:
@@ -338,6 +359,8 @@ class SupervisorEngine:
             await self._call(
                 COVER_DOMAIN, SERVICE_CLOSE_COVER, {ATTR_ENTITY_ID: entity}
             )
+        elif kind == "switch":
+            await self._call_switch(entity, on=str(value) == STATE_ON)
 
     async def _call(self, domain: str, service: str, data: dict) -> None:
         await self.hass.services.async_call(domain, service, data, blocking=True)
