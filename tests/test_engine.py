@@ -249,6 +249,34 @@ async def test_fan_pacing_holds_manuale_and_fan_via_engine(hass):
     )
 
 
+async def test_forecast_precool_nudges_setpoint_via_engine(hass):
+    """#9 planner: a hot forecast within the lead window -> the engine pre-cools
+    (nudges the fancoil setpoint colder)."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )  # summer; current setpoint 24
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.duty_cycle", "on")  # pre-cool is gated by #9
+    engine = entry.runtime_data.engine
+    # Inject a hot forecast + a fresh timestamp so the real fetch is skipped.
+    engine._forecast = [(dt_util.utcnow() + timedelta(hours=1), 33.0)]
+    engine._forecast_ts = dt_util.utcnow()
+    temps = async_mock_service(hass, "climate", "set_temperature")
+
+    await engine.request_run()
+
+    salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
+    assert salotto and salotto[-1].data["temperature"] == 22.5  # 24 - 1.5 precool
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

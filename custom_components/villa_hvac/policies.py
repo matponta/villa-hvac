@@ -99,6 +99,28 @@ def free_cool_policy(state: HouseState) -> Desired:
     }
 
 
+def precool_policy(state: HouseState) -> Desired:
+    """#9 planner: when a hot peak is forecast (state.precool), bank coolth by
+    nudging the fancoil cooling zones' setpoints below the normal target. Gated
+    by the duty switch (part of #9), summer only, and skipped while free-cooling
+    (cool outside -> no need). Overrides house_mode's setpoint (higher priority).
+    """
+    if not state.duty_enabled or not state.precool or state.season != SEASON_SUMMER:
+        return {}
+    if _free_cooling(state):
+        return {}
+    if state.house_setpoint is None or state.mode_offset is None:
+        return {}
+    if state.precool_offset is None:
+        return {}
+    target = state.house_setpoint + state.mode_offset - state.precool_offset
+    return {
+        temperature_lever(z.climate): round(target, 1)
+        for z in state.zones.values()
+        if _controllable(z) and z.emitter == "fancoil" and z.enabled and not z.paused
+    }
+
+
 def house_mode_policy(state: HouseState) -> Desired:
     """#2a: drive each controllable zone to the house mode's preset + setpoint.
 
@@ -164,12 +186,13 @@ def shading_policy(state: HouseState) -> Desired:
 
 
 # Ordered HIGH→LOW priority for the engine's merge_desired:
-# #10 disable > #4 window > #5 free-cool > #2a house mode. (Shading acts on the
-# independent cover lever, so its order vs the preset policies is immaterial.)
+# #10 disable > #4 window > #5 free-cool > #9 pre-cool > #2a house mode.
+# (Shading acts on the independent cover lever, so its order is immaterial.)
 PRESET_POLICIES = (
     disabled_zones_policy,
     window_pause_policy,
     free_cool_policy,
+    precool_policy,
     house_mode_policy,
 )
 
@@ -220,6 +243,7 @@ class DutyController:
             state.duty_max_stint,
             state.duty_cooloff,
             at_peak=at_peak,
+            precool=state.precool,
         )
         return {BLOCCO_LEVER: blocco}
 

@@ -23,6 +23,8 @@ from .const import (
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
+    DEFAULT_PRECOOL_LEAD_HOURS,
+    DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_SOLAR,
     DOMAIN,
@@ -37,9 +39,12 @@ from .const import (
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_NIGHT_THRESHOLD,
+    OPT_PRECOOL_LEAD_HOURS,
+    OPT_PRECOOL_OFFSET,
     OPT_SEASON,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
+    OPT_WEATHER_ENTITY,
     OPT_SUMMER_NOTTE_OFFSET,
     OPT_SUMMER_VIA_OFFSET,
     OPT_WINTER_NOTTE_OFFSET,
@@ -48,6 +53,7 @@ from .const import (
     SEASON_OFFSET_DEFAULTS,
     SEASON_SUMMER,
     SEASON_WINTER,
+    WEATHER_ENTITY_DEFAULT,
 )
 
 
@@ -166,6 +172,20 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=24, max=42)),
+                vol.Optional(
+                    OPT_WEATHER_ENTITY,
+                    default=options.get(OPT_WEATHER_ENTITY, WEATHER_ENTITY_DEFAULT),
+                ): str,
+                vol.Optional(
+                    OPT_PRECOOL_LEAD_HOURS,
+                    default=options.get(
+                        OPT_PRECOOL_LEAD_HOURS, DEFAULT_PRECOOL_LEAD_HOURS
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+                vol.Optional(
+                    OPT_PRECOOL_OFFSET,
+                    default=options.get(OPT_PRECOOL_OFFSET, DEFAULT_PRECOOL_OFFSET),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

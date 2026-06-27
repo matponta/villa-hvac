@@ -16,6 +16,7 @@ from custom_components.villa_hvac.policies import (
     disabled_zones_policy,
     free_cool_policy,
     house_mode_policy,
+    precool_policy,
     shading_policy,
     window_pause_policy,
 )
@@ -45,6 +46,7 @@ def _state(
     covers=(), azimuth=None, elevation=None, solar=None,
     shading=False, shading_solar=None,
     consenso=None, night=False, fan_pacing=False,
+    duty=False, precool=False, precool_offset=None,
 ):
     return HouseState(
         now=T0,
@@ -53,6 +55,9 @@ def _state(
         auto_setback=auto,
         house_setpoint=setpoint,
         mode_offset=offset,
+        duty_enabled=duty,
+        precool=precool,
+        precool_offset=precool_offset,
         season=season,
         outdoor_temp=outdoor,
         free_cool_enabled=free_cool,
@@ -234,6 +239,44 @@ def test_shading_noop_low_sun_low_solar_winter_or_disabled():
                                  **{**_SHADE, "shading": False})) == {}
     assert shading_policy(_state([], covers=[_SOUTH],
                                  **{**_SHADE, "azimuth": None})) == {}
+
+
+# --- pre-cool planner (#9) ---------------------------------------------------
+
+def test_precool_nudges_fancoil_setpoints_colder():
+    z = _zone("a", climate="climate.a", emitter="fancoil")
+    state = _state(
+        [z], season=SEASON_SUMMER, setpoint=24.0, offset=0.0,
+        duty=True, precool=True, precool_offset=1.5,
+    )
+    out = precool_policy(state)
+    assert out[temperature_lever("climate.a")] == 22.5  # 24 + 0 - 1.5
+
+
+def test_precool_noop_when_duty_off_or_not_precool_or_winter():
+    z = _zone("a", climate="climate.a")
+    base = dict(setpoint=24.0, offset=0.0, precool_offset=1.5)
+    assert precool_policy(_state([z], season=SEASON_SUMMER, duty=False,
+                                 precool=True, **base)) == {}
+    assert precool_policy(_state([z], season=SEASON_SUMMER, duty=True,
+                                 precool=False, **base)) == {}
+    assert precool_policy(_state([z], season="winter", duty=True,
+                                 precool=True, **base)) == {}
+
+
+def test_precool_skips_radiant_and_disabled():
+    zones = [
+        _zone("rad", climate="climate.rad", emitter="radiant"),
+        _zone("dis", climate="climate.dis", emitter="fancoil", enabled=False),
+        _zone("ok", climate="climate.ok", emitter="fancoil"),
+    ]
+    out = precool_policy(_state(
+        zones, season=SEASON_SUMMER, setpoint=24.0, offset=0.0,
+        duty=True, precool=True, precool_offset=1.5,
+    ))
+    assert temperature_lever("climate.ok") in out
+    assert temperature_lever("climate.rad") not in out
+    assert temperature_lever("climate.dis") not in out
 
 
 # --- fan pacing (#3) ---------------------------------------------------------

@@ -14,9 +14,11 @@ from custom_components.villa_hvac.supervisor import (
     DEFAULT_OVERRIDE_BACKOFF,
     DutyState,
     LeverState,
+    RunPlan,
     duty_decision,
     merge_desired,
     pacing_decision,
+    plan_run,
     reconcile,
     values_match,
 )
@@ -238,6 +240,41 @@ def test_duty_at_peak_never_blocks():
         True, False, T0, DutyState(stint_start=T0 - MAX), MAX, COOL, at_peak=True
     )
     assert blocco == BLOCCO_RELEASE and st == DutyState()
+
+
+def test_duty_precool_never_blocks():
+    # forecast feed-forward: a peak is imminent -> bank coolth, don't rest.
+    st, blocco = duty_decision(
+        True, False, T0, DutyState(stint_start=T0 - MAX), MAX, COOL, precool=True
+    )
+    assert blocco == BLOCCO_RELEASE and st == DutyState()
+
+
+# --- plan_run (#9 forecast planner) ------------------------------------------
+
+LEAD = timedelta(hours=3)
+
+
+def test_plan_run_precool_when_peak_within_lead():
+    fc = [(T0 + timedelta(hours=1), 32.0), (T0 + timedelta(hours=2), 28.0)]
+    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
+    assert plan.precool is True and plan.forecast_peak == 32.0
+
+
+def test_plan_run_no_precool_when_cool_ahead():
+    fc = [(T0 + timedelta(hours=1), 26.0), (T0 + timedelta(hours=2), 27.0)]
+    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
+    assert plan.precool is False and plan.forecast_peak == 27.0
+
+
+def test_plan_run_ignores_peaks_beyond_lead():
+    fc = [(T0 + timedelta(hours=5), 35.0)]  # hot, but past the lead window
+    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
+    assert plan.precool is False and plan.forecast_peak is None
+
+
+def test_plan_run_empty_forecast():
+    assert plan_run([], T0, peak_threshold=30.0, lead=LEAD) == RunPlan()
 
 
 # --- pacing_decision (#3 fan pacing) -----------------------------------------

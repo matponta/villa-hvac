@@ -468,6 +468,18 @@ FAN_PACING_MAINTAIN_PCT = 33    # maintenance speed near target
 FAN_PACING_APPROACH_BAND = 1.0  # °C above target -> (re)enter pull-down
 FAN_PACING_MAINTAIN_BAND = 0.3  # °C above target -> drop to maintain
 
+# --- #9 forecast run-window planner (pre-cool) -------------------------------
+# Feed-forward on the hourly weather forecast: if a hot peak is coming within the
+# lead window, "pre-cool" — don't let the duty cycle rest (bank coolth) and nudge
+# the fancoil setpoints colder so the house enters the peak already cold.
+WEATHER_ENTITY_DEFAULT = "weather.forecast_home"
+OPT_WEATHER_ENTITY = "weather_entity"
+OPT_PRECOOL_LEAD_HOURS = "precool_lead_hours"
+OPT_PRECOOL_OFFSET = "precool_offset"
+DEFAULT_PRECOOL_LEAD_HOURS = 3
+DEFAULT_PRECOOL_OFFSET = 1.5     # °C below the normal target while pre-cooling
+FORECAST_REFRESH = timedelta(minutes=30)  # how often to re-fetch the forecast
+
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)
 # until it closes. Per-zone opening entity is the `window` key in ZONES (only

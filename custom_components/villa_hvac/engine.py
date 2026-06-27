@@ -57,21 +57,28 @@ from .const import (
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
+    DEFAULT_PRECOOL_LEAD_HOURS,
+    DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_SOLAR,
+    FORECAST_REFRESH,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_PRECOOL_LEAD_HOURS,
+    OPT_PRECOOL_OFFSET,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
+    OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
     SOLAR_RADIATION,
+    WEATHER_ENTITY_DEFAULT,
     ZONES,
 )
 from .controller import (
@@ -92,6 +99,7 @@ from .supervisor import (
     LeverState,
     ZoneSnapshot,
     merge_desired,
+    plan_run,
     reconcile,
 )
 
@@ -154,9 +162,13 @@ def shadeable_covers(hass: HomeAssistant) -> tuple[CoverInfo, ...]:
 
 
 def build_house_state(
-    hass: HomeAssistant, entry: ConfigEntry, coordinator
+    hass: HomeAssistant, entry: ConfigEntry, coordinator, forecast=()
 ) -> HouseState:
-    """Assemble one unified snapshot of the house for the policy stack."""
+    """Assemble one unified snapshot of the house for the policy stack.
+
+    `forecast` is the cached hourly forecast (list of (datetime, temp)); the
+    engine refreshes it out-of-band and passes it in so this stays sync + pure.
+    """
     data = coordinator.data or {}
     zone_temps = data.get("zone_temps") or {}
     window = getattr(coordinator, "window", None)
@@ -194,8 +206,21 @@ def build_house_state(
     mode = current_house_mode(hass, entry)
     sun = hass.states.get("sun.sun")
     night = getattr(coordinator, "night", None)
+    now = dt_util.utcnow()
+    plan = plan_run(
+        list(forecast),
+        now,
+        peak_threshold=float(
+            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
+        ),
+        lead=timedelta(
+            hours=float(
+                entry.options.get(OPT_PRECOOL_LEAD_HOURS, DEFAULT_PRECOOL_LEAD_HOURS)
+            )
+        ),
+    )
     return HouseState(
-        now=dt_util.utcnow(),
+        now=now,
         zones=zones,
         covers=shadeable_covers(hass),
         sun_azimuth=sun.attributes.get("azimuth") if sun else None,
@@ -218,6 +243,10 @@ def build_house_state(
         ),
         duty_peak_outdoor=float(
             entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
+        ),
+        precool=plan.precool,
+        precool_offset=float(
+            entry.options.get(OPT_PRECOOL_OFFSET, DEFAULT_PRECOOL_OFFSET)
         ),
         night_active=bool(getattr(night, "active", False)),
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
@@ -262,6 +291,8 @@ class SupervisorEngine:
         self._lever_states: dict[str, LeverState] = {}
         self._unsub = None
         self._busy = False
+        self._forecast: list[tuple] = []
+        self._forecast_ts = None
 
     def start(self) -> None:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
@@ -297,7 +328,10 @@ class SupervisorEngine:
     async def _run(self) -> None:
         self._busy = True
         try:
-            state = build_house_state(self.hass, self.entry, self.coordinator)
+            await self._maybe_refresh_forecast()
+            state = build_house_state(
+                self.hass, self.entry, self.coordinator, forecast=self._forecast
+            )
             outputs = [policy(state) for policy in self.policies]
             desired = merge_desired(outputs)
             for lever, target in desired.items():
@@ -370,6 +404,47 @@ class SupervisorEngine:
             "switch", SERVICE_TURN_ON if on else SERVICE_TURN_OFF,
             {ATTR_ENTITY_ID: entity_id},
         )
+
+    # -- forecast (#9 planner) ------------------------------------------------
+    def _weather_entity(self) -> str | None:
+        """Configured weather entity, else the default, else any weather.*."""
+        configured = self.entry.options.get(OPT_WEATHER_ENTITY) or WEATHER_ENTITY_DEFAULT
+        if self.hass.states.get(configured) is not None:
+            return configured
+        for eid in self.hass.states.async_entity_ids("weather"):
+            return eid
+        return None
+
+    async def _maybe_refresh_forecast(self) -> None:
+        """Re-fetch the hourly forecast at most every FORECAST_REFRESH; best-effort."""
+        now = dt_util.utcnow()
+        if self._forecast_ts is not None and now - self._forecast_ts < FORECAST_REFRESH:
+            return
+        self._forecast_ts = now  # stamp first so a failure doesn't hammer the service
+        entity = self._weather_entity()
+        if not entity:
+            self._forecast = []
+            return
+        try:
+            resp = await self.hass.services.async_call(
+                "weather", "get_forecasts",
+                {"type": "hourly", ATTR_ENTITY_ID: entity},
+                blocking=True, return_response=True,
+            )
+        except Exception:  # noqa: BLE001 - forecast is best-effort, never fatal
+            _LOGGER.debug("Forecast fetch failed for %s", entity, exc_info=True)
+            return
+        entries = (resp or {}).get(entity, {}).get("forecast") or []
+        parsed: list[tuple] = []
+        for item in entries:
+            temp = item.get("temperature")
+            when = dt_util.parse_datetime(item.get("datetime") or "")
+            if temp is not None and when is not None:
+                try:
+                    parsed.append((when, float(temp)))
+                except (TypeError, ValueError):
+                    continue
+        self._forecast = parsed
 
     # -- fail-safe ------------------------------------------------------------
     async def async_fail_safe(self) -> None:

@@ -195,17 +195,20 @@ def duty_decision(
     max_stint: timedelta,
     cooloff: timedelta,
     at_peak: bool = False,
+    precool: bool = False,
 ) -> tuple[DutyState, str]:
     """Advance the duty cycle. Returns (new_state, desired BLOCCO value).
 
     - Duty-adaptive: at peak (hot outside) DON'T coalesce — let the PdC run and
       lean on load reduction (#6/#7); the gain-limited rooms can't afford a rest.
+    - Pre-cool (forecast feed-forward): a hot peak is coming soon -> don't rest,
+      keep banking coolth.
     - In a cooloff: keep blocking until it elapses (or a comfort breach aborts it).
     - Not cooling, or a room too hot: never block; reset the stint.
     - Cooling + comfortable: accumulate the stint; once it exceeds `max_stint`,
       begin a `cooloff` (block). Comfort always wins over the timer.
     """
-    if at_peak:
+    if at_peak or precool:
         return DutyState(), BLOCCO_RELEASE
     if state.cooloff_until is not None:
         if comfort_breach or now >= state.cooloff_until:
@@ -217,6 +220,38 @@ def duty_decision(
     if now - start >= max_stint:
         return DutyState(cooloff_until=now + cooloff), BLOCCO_BLOCK
     return DutyState(stint_start=start), BLOCCO_RELEASE
+
+
+# --- #9 forecast run-window planner (pure) -----------------------------------
+
+
+@dataclass(frozen=True)
+class RunPlan:
+    """Forecast-derived plan for the cooling run window."""
+
+    precool: bool = False           # a hot peak is coming -> bank coolth now
+    forecast_peak: float | None = None  # max forecast temp in the lead window
+
+
+def plan_run(
+    forecast: list[tuple[datetime, float]],
+    now: datetime,
+    *,
+    peak_threshold: float,
+    lead: timedelta,
+) -> RunPlan:
+    """Decide the pre-cool signal from the hourly forecast.
+
+    If any forecast hour within [now, now+lead] reaches `peak_threshold`, a hot
+    peak is imminent → pre-cool (don't rest, bank coolth ahead of it). `forecast`
+    is a list of (time, temperature); entries outside the window are ignored.
+    """
+    horizon = now + lead
+    upcoming = [t for (when, t) in forecast if now <= when <= horizon and t is not None]
+    if not upcoming:
+        return RunPlan()
+    peak = max(upcoming)
+    return RunPlan(precool=peak >= peak_threshold, forecast_peak=peak)
 
 
 # --- #3 fan pacing (pure) ----------------------------------------------------
@@ -299,6 +334,8 @@ class HouseState:
     duty_cooloff: timedelta | None = None
     duty_comfort_max: float | None = None  # abort cooloff if a zone exceeds this
     duty_peak_outdoor: float | None = None  # at/above this outdoor temp -> no duty
+    precool: bool = False               # #9 forecast: hot peak imminent
+    precool_offset: float | None = None  # °C below target while pre-cooling
     night_active: bool = False          # #2b camere silenziose in effect
     fan_pacing_enabled: bool = False    # #3 fan pacing switch
     season: str | None = None          # summer / winter
