@@ -474,11 +474,18 @@ FAN_PACING_MAINTAIN_BAND = 0.3  # °C above target -> drop to maintain
 # the fancoil setpoints colder so the house enters the peak already cold.
 WEATHER_ENTITY_DEFAULT = "weather.forecast_home"
 OPT_WEATHER_ENTITY = "weather_entity"
-OPT_PRECOOL_LEAD_HOURS = "precool_lead_hours"
+# High thermal mass needs a LONG lookahead: see the peak hours ahead and bank
+# coolth in the cool morning. Re-planned every FORECAST_REFRESH (30 min).
+OPT_PRECOOL_LOOKAHEAD_HOURS = "precool_lookahead_hours"
+OPT_PRECOOL_MARGIN = "precool_margin"
 OPT_PRECOOL_OFFSET = "precool_offset"
-DEFAULT_PRECOOL_LEAD_HOURS = 3
+DEFAULT_PRECOOL_LOOKAHEAD_HOURS = 12
+# Pre-cool only while it's at least this much cooler now than the coming peak —
+# so a 12 h window doesn't pre-cool all day; it tapers as the peak nears (then
+# peak-skip takes over).
+DEFAULT_PRECOOL_MARGIN = 3.0
 DEFAULT_PRECOOL_OFFSET = 1.5     # °C below the normal target while pre-cooling
-FORECAST_REFRESH = timedelta(minutes=30)  # how often to re-fetch the forecast
+FORECAST_REFRESH = timedelta(minutes=30)  # re-fetch + re-plan cadence
 
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)

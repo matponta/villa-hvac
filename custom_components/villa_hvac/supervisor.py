@@ -227,31 +227,44 @@ def duty_decision(
 
 @dataclass(frozen=True)
 class RunPlan:
-    """Forecast-derived plan for the cooling run window."""
+    """Forecast-derived plan for the cooling run window (re-planned each refresh)."""
 
-    precool: bool = False           # a hot peak is coming -> bank coolth now
-    forecast_peak: float | None = None  # max forecast temp in the lead window
+    precool: bool = False               # bank coolth now ahead of a coming peak
+    forecast_peak: float | None = None  # max forecast temp over the lookahead
+    peak_eta: timedelta | None = None   # time until that peak
 
 
 def plan_run(
     forecast: list[tuple[datetime, float]],
     now: datetime,
+    current_outdoor: float | None,
     *,
     peak_threshold: float,
-    lead: timedelta,
+    lookahead: timedelta,
+    margin: float,
 ) -> RunPlan:
-    """Decide the pre-cool signal from the hourly forecast.
+    """Build the run plan over the lookahead horizon (e.g. 12 h).
 
-    If any forecast hour within [now, now+lead] reaches `peak_threshold`, a hot
-    peak is imminent → pre-cool (don't rest, bank coolth ahead of it). `forecast`
-    is a list of (time, temperature); entries outside the window are ignored.
+    Find the forecast peak in [now, now+lookahead]. Pre-cool when a HOT peak
+    (>= peak_threshold) is still ahead AND it is currently at least `margin`
+    cooler than that peak — i.e. bank coolth in the cool hours, and taper as the
+    peak nears (once we're within `margin` of it, stop; peak-skip takes over).
+    The long lookahead lets a high-mass house start early; the margin keeps it
+    from pre-cooling all day.
     """
-    horizon = now + lead
-    upcoming = [t for (when, t) in forecast if now <= when <= horizon and t is not None]
-    if not upcoming:
+    window = [
+        (when, t)
+        for (when, t) in forecast
+        if now <= when <= now + lookahead and t is not None
+    ]
+    if not window:
         return RunPlan()
-    peak = max(upcoming)
-    return RunPlan(precool=peak >= peak_threshold, forecast_peak=peak)
+    peak_when, peak_temp = max(window, key=lambda wt: wt[1])
+    eta = peak_when - now
+    if peak_temp < peak_threshold or current_outdoor is None:
+        return RunPlan(precool=False, forecast_peak=peak_temp, peak_eta=eta)
+    precool = peak_when > now and (peak_temp - current_outdoor) >= margin
+    return RunPlan(precool=precool, forecast_peak=peak_temp, peak_eta=eta)
 
 
 # --- #3 fan pacing (pure) ----------------------------------------------------

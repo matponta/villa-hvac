@@ -259,6 +259,7 @@ async def test_forecast_precool_nudges_setpoint_via_engine(hass):
     hass.states.async_set(
         CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
     )  # summer; current setpoint 24
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "25.0")  # cool now
     entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)

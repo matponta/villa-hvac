@@ -250,31 +250,45 @@ def test_duty_precool_never_blocks():
     assert blocco == BLOCCO_RELEASE and st == DutyState()
 
 
-# --- plan_run (#9 forecast planner) ------------------------------------------
+# --- plan_run (#9 forecast planner, 12 h lookahead + margin gate) ------------
 
-LEAD = timedelta(hours=3)
-
-
-def test_plan_run_precool_when_peak_within_lead():
-    fc = [(T0 + timedelta(hours=1), 32.0), (T0 + timedelta(hours=2), 28.0)]
-    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
-    assert plan.precool is True and plan.forecast_peak == 32.0
+LOOK = timedelta(hours=12)
 
 
-def test_plan_run_no_precool_when_cool_ahead():
-    fc = [(T0 + timedelta(hours=1), 26.0), (T0 + timedelta(hours=2), 27.0)]
-    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
+def _plan(fc, current, **kw):
+    kw = {"peak_threshold": 30.0, "lookahead": LOOK, "margin": 3.0, **kw}
+    return plan_run(fc, T0, current, **kw)
+
+
+def test_plan_run_precool_when_hot_peak_and_currently_cool():
+    fc = [(T0 + timedelta(hours=6), 34.0), (T0 + timedelta(hours=2), 28.0)]
+    plan = _plan(fc, 25.0)  # 34 - 25 = 9 >= margin -> bank coolth now
+    assert plan.precool is True and plan.forecast_peak == 34.0
+    assert plan.peak_eta == timedelta(hours=6)
+
+
+def test_plan_run_no_precool_when_already_near_peak():
+    plan = _plan([(T0 + timedelta(hours=1), 34.0)], 32.0)  # 34-32=2 < margin
+    assert plan.precool is False  # taper: peak-skip takes over near the peak
+
+
+def test_plan_run_no_precool_without_a_hot_peak():
+    plan = _plan([(T0 + timedelta(hours=2), 27.0)], 22.0)  # peak below threshold
     assert plan.precool is False and plan.forecast_peak == 27.0
 
 
-def test_plan_run_ignores_peaks_beyond_lead():
-    fc = [(T0 + timedelta(hours=5), 35.0)]  # hot, but past the lead window
-    plan = plan_run(fc, T0, peak_threshold=30.0, lead=LEAD)
+def test_plan_run_respects_lookahead_window():
+    plan = _plan([(T0 + timedelta(hours=15), 35.0)], 22.0)  # beyond 12 h
     assert plan.precool is False and plan.forecast_peak is None
 
 
+def test_plan_run_no_precool_without_current_outdoor():
+    plan = _plan([(T0 + timedelta(hours=3), 34.0)], None)
+    assert plan.precool is False and plan.forecast_peak == 34.0
+
+
 def test_plan_run_empty_forecast():
-    assert plan_run([], T0, peak_threshold=30.0, lead=LEAD) == RunPlan()
+    assert _plan([], 25.0) == RunPlan()
 
 
 # --- pacing_decision (#3 fan pacing) -----------------------------------------

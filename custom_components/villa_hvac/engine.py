@@ -57,7 +57,8 @@ from .const import (
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
-    DEFAULT_PRECOOL_LEAD_HOURS,
+    DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
+    DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_SOLAR,
@@ -68,7 +69,8 @@ from .const import (
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
-    OPT_PRECOOL_LEAD_HOURS,
+    OPT_PRECOOL_LOOKAHEAD_HOURS,
+    OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_OFFSET,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
@@ -207,17 +209,22 @@ def build_house_state(
     sun = hass.states.get("sun.sun")
     night = getattr(coordinator, "night", None)
     now = dt_util.utcnow()
+    outdoor = _outdoor_temp(hass)
     plan = plan_run(
         list(forecast),
         now,
+        outdoor,
         peak_threshold=float(
             entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
         ),
-        lead=timedelta(
+        lookahead=timedelta(
             hours=float(
-                entry.options.get(OPT_PRECOOL_LEAD_HOURS, DEFAULT_PRECOOL_LEAD_HOURS)
+                entry.options.get(
+                    OPT_PRECOOL_LOOKAHEAD_HOURS, DEFAULT_PRECOOL_LOOKAHEAD_HOURS
+                )
             )
         ),
+        margin=float(entry.options.get(OPT_PRECOOL_MARGIN, DEFAULT_PRECOOL_MARGIN)),
     )
     return HouseState(
         now=now,
@@ -261,7 +268,7 @@ def build_house_state(
         free_cool_threshold=float(
             entry.options.get(OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR)
         ),
-        outdoor_temp=_outdoor_temp(hass),
+        outdoor_temp=outdoor,
         solar=_num(hass, SOLAR_RADIATION),
         consenso_freddo=data.get("consenso_freddo"),
         consenso_caldo=data.get("consenso_caldo"),

@@ -200,11 +200,14 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        via `switch.duty_cycle` (on top of the master). DUTY-ADAPTIVE (v0.13.0):
        at/above `OPT_DUTY_PEAK_OUTDOOR` (30) `duty_decision` releases — don't
        coalesce at peak, let the PdC run + lean on #6/#7. BLOCCO polarity still to
-       verify live before first real actuation. FORECAST PLANNER (v0.14.0):
-       engine fetches the hourly forecast (`weather.forecast_home`, option
-       override) → `plan_run` sets `precool` if a peak ≥ `OPT_DUTY_PEAK_OUTDOOR`
-       is within `OPT_PRECOOL_LEAD_HOURS`; pre-cool then (a) suppresses the duty
-       cooloff (bank coolth) and (b) `precool_policy` nudges fancoil setpoints
+       verify live before first real actuation. FORECAST PLANNER (v0.14.0,
+       v0.14.1): engine re-fetches the hourly forecast every 30 min
+       (`weather.forecast_home`, option override) and `plan_run` builds a plan
+       over a LONG `OPT_PRECOOL_LOOKAHEAD_HOURS` (default 12 — thermal mass needs
+       a long lookahead). `precool` when a peak ≥ `OPT_DUTY_PEAK_OUTDOOR` is ahead
+       AND now is ≥ `OPT_PRECOOL_MARGIN` cooler than it (bank coolth in the cool
+       hours, taper as the peak nears → peak-skip). Pre-cool then (a) suppresses
+       the duty cooloff and (b) `precool_policy` nudges fancoil setpoints
        `OPT_PRECOOL_OFFSET` colder. Also covers #7's summer pre-cool path.
 7. [x] #3 Fan PACING (was DROPPED, now REBORN) — DONE (v0.13.0):
        `FanPacingController` + pure `pacing_decision` (two-phase: pull-down →
