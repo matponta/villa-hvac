@@ -199,6 +199,8 @@ class HouseState:
     auto_setback: bool = True          # #2 global Auto setback switch
     house_setpoint: float | None = None  # dashboard slider base setpoint
     mode_offset: float | None = None   # season-aware offset for house_mode
+    free_cool_enabled: bool = False    # #5 outdoor free-cooling shutoff
+    free_cool_threshold: float | None = None  # outdoor below this -> suppress
     outdoor_temp: float | None = None  # Ecowitt gw3000a
     solar: float | None = None         # Ecowitt solar radiation W/m²
     consenso_freddo: str | None = None

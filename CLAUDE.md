@@ -197,7 +197,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        gated on a verified-polarity flag.
 7. [~] #3 Fan PACING (was DROPPED, now REBORN) — fan is continuous + holds in
        MANUAL (verified 2026-06-27); #3 = per-room fan executor of #9's run.
-8. [ ] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
+8. [~] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
+       #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
+       below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to
+       building_protection (priority disabled>window>free_cool>house_mode);
+       options knob + enable. #6 shading still TODO.
        #6 cover map is RUNTIME (not hardcoded). Resolver per `cover.*`: zone =
        `entity.area_id` else `device.area_id`; orientation =
        `(entity.labels ∪ device.labels) ∩ {north,east,south,west}`; floor =

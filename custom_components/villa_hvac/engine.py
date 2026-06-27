@@ -40,6 +40,10 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONSENSO_BLOCCO,
     COOL_VALVES,
+    DEFAULT_FREE_COOL_ENABLED,
+    DEFAULT_FREE_COOL_OUTDOOR,
+    OPT_FREE_COOL_ENABLED,
+    OPT_FREE_COOL_OUTDOOR,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
     SOLAR_RADIATION,
@@ -120,6 +124,12 @@ def build_house_state(
         auto_setback=auto_setback_enabled(hass, entry),
         house_setpoint=current_house_setpoint(hass, entry),
         mode_offset=mode_offset(hass, entry, mode),
+        free_cool_enabled=bool(
+            entry.options.get(OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED)
+        ),
+        free_cool_threshold=float(
+            entry.options.get(OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR)
+        ),
         outdoor_temp=_outdoor_temp(hass),
         solar=_num(hass, SOLAR_RADIATION),
         consenso_freddo=data.get("consenso_freddo"),

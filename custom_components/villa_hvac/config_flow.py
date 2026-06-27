@@ -16,12 +16,16 @@ from homeassistant.core import callback
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_AWAY_HOURS,
+    DEFAULT_FREE_COOL_ENABLED,
+    DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
+    OPT_FREE_COOL_ENABLED,
+    OPT_FREE_COOL_OUTDOOR,
     OPT_NIGHT_THRESHOLD,
     OPT_SEASON,
     OPT_SUMMER_NOTTE_OFFSET,
@@ -112,6 +116,18 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         SEASON_OFFSET_DEFAULTS[SEASON_WINTER][HOUSE_MODE_NIGHT],
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    OPT_FREE_COOL_ENABLED,
+                    default=options.get(
+                        OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED
+                    ),
+                ): bool,
+                vol.Optional(
+                    OPT_FREE_COOL_OUTDOOR,
+                    default=options.get(
+                        OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=10, max=30)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

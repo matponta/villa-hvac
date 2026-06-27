@@ -3,10 +3,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from custom_components.villa_hvac.const import PRESET_BUILDING_PROTECTION
+from custom_components.villa_hvac.const import (
+    PRESET_BUILDING_PROTECTION,
+    SEASON_SUMMER,
+)
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
     disabled_zones_policy,
+    free_cool_policy,
     house_mode_policy,
     window_pause_policy,
 )
@@ -28,7 +32,10 @@ def _zone(zid, climate="climate.x", emitter="fancoil", enabled=True, paused=Fals
     )
 
 
-def _state(zones, *, mode="Casa", auto=True, setpoint=24.0, offset=0.0):
+def _state(
+    zones, *, mode="Casa", auto=True, setpoint=24.0, offset=0.0,
+    season=None, outdoor=None, free_cool=False, free_cool_threshold=None,
+):
     return HouseState(
         now=T0,
         zones={z.zone_id: z for z in zones},
@@ -36,6 +43,10 @@ def _state(zones, *, mode="Casa", auto=True, setpoint=24.0, offset=0.0):
         auto_setback=auto,
         house_setpoint=setpoint,
         mode_offset=offset,
+        season=season,
+        outdoor_temp=outdoor,
+        free_cool_enabled=free_cool,
+        free_cool_threshold=free_cool_threshold,
     )
 
 
@@ -105,6 +116,49 @@ def test_house_mode_noop_when_auto_setback_off_or_unknown_mode():
     z = _zone("a", climate="climate.a")
     assert house_mode_policy(_state([z], auto=False)) == {}
     assert house_mode_policy(_state([z], mode="???")) == {}
+
+
+# --- free cooling (#5) -------------------------------------------------------
+
+_FC = dict(season=SEASON_SUMMER, outdoor=20.0, free_cool=True, free_cool_threshold=22.0)
+
+
+def test_free_cool_suppresses_fancoils_when_cool_outside():
+    z = _zone("a", climate="climate.a", emitter="fancoil")
+    out = free_cool_policy(_state([z], **_FC))
+    assert out == {preset_lever("climate.a"): PRESET_BUILDING_PROTECTION}
+
+
+def test_free_cool_noop_when_warm_disabled_winter_or_no_outdoor():
+    z = _zone("a", climate="climate.a", emitter="fancoil")
+    assert free_cool_policy(_state([z], season=SEASON_SUMMER, outdoor=26.0,
+                                   free_cool=True, free_cool_threshold=22.0)) == {}
+    assert free_cool_policy(_state([z], season=SEASON_SUMMER, outdoor=20.0,
+                                   free_cool=False, free_cool_threshold=22.0)) == {}
+    assert free_cool_policy(_state([z], season="winter", outdoor=20.0,
+                                   free_cool=True, free_cool_threshold=22.0)) == {}
+    assert free_cool_policy(_state([z], season=SEASON_SUMMER, outdoor=None,
+                                   free_cool=True, free_cool_threshold=22.0)) == {}
+
+
+def test_free_cool_only_fancoil_enabled_unpaused():
+    zones = [
+        _zone("fan", climate="climate.fan", emitter="fancoil"),
+        _zone("rad", climate="climate.rad", emitter="radiant"),
+        _zone("dis", climate="climate.dis", emitter="fancoil", enabled=False),
+        _zone("pause", climate="climate.pause", emitter="fancoil", paused=True),
+    ]
+    out = free_cool_policy(_state(zones, **_FC))
+    assert out == {preset_lever("climate.fan"): PRESET_BUILDING_PROTECTION}
+
+
+def test_free_cool_overrides_house_mode_and_suppresses_setpoint():
+    z = _zone("a", climate="climate.a", emitter="fancoil")
+    state = _state([z], mode="Casa", offset=0.0, setpoint=24.0, **_FC)
+    merged = merge_desired([p(state) for p in PRESET_POLICIES])
+    assert merged[preset_lever("climate.a")] == PRESET_BUILDING_PROTECTION
+    # suppressed -> house_mode skips it, so no setpoint is pushed onto the BP zone
+    assert temperature_lever("climate.a") not in merged
 
 
 # --- merged stack: priority disabled > window > house_mode -------------------

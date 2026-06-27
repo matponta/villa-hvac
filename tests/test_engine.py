@@ -130,6 +130,23 @@ async def test_preset_policies_drive_writes_through_engine(hass):
     assert salotto[0].data["preset_mode"] == "comfort"
 
 
+async def test_free_cool_suppresses_fancoil_via_engine(hass):
+    """#5: summer + cool outside -> the engine forces a cooling zone to BP."""
+    from custom_components.villa_hvac.policies import PRESET_POLICIES
+
+    entry = await _setup(hass)  # salotto 'cool' -> season summer
+    coordinator = entry.runtime_data
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=PRESET_POLICIES)
+    await engine._run()
+
+    salotto = [c for c in calls if c.data["entity_id"] == CLIMATE]
+    assert salotto and salotto[-1].data["preset_mode"] == "building_protection"
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

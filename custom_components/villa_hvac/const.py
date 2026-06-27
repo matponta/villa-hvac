@@ -415,6 +415,15 @@ PRESENCE_GROUP = "group.presenza_adulti"  # person.mattia_pontacolone + person.e
 OPT_AWAY_HOURS = "away_escalation_hours"
 DEFAULT_AWAY_HOURS = 18
 
+# --- #5 Outdoor free-cooling shutoff -----------------------------------------
+# Summer: when it's cool enough outside, suppress the fancoils (force
+# building_protection) and let the house coast — fewer/shorter compressor runs.
+# (Winter "free heating from sun" is a separate concern, tied to #6/#7.)
+OPT_FREE_COOL_ENABLED = "free_cool_enabled"
+OPT_FREE_COOL_OUTDOOR = "free_cool_outdoor"
+DEFAULT_FREE_COOL_ENABLED = True
+DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
+
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)
 # until it closes. Per-zone opening entity is the `window` key in ZONES (only
