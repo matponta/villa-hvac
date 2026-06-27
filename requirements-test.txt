@@ -1,4 +1,8 @@
 # Dev/test dependencies for the villa_hvac custom component.
-# Pin the harness to the matching Home Assistant release (2026.4.x / Python 3.13).
-pytest-homeassistant-custom-component
+# Pin the test harness to the EXACT deploy-target HA release so "CI green" means
+# green-on-target (not on a stale HA). pytest-homeassistant-custom-component
+# 0.13.324 bundles homeassistant==2026.4.3, which requires Python >=3.14.2 — so
+# the venv AND CI must use a 3.14 interpreter. Bump this pin (+ the CI
+# python-version + manifest) deliberately when the deploy-target HA changes.
+pytest-homeassistant-custom-component==0.13.324
 ruff

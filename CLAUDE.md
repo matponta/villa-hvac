@@ -12,7 +12,8 @@ It does NOT replace the KNX thermostats: it supervises them — reads room senso
 fan modulation, solar shading, demand coalescing, long-term zone disable, and
 anticipatory radiant heating.
 
-Target: Home Assistant **2026.4.3** (Python 3.13). Single instance, config-flow.
+Target: Home Assistant **2026.4.3** (**Python ≥3.14.2** — the 2026.4.x line
+dropped 3.13; venv + CI must be 3.14). Single instance, config-flow.
 
 ## Critical verified facts (don't re-derive; tested live 2026-06-23)
 
@@ -250,7 +251,7 @@ fighting KNX fan staging directly (until/unless the ETS question is resolved).
 - Replace `CHANGEME` in `manifest.json` (documentation/issue_tracker) and the
   README badges with the real GitHub path; set `codeowners`.
 - Note: `__init__.py` uses a classic alias `VillaHvacConfigEntry = ConfigEntry[...]`
-  (works on 3.10–3.13); PEP 695 `type` alias also fine on HA's 3.13.
+  (works on 3.10–3.14); PEP 695 `type` alias also fine on HA's 3.14.
 
 ## Background / planning docs
 
