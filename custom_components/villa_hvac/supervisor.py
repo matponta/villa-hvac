@@ -190,6 +190,9 @@ class HouseState:
     zones: dict[str, ZoneSnapshot] = field(default_factory=dict)
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
+    auto_setback: bool = True          # #2 global Auto setback switch
+    house_setpoint: float | None = None  # dashboard slider base setpoint
+    mode_offset: float | None = None   # season-aware offset for house_mode
     outdoor_temp: float | None = None  # Ecowitt gw3000a
     solar: float | None = None         # Ecowitt solar radiation W/m²
     consenso_freddo: str | None = None

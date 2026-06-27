@@ -109,6 +109,27 @@ async def test_blocco_lever_round_trips_through_engine(hass):
     assert on_calls[0].data["entity_id"] == CONSENSO_BLOCCO
 
 
+async def test_preset_policies_drive_writes_through_engine(hass):
+    """End-to-end proof: the real preset policies, merged + reconciled by the
+    engine, drive a preset write (validates the A4 cutover path)."""
+    from custom_components.villa_hvac.policies import PRESET_POLICIES
+
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    # Salotto currently in standby; house mode default Casa wants comfort.
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "standby"})
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=PRESET_POLICIES)
+    await engine._run()
+
+    # Only Salotto has a live climate state here; other zones read None ->
+    # transient -> no write. So exactly one preset write: Salotto -> comfort.
+    salotto = [c for c in calls if c.data["entity_id"] == CLIMATE]
+    assert len(salotto) == 1
+    assert salotto[0].data["preset_mode"] == "comfort"
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

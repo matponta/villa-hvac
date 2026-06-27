@@ -48,9 +48,12 @@ from .const import (
     ZONES,
 )
 from .controller import (
+    auto_setback_enabled,
     current_house_mode,
+    current_house_setpoint,
     current_season,
     is_zone_disabled,
+    mode_offset,
 )
 from .supervisor import (
     BLOCCO_LEVER,
@@ -109,11 +112,15 @@ def build_house_state(
         )
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
+    mode = current_house_mode(hass, entry)
     return HouseState(
         now=dt_util.utcnow(),
         zones=zones,
         season=current_season(hass, entry),
-        house_mode=current_house_mode(hass, entry),
+        house_mode=mode,
+        auto_setback=auto_setback_enabled(hass, entry),
+        house_setpoint=current_house_setpoint(hass, entry),
+        mode_offset=mode_offset(hass, entry, mode),
         outdoor_temp=_outdoor_temp(hass),
         solar=_num(hass, SOLAR_RADIATION),
         consenso_freddo=data.get("consenso_freddo"),
