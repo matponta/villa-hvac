@@ -796,3 +796,23 @@ def test_solar_forecast_curve_zeroes_night_and_guards_cloud():
     assert curve[0] == 0.0          # below horizon
     assert curve[1] > 0.0           # missing cloud -> clear
     assert curve[2] > 0.0 and curve[2] < 950.0
+
+
+# --- F4b: comfort windows ----------------------------------------------------
+
+from custom_components.villa_hvac.supervisor import in_window  # noqa: E402
+
+
+def test_in_window_normal_and_outside():
+    assert in_window(600, 480, 1380) is True     # 10:00 in 08:00-23:00
+    assert in_window(1400, 480, 1380) is False    # 23:20 outside
+
+
+def test_in_window_wraps_midnight():
+    assert in_window(1380, 1320, 480) is True     # 23:00 in 22:00-08:00 (wrap)
+    assert in_window(60, 1320, 480) is True        # 01:00 in the night window
+    assert in_window(600, 1320, 480) is False      # 10:00 not in the night window
+
+
+def test_in_window_equal_bounds_is_always():
+    assert in_window(123, 600, 600) is True

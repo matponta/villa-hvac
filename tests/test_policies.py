@@ -473,3 +473,15 @@ def test_band_fan_uses_learned_capacity():
     out_prior = FanBandController()(_state([z], **_BAND))  # model_* None -> prior k
     # a learned LOW capacity demands at least as much fan as the (higher) prior.
     assert out_low["fan:fan.a"] >= out_prior["fan:fan.a"]
+
+
+def test_band_comfort_relax_raises_center_to_rest():
+    from dataclasses import replace as _replace
+    z = _fanzone("a", temp=25.0)
+    relaxed = _replace(z, comfort_relax=2.0)
+    # relax raises center 24 -> 26; temp 25 < 26-0.75 -> REST (setpoint 26+0.75).
+    out = FanBandController()(_state([relaxed], **_BAND))
+    assert out[temperature_lever("climate.a")] == 26.75
+    # no relax -> center 24, temp 25 >= 24.75 -> RUN (setpoint 24-0.75).
+    out0 = FanBandController()(_state([z], **_BAND))
+    assert out0[temperature_lever("climate.a")] == 23.25

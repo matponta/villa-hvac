@@ -18,6 +18,12 @@ from .const import (
     DEFAULT_AWAY_HOURS,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
+    DEFAULT_COMFORT_DAY_FROM,
+    DEFAULT_COMFORT_DAY_TO,
+    DEFAULT_COMFORT_ENABLED,
+    DEFAULT_COMFORT_NIGHT_FROM,
+    DEFAULT_COMFORT_NIGHT_TO,
+    DEFAULT_COMFORT_RELAX,
     DEFAULT_FAN_MIN,
     DEFAULT_MODEL_ENABLED,
     DEFAULT_DUTY_COMFORT_MAX,
@@ -42,6 +48,12 @@ from .const import (
     OPT_AWAY_HOURS,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
+    OPT_COMFORT_DAY_FROM,
+    OPT_COMFORT_DAY_TO,
+    OPT_COMFORT_ENABLED,
+    OPT_COMFORT_NIGHT_FROM,
+    OPT_COMFORT_NIGHT_TO,
+    OPT_COMFORT_RELAX,
     OPT_FAN_MIN,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
@@ -238,6 +250,32 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_SOLAR_FORECAST,
                     default=options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
                 ): bool,
+                vol.Optional(
+                    OPT_COMFORT_ENABLED,
+                    default=options.get(OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED),
+                ): bool,
+                vol.Optional(
+                    OPT_COMFORT_RELAX,
+                    default=options.get(OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=6)),
+                vol.Optional(
+                    OPT_COMFORT_DAY_FROM,
+                    default=options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM),
+                ): str,
+                vol.Optional(
+                    OPT_COMFORT_DAY_TO,
+                    default=options.get(OPT_COMFORT_DAY_TO, DEFAULT_COMFORT_DAY_TO),
+                ): str,
+                vol.Optional(
+                    OPT_COMFORT_NIGHT_FROM,
+                    default=options.get(
+                        OPT_COMFORT_NIGHT_FROM, DEFAULT_COMFORT_NIGHT_FROM
+                    ),
+                ): str,
+                vol.Optional(
+                    OPT_COMFORT_NIGHT_TO,
+                    default=options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO),
+                ): str,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -555,6 +555,25 @@ PLAN_SIM_DOWNSAMPLE_MIN = 60       # store ~hourly points on the sensor
 OPT_SOLAR_FORECAST = "solar_forecast_enabled"
 DEFAULT_SOLAR_FORECAST = False      # opt-in until validated vs gw3000a on clear days
 CLEAR_SKY_GHI = 950.0              # W/m² peak clear-sky horizontal GHI (tunable)
+
+# --- F4b: per-room/per-fascia comfort windows --------------------------------
+# Outside its comfort window a room may DRIFT warm (raise the band center by
+# RELAX, quieter/efficient) — a setpoint MODIFIER only, capped so it NEVER goes
+# above duty_comfort_max and NEVER suppresses a real comfort breach (the band
+# still cools above the relaxed center). Bedrooms use the night window, day rooms
+# the day window — matching the owner's "bedrooms 22-08, living areas 08-23".
+OPT_COMFORT_ENABLED = "comfort_windows_enabled"
+OPT_COMFORT_RELAX = "comfort_relax"
+OPT_COMFORT_DAY_FROM = "comfort_day_from"
+OPT_COMFORT_DAY_TO = "comfort_day_to"
+OPT_COMFORT_NIGHT_FROM = "comfort_night_from"
+OPT_COMFORT_NIGHT_TO = "comfort_night_to"
+DEFAULT_COMFORT_ENABLED = False
+DEFAULT_COMFORT_RELAX = 2.0          # °C the center rises outside the window (capped)
+DEFAULT_COMFORT_DAY_FROM = "08:00"
+DEFAULT_COMFORT_DAY_TO = "23:00"
+DEFAULT_COMFORT_NIGHT_FROM = "22:00"
+DEFAULT_COMFORT_NIGHT_TO = "08:00"
 # Coalescing band hysteresis (separate enter/exit so house RUN/REST doesn't flap):
 COALESCE_ENTER_FRACTION = 0.5        # enter RUN at center + ENTER_FRACTION*B/2 above
 COALESCE_EXIT_FRACTION = 0.5         # exit REST only when leader <= center - EXIT*B/2

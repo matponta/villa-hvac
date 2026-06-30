@@ -12,7 +12,7 @@ empty policy list (no actuation) behind a master switch that defaults OFF
 """
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
 
@@ -62,6 +62,18 @@ from .const import (
     CLEAR_SKY_GHI,
     COOL_PULLDOWN,
     COOL_VALVES,
+    DEFAULT_COMFORT_DAY_FROM,
+    DEFAULT_COMFORT_DAY_TO,
+    DEFAULT_COMFORT_ENABLED,
+    DEFAULT_COMFORT_NIGHT_FROM,
+    DEFAULT_COMFORT_NIGHT_TO,
+    DEFAULT_COMFORT_RELAX,
+    OPT_COMFORT_DAY_FROM,
+    OPT_COMFORT_DAY_TO,
+    OPT_COMFORT_ENABLED,
+    OPT_COMFORT_NIGHT_FROM,
+    OPT_COMFORT_NIGHT_TO,
+    OPT_COMFORT_RELAX,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
     DEFAULT_DUTY_COMFORT_MAX,
@@ -143,6 +155,7 @@ from .supervisor import (
     build_plan,
     build_room_plans,
     house_load_index,
+    in_window,
     merge_desired,
     plan_run,
     reconcile,
@@ -184,6 +197,54 @@ def _forecast_cloud_at(cloud: list, when) -> float | None:
         else:
             break
     return best
+
+
+def _parse_hhmm(value: str, fallback: int) -> int:
+    """'HH:MM' -> minute-of-day; fallback on garbage."""
+    try:
+        h, m = str(value).split(":")[:2]
+        return (int(h) % 24) * 60 + (int(m) % 60)
+    except (ValueError, AttributeError):
+        return fallback
+
+
+@dataclass(frozen=True)
+class _Comfort:
+    """F4b resolved comfort schedule for this cycle (capped relax + windows)."""
+
+    relax: float
+    day: tuple[int, int]
+    night: tuple[int, int]
+    minute: int
+
+    def relax_for(self, *, bedroom: bool) -> float:
+        frm, to = self.night if bedroom else self.day
+        return 0.0 if in_window(self.minute, frm, to) else self.relax
+
+
+def _comfort_config(hass: HomeAssistant, entry: ConfigEntry, center: float | None) -> "_Comfort | None":
+    """Build the comfort schedule, or None when disabled / no center. The relax is
+    pre-capped so center+relax can never exceed duty_comfort_max."""
+    if center is None or not entry.options.get(OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED):
+        return None
+    comfort_max = float(entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX))
+    relax = min(
+        float(entry.options.get(OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX)),
+        max(0.0, comfort_max - center),
+    )
+    local = dt_util.now()
+    return _Comfort(
+        relax=relax,
+        day=(
+            _parse_hhmm(entry.options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM), 480),
+            _parse_hhmm(entry.options.get(OPT_COMFORT_DAY_TO, DEFAULT_COMFORT_DAY_TO), 1380),
+        ),
+        night=(
+            _parse_hhmm(entry.options.get(OPT_COMFORT_NIGHT_FROM, DEFAULT_COMFORT_NIGHT_FROM), 1320),
+            _parse_hhmm(entry.options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO), 480),
+        ),
+        minute=local.hour * 60 + local.minute,
+    )
 
 
 class RoomModelStore:
@@ -305,6 +366,16 @@ def build_house_state(
     # F2: the learned thermal model (blended prior->learned) for each leader.
     thermal = getattr(getattr(coordinator, "engine", None), "thermal", None)
 
+    # Hoisted once (reused for the F4b comfort relax + the HouseState below).
+    mode = current_house_mode(hass, entry)
+    house_setpoint = current_house_setpoint(hass, entry)
+    house_offset = mode_offset(hass, entry, mode)
+    center = (
+        house_setpoint + house_offset
+        if (house_setpoint is not None and house_offset is not None) else None
+    )
+    comfort = _comfort_config(hass, entry, center)  # None when disabled / no center
+
     zones: dict[str, ZoneSnapshot] = {}
     for zone_id, zone in ZONES.items():
         valve = COOL_VALVES.get(zone_id)
@@ -346,6 +417,11 @@ def build_house_state(
             abc_conf, k_conf = thermal.confidence(zone_id)
             m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
             m_conf, m_kconf = min(abc_conf, k_conf), k_conf
+        # F4b: relax the band center while OUTSIDE this room's comfort window.
+        comfort_relax = (
+            comfort.relax_for(bedroom=bool(zone.get("bedroom")))
+            if (comfort is not None and is_leader) else 0.0
+        )
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
@@ -366,6 +442,7 @@ def build_house_state(
             model_a=m_a, model_b=m_b, model_c=m_c, model_k=m_k,
             model_confidence=m_conf, model_k_confidence=m_kconf,
             fan_pct=fan_pct, manuale_on=manuale_on,
+            comfort_relax=comfort_relax,
         )
 
     # #6: enrich each shadeable cover with its room's shade target + block flag.
@@ -382,7 +459,6 @@ def build_house_state(
     )
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
-    mode = current_house_mode(hass, entry)
     sun = hass.states.get("sun.sun")
     night = getattr(coordinator, "night", None)
     now = dt_util.utcnow()
@@ -428,8 +504,8 @@ def build_house_state(
         season=current_season(hass, entry),
         house_mode=mode,
         auto_setback=auto_setback_enabled(hass, entry),
-        house_setpoint=current_house_setpoint(hass, entry),
-        mode_offset=mode_offset(hass, entry, mode),
+        house_setpoint=house_setpoint,
+        mode_offset=house_offset,
         free_cool_enabled=bool(
             entry.options.get(OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED)
         ),

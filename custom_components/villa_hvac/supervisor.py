@@ -593,6 +593,9 @@ class ZoneSnapshot:
     # windows (manuale on + known %) — never from AUTO/unknown fan.
     fan_pct: int | None = None
     manuale_on: bool = False
+    # F4b: °C to add to this zone's band center right now (outside its comfort
+    # window). Capped by the engine so center+relax never exceeds duty_comfort_max.
+    comfort_relax: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -1197,7 +1200,8 @@ def build_room_plans(
         wa = [False] * n_steps if free else None
         traj = schedule_precool(
             zone_id=z.zone_id, params=params_by_zone[z.zone_id], t0=z.temp,
-            center=center, band=band, slam=slam, forecast=forecast, solar=solar,
+            center=center + z.comfort_relax, band=band, slam=slam,
+            forecast=forecast, solar=solar,
             now=state.now, lookahead=lookahead, water_available=wa,
             max_depth=max_precool_depth, dt_min=dt_min,
         )
@@ -1237,3 +1241,17 @@ def solar_forecast_curve(
             ), 1,
         ))
     return out
+
+
+# --- F4b: comfort windows (pure) ---------------------------------------------
+
+
+def in_window(minute_of_day: int, from_min: int, to_min: int) -> bool:
+    """True if minute-of-day is within [from, to), handling windows that wrap past
+    midnight (e.g. a bedroom 22:00→08:00). from==to means 'always'."""
+    m = minute_of_day % 1440
+    if from_min == to_min:
+        return True
+    if from_min < to_min:
+        return from_min <= m < to_min
+    return m >= from_min or m < to_min  # wraps midnight

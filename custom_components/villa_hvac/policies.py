@@ -362,6 +362,10 @@ class FanBandController:
                 state.precool_offset is not None
             ):
                 center = center_base - state.precool_offset
+            # F4b: outside its comfort window, let the room drift warm (capped by
+            # the engine so center never exceeds duty_comfort_max).
+            if eligible and center is not None and z.comfort_relax:
+                center += z.comfort_relax
             phase, setpoint = band_step(
                 self._states.get(z.zone_id, BandState()).phase,
                 eligible=bool(eligible),
