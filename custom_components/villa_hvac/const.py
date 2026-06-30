@@ -469,15 +469,32 @@ DEFAULT_DUTY_COOLOFF = 30
 DEFAULT_DUTY_COMFORT_MAX = 27.0
 DEFAULT_DUTY_PEAK_OUTDOOR = 30.0  # duty-adaptive: above this, let the PdC run
 
-# --- #3 Fan pacing -----------------------------------------------------------
-# Within a cooling run, hold the room fan in MANUAL at a paced speed (two-phase:
-# pull down hard, then maintain) instead of letting the valve bang-bang. Opt-in
-# via switch.fan_pacing. Speeds/bands are tunable after the live held-low-fan
-# test (does a held low fan cool smoothly / stop the valve cycling?).
-FAN_PACING_APPROACH_PCT = 100   # pull-down speed while far from target
-FAN_PACING_MAINTAIN_PCT = 33    # maintenance speed near target
-FAN_PACING_APPROACH_BAND = 1.0  # °C above target -> (re)enter pull-down
-FAN_PACING_MAINTAIN_BAND = 0.3  # °C above target -> drop to maintain
+# --- #3 v2: comfort-band control + capacity-matched fan (F1) ------------------
+# The KNX thermostat's internal hysteresis is too narrow -> the valve bang-bangs
+# every ~2 min near setpoint. We impose our OWN wide hysteresis by slamming the
+# setpoint: RUN drives setpoint to target-A (valve forced open) until the room
+# reaches target-B/2; REST drives it to target+A (valve closed) until target+B/2.
+# Long, uniform cycles instead of chatter. Within a RUN the fan is sized to the
+# thermal load (capacity-matched), so it's quiet where less power is needed.
+# Opt-in via switch.fan_pacing. Salotto+cucina (one open space) move together.
+OPT_BAND_WIDTH = "band_width"      # B: total comfort band (°C) the room swings in
+OPT_BAND_SLAM = "band_slam"        # A: setpoint slam amplitude (°C); default B/2
+OPT_FAN_MIN = "fan_min"            # global rest/min-circulation fan % (0 -> off)
+DEFAULT_BAND_WIDTH = 1.5
+DEFAULT_BAND_SLAM = 0.75           # = B/2
+DEFAULT_FAN_MIN = 0                # off during REST unless raised (per-area override)
+FAN_LEVEL_STEP = 10               # quantize the fan to 10 levels (each 10%)
+FAN_LEVEL_HYSTERESIS = 5          # % dead-zone to avoid hunting between levels
+
+# Prior per-room thermal model (capacity-matched fan). PLACEHOLDERS: F2 replaces
+# these with values learned online per room. Comfort is guaranteed by the band
+# regardless of fan accuracy, so rough priors are safe (they only affect how
+# quiet / how fast a run is). dT/dt = a(T_out-T) + b*S + c - k*u.
+COOL_CAPACITY = 1.2          # k: °C/h of cooling at 100% fan (measured best ~0.85)
+COOL_GAIN_OUTDOOR = 0.03     # a: °C/h per °C of (T_out - T_in)
+COOL_GAIN_SOLAR = 0.0008     # b: °C/h per W/m² of solar radiation
+COOL_GAIN_BASE = 0.0         # c: baseline internal-gain °C/h
+COOL_PULLDOWN = 0.3          # r: target pull-down rate during a RUN (°C/h)
 
 # --- #9 forecast run-window planner (pre-cool) -------------------------------
 # Feed-forward on the hourly weather forecast: if a hot peak is coming within the

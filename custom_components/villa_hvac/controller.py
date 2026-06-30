@@ -18,12 +18,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    DEFAULT_FAN_MIN,
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_HOME,
     HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     MODE_PRESET,
+    OPT_FAN_MIN,
     OPT_SEASON,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_OFFSET_DEFAULTS,
@@ -135,6 +137,18 @@ def shade_position(
     """Per-room shade target position (#6), or None to use the house default."""
     value = _number_value(hass, entry, f"shade_position_{zone}")
     return int(value) if value is not None else None
+
+
+def fan_min(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> int:
+    """Per-zone min-circulation fan % (#3 v2): the per-zone override number, else
+    the global default. 0 = fan off during REST."""
+    value = _number_value(hass, entry, f"fan_min_{zone}")
+    if value is None:
+        try:
+            value = float(entry.options.get(OPT_FAN_MIN, DEFAULT_FAN_MIN))
+        except (TypeError, ValueError):
+            value = DEFAULT_FAN_MIN
+    return max(0, min(100, int(value)))
 
 
 def supervisor_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:

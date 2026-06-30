@@ -55,6 +55,8 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONSENSO_BLOCCO,
     COOL_VALVES,
+    DEFAULT_BAND_SLAM,
+    DEFAULT_BAND_WIDTH,
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
@@ -68,6 +70,8 @@ from .const import (
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
     FORECAST_REFRESH,
+    OPT_BAND_SLAM,
+    OPT_BAND_WIDTH,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
@@ -96,6 +100,7 @@ from .controller import (
     current_house_setpoint,
     current_season,
     duty_cycle_enabled,
+    fan_min,
     fan_pacing_enabled,
     is_zone_disabled,
     mode_offset,
@@ -138,6 +143,11 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
     """Ecowitt outdoor temp, falling back to the PdC's own probe."""
     val = _num(hass, OUTDOOR_TEMP)
     return val if val is not None else _num(hass, OUTDOOR_TEMP_FALLBACK)
+
+
+def _manuale_switch(fan_entity: str) -> str:
+    """Manuale switch for a fancoil fan (verified: fan.fancoil_X -> switch.fancoil_X_manuale)."""
+    return "switch." + fan_entity.removeprefix("fan.") + "_manuale"
 
 
 def _lookahead(entry: ConfigEntry) -> timedelta:
@@ -249,21 +259,27 @@ def build_house_state(
         fancoil = fancoils[0] if fancoils else None
         # manuale switch: explicit in ZONES (bedrooms) else derived from the fan
         # entity (verified naming: fan.fancoil_X -> switch.fancoil_X_manuale).
-        manuale = zone.get("manuale_switch")
-        if manuale is None and fancoil:
-            manuale = "switch." + fancoil.removeprefix("fan.") + "_manuale"
+        manuale = zone.get("manuale_switch") or (
+            _manuale_switch(fancoil) if fancoil else None
+        )
+        emitter = zone.get("emitter")
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
             climate=zone.get("climate"),
-            emitter=zone.get("emitter"),
+            emitter=emitter,
             temp=(zone_temps.get(zone_id) or {}).get("value"),
             demand=demand,
             enabled=not is_zone_disabled(hass, entry, zone_id),
             paused=zone_id in paused,
             bedroom=bool(zone.get("bedroom")),
+            fan_min=fan_min(hass, entry, zone_id) if emitter == "fancoil" else 0,
             fancoil=fancoil,
             manuale=manuale,
+            follows=zone.get("follows"),
+            # every fancoil this leader drives, paired with its manuale switch
+            # (living_room owns Salotto + Cucina) — #3 v2 capacity control.
+            fancoil_units=tuple((f, _manuale_switch(f)) for f in fancoils),
         )
 
     # #6: enrich each shadeable cover with its room's shade target + block flag.
@@ -299,6 +315,8 @@ def build_house_state(
             entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
         ),
         shading_default_position=shading_default,
+        band_width=float(entry.options.get(OPT_BAND_WIDTH, DEFAULT_BAND_WIDTH)),
+        band_slam=float(entry.options.get(OPT_BAND_SLAM, DEFAULT_BAND_SLAM)),
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=timedelta(
             minutes=float(entry.options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT))
@@ -432,7 +450,11 @@ class SupervisorEngine:
             self._plan_view = self._build_plan_view(state, pure_outputs)
             if actuate:
                 ctrl_outputs = [c(state) for c in self.controllers]
-                desired = merge_desired([*pure_outputs, *ctrl_outputs])
+                # Controllers first: the #3 band controller's setpoint must win
+                # over house_mode for the cooling zones it actively manages. It
+                # already yields (no opinion) on disabled/paused/free-cool zones,
+                # so the higher-priority preset policies still own those.
+                desired = merge_desired([*ctrl_outputs, *pure_outputs])
                 for lever, target in desired.items():
                     await self._reconcile_lever(lever, target, state)
         finally:
@@ -582,11 +604,11 @@ class SupervisorEngine:
 
     # -- fail-safe ------------------------------------------------------------
     async def async_fail_safe(self) -> None:
-        """Release the central cooling block so we never leave the villa stuck.
+        """Hand the villa back to native KNX: release the central cooling block
+        AND release every fancoil from MANUAL (fans → AUTO).
 
-        Invariant: the villa must never stay globally blocked without the
-        supervisor alive. (As policies that force per-zone presets are migrated
-        in, this will also hand those zones back.)
+        Invariant: the villa must never stay globally blocked, nor with a fan
+        pinned in manual, without the supervisor alive.
         """
         state = self.hass.states.get(CONSENSO_BLOCCO)
         if state is not None and state.state == STATE_ON:
@@ -594,3 +616,13 @@ class SupervisorEngine:
                 await self._call_switch(CONSENSO_BLOCCO, on=False)
             except Exception:  # noqa: BLE001 - fail-safe must not raise on unload
                 _LOGGER.exception("Fail-safe: could not release %s", CONSENSO_BLOCCO)
+        # Release any fancoil manuale switch we may be holding (#3 v2) -> AUTO.
+        for zone in ZONES.values():
+            for fan in zone.get("fancoils") or []:
+                manuale = _manuale_switch(fan)
+                s = self.hass.states.get(manuale)
+                if s is not None and s.state == STATE_ON:
+                    try:
+                        await self._call_switch(manuale, on=False)
+                    except Exception:  # noqa: BLE001 - fail-safe must not raise
+                        _LOGGER.exception("Fail-safe: could not release %s", manuale)

@@ -18,11 +18,14 @@ from custom_components.villa_hvac.supervisor import (
     LeverState,
     RunPlan,
     ZoneSnapshot,
+    band_step,
     build_plan,
+    capacity_fan,
+    cooling_load,
     cover_lever,
     duty_decision,
+    fan_level,
     merge_desired,
-    pacing_decision,
     plan_run,
     reconcile,
     temperature_lever,
@@ -297,26 +300,69 @@ def test_plan_run_empty_forecast():
     assert _plan([], 25.0) == RunPlan()
 
 
-# --- pacing_decision (#3 fan pacing) -----------------------------------------
+# --- #3 v2 comfort-band control + capacity-matched fan -----------------------
 
-PB = dict(approach_band=1.0, maintain_band=0.3, approach_pct=100, maintain_pct=33)
-
-
-def test_pacing_pulls_down_when_far():
-    assert pacing_decision("approach", 2.0, **PB) == ("approach", 100)
+# band B=1.5 (half=0.75), slam A=0.75, center (target) = 24.
+BB = dict(band=1.5, slam=0.75)
 
 
-def test_pacing_switches_to_maintain_near_target():
-    assert pacing_decision("approach", 0.2, **PB) == ("maintain", 33)
+def test_band_run_when_above_band():
+    # 25.0 ≥ 24 + 0.75 -> RUN, setpoint slammed to center - A.
+    phase, sp = band_step("released", eligible=True, temp=25.0, center=24.0, **BB)
+    assert phase == "run" and sp == 23.25
 
 
-def test_pacing_holds_maintain_within_hysteresis_gap():
-    # 0.5 is above maintain_band but below approach_band -> stay in maintain.
-    assert pacing_decision("maintain", 0.5, **PB) == ("maintain", 33)
+def test_band_rest_when_below_band():
+    phase, sp = band_step("released", eligible=True, temp=23.0, center=24.0, **BB)
+    assert phase == "rest" and sp == 24.75
 
 
-def test_pacing_reenters_approach_when_drifts_up():
-    assert pacing_decision("maintain", 1.5, **PB) == ("approach", 100)
+def test_band_holds_run_within_band():
+    # in RUN, still inside the band (24.2) -> keep running (wide hysteresis).
+    phase, sp = band_step("run", eligible=True, temp=24.2, center=24.0, **BB)
+    assert phase == "run" and sp == 23.25
+
+
+def test_band_run_flips_to_rest_only_at_lower_edge():
+    # in RUN until temp drops to center - B/2 = 23.25.
+    assert band_step("run", eligible=True, temp=23.3, center=24.0, **BB)[0] == "run"
+    assert band_step("run", eligible=True, temp=23.2, center=24.0, **BB)[0] == "rest"
+
+
+def test_band_released_when_ineligible():
+    phase, sp = band_step("run", eligible=False, temp=25.0, center=24.0, **BB)
+    assert phase == "released" and sp is None
+
+
+# --- cooling_load + capacity_fan + fan_level ---------------------------------
+
+CM = dict(a=0.03, b=0.0008, c=0.0)
+
+
+def test_cooling_load_sums_terms():
+    # 0.03*(32-24) + 0.0008*900 = 0.24 + 0.72 = 0.96
+    assert round(cooling_load(24.0, 32.0, 900.0, **CM), 3) == 0.96
+
+
+def test_cooling_load_drops_missing_terms():
+    assert cooling_load(None, None, None, **CM) == 0.0
+
+
+def test_fan_level_quantizes_and_floors():
+    assert fan_level(0.64, 0) == 60          # 64% -> nearest 10
+    assert fan_level(0.02, 10) == 10         # below floor -> fan_min
+    assert fan_level(2.0, 0) == 100          # clamp to 100
+
+
+def test_capacity_fan_matches_load():
+    # (0.96 + 0.3)/1.2 = 1.05 -> clamps to 100 (peak: needs full fan)
+    assert capacity_fan(0.96, pulldown=0.3, capacity=1.2, fan_min_pct=0) == 100
+    # mild: (0.3 + 0.3)/1.2 = 0.5 -> 50%
+    assert capacity_fan(0.3, pulldown=0.3, capacity=1.2, fan_min_pct=0) == 50
+
+
+def test_capacity_fan_zero_capacity_is_full():
+    assert capacity_fan(0.5, pulldown=0.3, capacity=0.0, fan_min_pct=0) == 100
 
 
 # --- build_plan (#11 plan view) ----------------------------------------------

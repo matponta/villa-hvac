@@ -4,14 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from custom_components.villa_hvac.const import (
-    FAN_PACING_APPROACH_PCT,
-    FAN_PACING_MAINTAIN_PCT,
     PRESET_BUILDING_PROTECTION,
     SEASON_SUMMER,
 )
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
-    FanPacingController,
+    FanBandController,
     _azimuth_in_band,
     disabled_zones_policy,
     free_cool_policy,
@@ -301,43 +299,68 @@ def test_precool_skips_radiant_and_disabled():
     assert temperature_lever("climate.dis") not in out
 
 
-# --- fan pacing (#3) ---------------------------------------------------------
+# --- #3 v2 comfort-band control + capacity-matched fan -----------------------
 
-def _fanzone(zid, *, temp, demand=True, bedroom=False, emitter="fancoil"):
+def _fanzone(zid, *, temp, bedroom=False, emitter="fancoil", units=None):
+    # a leader fancoil zone with one (fan, manuale) unit by default.
+    fu = units if units is not None else ((f"fan.{zid}", f"switch.{zid}_man"),)
     return ZoneSnapshot(
         zone_id=zid, name=zid, climate=f"climate.{zid}", emitter=emitter,
-        temp=temp, demand=demand, bedroom=bedroom,
-        fancoil=f"fan.{zid}", manuale=f"switch.{zid}_man",
+        temp=temp, bedroom=bedroom, fancoil_units=fu,
     )
 
 
-_PACE = dict(consenso="on", fan_pacing=True, setpoint=24.0, offset=0.0)
+# band defaults (B=1.5, A=0.75) come from HouseState's None -> DEFAULT; season summer.
+_BAND = dict(fan_pacing=True, season="summer", setpoint=24.0, offset=0.0)
 
 
-def test_fan_pacing_disabled_returns_nothing():
-    assert FanPacingController()(_state([_fanzone("a", temp=26.0)])) == {}
+def test_band_disabled_returns_nothing():
+    assert FanBandController()(_state([_fanzone("a", temp=26.0)])) == {}
 
 
-def test_fan_pacing_pulls_down_when_hot():
-    out = FanPacingController()(_state([_fanzone("a", temp=26.0)], **_PACE))
+def test_band_run_slams_setpoint_low_and_holds_fan():
+    out = FanBandController()(_state([_fanzone("a", temp=26.0)], **_BAND))
+    assert out[temperature_lever("climate.a")] == 23.25  # 24 - A(0.75)
     assert out["switch:switch.a_man"] == "on"
-    assert out["fan:fan.a"] == FAN_PACING_APPROACH_PCT
+    assert "fan:fan.a" in out and out["fan:fan.a"] > 0  # capacity-matched run fan
 
 
-def test_fan_pacing_maintains_near_target():
-    out = FanPacingController()(_state([_fanzone("a", temp=24.1)], **_PACE))
-    assert out["fan:fan.a"] == FAN_PACING_MAINTAIN_PCT
+def test_band_rest_slams_setpoint_high_and_fan_to_min():
+    # cold room -> REST: setpoint up, fan to fan_min (0 = off, held in manual).
+    out = FanBandController()(_state([_fanzone("a", temp=23.0)], **_BAND))
+    assert out[temperature_lever("climate.a")] == 24.75  # 24 + A(0.75)
+    assert out["switch:switch.a_man"] == "on" and out["fan:fan.a"] == 0
 
 
-def test_fan_pacing_skips_bedroom_during_night():
-    out = FanPacingController()(
-        _state([_fanzone("bed", temp=26.0, bedroom=True)], night=True, **_PACE)
+def test_band_drives_all_units_of_one_open_space():
+    # living-room-style leader owning Salotto + Cucina -> both fans same speed.
+    z = _fanzone(
+        "lr", temp=26.0,
+        units=(("fan.salotto", "switch.salotto_man"), ("fan.cucina", "switch.cucina_man")),
     )
-    assert out == {}  # camere silenziose (#2b) owns the bedroom fan
+    out = FanBandController()(_state([z], **_BAND))
+    assert out["switch:switch.salotto_man"] == "on"
+    assert out["switch:switch.cucina_man"] == "on"
+    assert out["fan:fan.salotto"] == out["fan:fan.cucina"]  # one unit, one speed
 
 
-def test_fan_pacing_releases_manuale_when_cooling_stops():
-    c = FanPacingController()
-    c(_state([_fanzone("a", temp=26.0)], **_PACE))  # paced (manuale on)
-    out = c(_state([_fanzone("a", temp=26.0, demand=False)], **_PACE))
-    assert out["switch:switch.a_man"] == "off"  # released what we paced
+def test_band_skips_bedroom_during_night():
+    out = FanBandController()(
+        _state([_fanzone("bed", temp=26.0, bedroom=True)], night=True, **_BAND)
+    )
+    assert out == {}  # camere silenziose (#2b) owns it -> no emit, no fight
+
+
+def test_band_releases_manuale_when_disabled():
+    c = FanBandController()
+    c(_state([_fanzone("a", temp=26.0)], **_BAND))      # managed (manuale on)
+    out = c(_state([_fanzone("a", temp=26.0)]))          # fan_pacing now off
+    assert out["switch:switch.a_man"] == "off"           # handed back to AUTO
+
+
+def test_band_skips_followers():
+    follower = ZoneSnapshot(
+        zone_id="kitchen", name="kitchen", climate=None, emitter="fancoil",
+        temp=26.0, follows="lr", fancoil_units=(("fan.cucina", "switch.cucina_man"),),
+    )
+    assert FanBandController()(_state([follower], **_BAND)) == {}

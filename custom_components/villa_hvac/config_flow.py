@@ -16,6 +16,9 @@ from homeassistant.core import callback
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_AWAY_HOURS,
+    DEFAULT_BAND_SLAM,
+    DEFAULT_BAND_WIDTH,
+    DEFAULT_FAN_MIN,
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
@@ -34,6 +37,9 @@ from .const import (
     HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
+    OPT_BAND_SLAM,
+    OPT_BAND_WIDTH,
+    OPT_FAN_MIN,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
@@ -200,6 +206,18 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_PRECOOL_OFFSET,
                     default=options.get(OPT_PRECOOL_OFFSET, DEFAULT_PRECOOL_OFFSET),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+                vol.Optional(
+                    OPT_BAND_WIDTH,
+                    default=options.get(OPT_BAND_WIDTH, DEFAULT_BAND_WIDTH),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.4, max=4)),
+                vol.Optional(
+                    OPT_BAND_SLAM,
+                    default=options.get(OPT_BAND_SLAM, DEFAULT_BAND_SLAM),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.2, max=3)),
+                vol.Optional(
+                    OPT_FAN_MIN,
+                    default=options.get(OPT_FAN_MIN, DEFAULT_FAN_MIN),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

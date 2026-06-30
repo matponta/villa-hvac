@@ -211,14 +211,31 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        hours, taper as the peak nears → peak-skip). Pre-cool then (a) suppresses
        the duty cooloff and (b) `precool_policy` nudges fancoil setpoints
        `OPT_PRECOOL_OFFSET` colder. Also covers #7's summer pre-cool path.
-7. [x] #3 Fan PACING (was DROPPED, now REBORN) — DONE (v0.13.0):
-       `FanPacingController` + pure `pacing_decision` (two-phase: pull-down →
-       maintain, hysteresis). Within a cooling run, holds each cooling fancoil
-       room's fan in MANUAL at a paced % (manuale on + fan %), skips a bedroom
-       while camere silenziose owns it, releases manuale when cooling stops.
-       Opt-in `switch.fan_pacing`. Speeds/bands (`FAN_PACING_*`) tunable after the
-       live held-low-fan test (does a held low fan cool smoothly / stop the valve
-       cycling?). manuale switch derived `fan.fancoil_X` → `switch.fancoil_X_manuale`.
+7. [x] #3 — was two-phase pacing (v0.13.0), **REWRITTEN as comfort-band control
+       + capacity-matched fan (#3 v2, F1, v0.17.0)** after the live data showed the
+       old pacing rode the valve bang-bang (gated on `z.demand` → released to AUTO
+       100% on every valve close) and never touched the kitchen.
+       ROOT CAUSE: the KNX thermostat's internal hysteresis is too narrow (~±0.3 °C)
+       → valve chatters ~every 2 min near setpoint. FIX = impose our OWN wide
+       hysteresis by slamming the setpoint: `FanBandController` + pure `band_step`.
+       Per cooling fancoil **leader** zone (it drives all its `fancoils` at one
+       speed — living_room owns Salotto+Cucina): RUN drives setpoint to `center−A`
+       (valve forced open) + fan at a **capacity-matched** level; REST drives it to
+       `center+A` (valve closed) + fan to `fan_min`; flips at `center±B/2`. Long
+       uniform cycles, no chatter; fan quiet where load is low. `center` =
+       house_setpoint+mode_offset (− precool_offset when #9 says so). Fan % =
+       `capacity_fan((G+pulldown)/k)` quantized to 10 levels; `G=cooling_load(a·(T_out−T)
+       +b·S+c)` with PRIOR `COOL_*` constants (F2 learns them per room). Pure:
+       `band_step`, `cooling_load`, `capacity_fan`, `fan_level`. Engine merges
+       **controllers BEFORE pure policies** so the band setpoint beats house_mode
+       on its zones (it yields on disabled/paused/free-cool, which the preset
+       policies still own). Skips bedrooms while camere silenziose owns them (no
+       emit, no fight); releases manuale on disable/season-flip + in `async_fail_safe`
+       (fans→AUTO). Settable: `OPT_BAND_WIDTH` (B, 1.5), `OPT_BAND_SLAM` (A, B/2),
+       `OPT_FAN_MIN` (global) + per-zone `number.*_fan_min` override (0=off in REST).
+       Opt-in `switch.fan_pacing`. TODO F2: online RLS per-room {a,b,c,k}; F3:
+       regime selector (peak/medium/low) + coalescing (sync band phase, BLOCCO as
+       safety) + 12h per-room plan.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to

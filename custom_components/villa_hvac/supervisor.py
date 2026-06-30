@@ -267,35 +267,93 @@ def plan_run(
     return RunPlan(precool=precool, forecast_peak=peak_temp, peak_eta=eta)
 
 
-# --- #3 fan pacing (pure) ----------------------------------------------------
-# Within a cooling run, hold the room's fan at a paced speed instead of letting
-# the valve bang-bang: pull down hard while far from target, then drop to a
-# maintenance speed near it. Two-phase hysteresis (approach / maintain).
+# --- #3 v2: comfort-band control + capacity-matched fan (pure) ---------------
+# Two-axis control of a fancoil cooling unit:
+#  - SETPOINT band: we impose a wide, settable hysteresis by slamming the
+#    thermostat setpoint to center-A (RUN, valve forced open) / center+A (REST,
+#    valve closed), flipping at center±B/2. Long uniform cycles, no bang-bang.
+#  - FAN: sized to the thermal load (capacity-matched), so it's quiet where less
+#    power is needed. The band guarantees comfort regardless of fan accuracy.
 
 
-def pacing_decision(
+@dataclass(frozen=True)
+class BandState:
+    """Comfort-band hysteresis phase for one cooling unit."""
+
+    phase: str = "released"   # "released" | "run" | "rest"
+
+
+def band_step(
     phase: str,
-    error: float,
     *,
-    approach_band: float,
-    maintain_band: float,
-    approach_pct: int,
-    maintain_pct: int,
-) -> tuple[str, int]:
-    """Advance the two-phase fan pacing. `error` = temp - target (°C).
+    eligible: bool,
+    temp: float | None,
+    center: float | None,
+    band: float,
+    slam: float,
+) -> tuple[str, float | None]:
+    """Advance the comfort-band hysteresis. Returns (new_phase, setpoint).
 
-    APPROACH (pull down) at approach_pct until error <= maintain_band; MAINTAIN
-    at maintain_pct until error >= approach_band again. The band gap gives
-    hysteresis so the fan doesn't flap at the setpoint. Returns (phase, fan %).
+    RUN once temp ≥ center + B/2 (drive setpoint to center-A → valve open);
+    REST once temp ≤ center - B/2 (drive setpoint to center+A → valve closed);
+    within the band, hold the current phase (the wide hysteresis). setpoint is
+    None when released → no opinion, the house-mode policy owns the setpoint.
     """
-    if phase == "maintain":
-        if error >= approach_band:
-            return "approach", approach_pct
-        return "maintain", maintain_pct
-    # approach (default)
-    if error <= maintain_band:
-        return "maintain", maintain_pct
-    return "approach", approach_pct
+    if not eligible or temp is None or center is None:
+        return "released", None
+    half = band / 2.0
+    if temp >= center + half:
+        phase = "run"
+    elif temp <= center - half:
+        phase = "rest"
+    elif phase == "released":
+        phase = "run" if temp >= center else "rest"
+    # else: within the band -> keep the current phase (hysteresis hold)
+    if phase == "run":
+        return "run", round(center - slam, 2)
+    return "rest", round(center + slam, 2)
+
+
+def cooling_load(
+    temp: float | None,
+    outdoor: float | None,
+    solar: float | None,
+    *,
+    a: float,
+    b: float,
+    c: float,
+) -> float:
+    """Heat-gain rate G (°C/h) = a·(T_out−T) + b·S + c. Missing inputs drop their
+    term. Positive G = the room is gaining heat (needs cooling to hold)."""
+    g = c
+    if outdoor is not None and temp is not None:
+        g += a * (outdoor - temp)
+    if solar is not None:
+        g += b * solar
+    return g
+
+
+def fan_level(u: float, fan_min_pct: int, *, step: int = 10) -> int:
+    """Quantize a fan effort u∈[0,1] to a level (`step`% each), floored at the
+    minimum-circulation %, capped at 100."""
+    pct = max(0.0, min(1.0, u)) * 100.0
+    quantized = round(pct / step) * step
+    return int(min(100, max(fan_min_pct, quantized)))
+
+
+def capacity_fan(
+    load: float,
+    *,
+    pulldown: float,
+    capacity: float,
+    fan_min_pct: int,
+    step: int = 10,
+) -> int:
+    """Fan % to deliver (load + pulldown) of cooling given capacity k (°C/h at
+    100%). Capacity ≤ 0 → full fan (can't size). Quantized to levels."""
+    if capacity <= 0:
+        return 100
+    return fan_level((load + pulldown) / capacity, fan_min_pct, step=step)
 
 
 # --- House-state model (pure data) -------------------------------------------
@@ -317,8 +375,13 @@ class ZoneSnapshot:
     enabled: bool = True           # #10 zone enable switch
     paused: bool = False           # #4 window pause
     bedroom: bool = False          # camere silenziose zone (#2b)
-    fancoil: str | None = None     # fan entity (for #3 pacing)
-    manuale: str | None = None     # manuale switch entity (for #3 pacing)
+    fan_min: int = 0               # rest/min-circulation fan % for this zone (#3 v2)
+    fancoil: str | None = None     # primary fan entity
+    manuale: str | None = None     # primary manuale switch entity
+    follows: str | None = None     # leader zone_id this zone defers to (open-space)
+    # All (fan, manuale) units this leader drives at one speed — e.g. living_room
+    # owns both Salotto and Cucina fancoils (one open space, #3 v2).
+    fancoil_units: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -351,6 +414,8 @@ class HouseState:
     shading_enabled: bool = False
     shading_solar_threshold: float | None = None
     shading_default_position: int | None = None  # #6 fallback shade position
+    band_width: float | None = None    # #3 v2 comfort band B (°C)
+    band_slam: float | None = None     # #3 v2 setpoint slam A (°C)
     duty_enabled: bool = False          # #9 duty-cycle switch
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None

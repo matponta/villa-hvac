@@ -16,10 +16,14 @@ separate, deliberate step.
 from __future__ import annotations
 
 from .const import (
-    FAN_PACING_APPROACH_BAND,
-    FAN_PACING_APPROACH_PCT,
-    FAN_PACING_MAINTAIN_BAND,
-    FAN_PACING_MAINTAIN_PCT,
+    COOL_CAPACITY,
+    COOL_GAIN_BASE,
+    COOL_GAIN_OUTDOOR,
+    COOL_GAIN_SOLAR,
+    COOL_PULLDOWN,
+    DEFAULT_BAND_SLAM,
+    DEFAULT_BAND_WIDTH,
+    FAN_LEVEL_STEP,
     MODE_PRESET,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
@@ -29,13 +33,16 @@ from .const import (
 )
 from .supervisor import (
     BLOCCO_LEVER,
+    BandState,
     DutyState,
     HouseState,
     ZoneSnapshot,
+    band_step,
+    capacity_fan,
+    cooling_load,
     cover_lever,
     duty_decision,
     fan_lever,
-    pacing_decision,
     preset_lever,
     switch_lever,
     temperature_lever,
@@ -265,49 +272,92 @@ class DutyController:
         return {BLOCCO_LEVER: blocco}
 
 
-class FanPacingController:
-    """#3 fan pacing (stateful): within a cooling run, hold each cooling fancoil
-    room's fan in MANUAL at a paced speed (two-phase pull-down → maintain) so the
-    valve stops bang-banging. Skips a bedroom while camere silenziose (#2b) owns
-    it. Releases (manuale off) a room it previously paced once it stops cooling.
-    Off while disabled. Speeds/bands are tunable post the live held-low-fan test.
+class FanBandController:
+    """#3 v2 (stateful): comfort-band setpoint control + capacity-matched fan.
+
+    Per cooling fancoil LEADER zone (it owns its open-space fancoils, e.g.
+    living_room drives Salotto + Cucina together), runs a wide-hysteresis loop:
+    RUN slams the setpoint to center-A (valve forced open) and holds the fan at a
+    capacity-matched speed; REST slams it to center+A (valve closed) and drops the
+    fan to the min-circulation level; flips at center±B/2. This replaces the
+    KNX thermostat's too-narrow band, so the valve stops bang-banging and the fan
+    runs steady & quiet. Center = house target (− pre-cool offset when #9 says so).
+
+    Skips bedrooms while camere silenziose (#2b) owns them, disabled/paused zones,
+    free-cooling, and non-summer. Releases (manuale off → AUTO) when ineligible.
+    Opt-in via switch.fan_pacing. Followers (kitchen, rack) are driven by their
+    leader's fancoil list, not iterated here.
     """
 
     def __init__(self) -> None:
-        self._phase: dict[str, str] = {}
+        self._states: dict[str, BandState] = {}
+
+    def _release_all(self, state: HouseState) -> Desired:
+        """Hand every fan we were holding back to AUTO (manuale off), once. Levers
+        not present in `desired` are NOT auto-released by the engine, so on
+        disable/season-flip we must emit the releases explicitly."""
+        if not self._states:
+            return {}
+        out: Desired = {}
+        for zid in self._states:
+            z = state.zones.get(zid)
+            if z:
+                for _fan, manuale in z.fancoil_units:
+                    out[switch_lever(manuale)] = "off"
+        self._states.clear()
+        return out
 
     def __call__(self, state: HouseState) -> Desired:
-        if not state.fan_pacing_enabled:
-            self._phase.clear()
-            return {}
-        target = None
+        if not state.fan_pacing_enabled or state.season != SEASON_SUMMER:
+            return self._release_all(state)
+        center_base = None
         if state.house_setpoint is not None and state.mode_offset is not None:
-            target = state.house_setpoint + state.mode_offset
-        cooling_run = state.consenso_freddo == "on"
+            center_base = state.house_setpoint + state.mode_offset
+        free_cool = _free_cooling(state)
+        band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
+        slam = state.band_slam if state.band_slam is not None else DEFAULT_BAND_SLAM
         out: Desired = {}
         for z in state.zones.values():
-            if z.emitter != "fancoil" or not z.fancoil or not z.manuale:
-                continue
+            if z.follows or z.emitter != "fancoil" or not z.climate or not z.fancoil_units:
+                continue  # followers + non-fancoil are not leaders
             if z.bedroom and state.night_active:
-                self._phase.pop(z.zone_id, None)  # #2b owns the bedroom fan
+                self._states.pop(z.zone_id, None)  # #2b camere silenziose owns it
                 continue
-            pacing = (
-                cooling_run and z.demand and z.enabled and not z.paused
-                and z.temp is not None and target is not None
+            eligible = (
+                center_base is not None
+                and z.enabled and not z.paused and not free_cool
             )
-            if pacing:
-                phase, pct = pacing_decision(
-                    self._phase.get(z.zone_id, "approach"),
-                    z.temp - target,
-                    approach_band=FAN_PACING_APPROACH_BAND,
-                    maintain_band=FAN_PACING_MAINTAIN_BAND,
-                    approach_pct=FAN_PACING_APPROACH_PCT,
-                    maintain_pct=FAN_PACING_MAINTAIN_PCT,
+            center = center_base
+            if eligible and state.precool and state.duty_enabled and (
+                state.precool_offset is not None
+            ):
+                center = center_base - state.precool_offset
+            phase, setpoint = band_step(
+                self._states.get(z.zone_id, BandState()).phase,
+                eligible=bool(eligible),
+                temp=z.temp,
+                center=center if eligible else None,
+                band=band,
+                slam=slam,
+            )
+            self._states[z.zone_id] = BandState(phase=phase)
+            if phase == "released":
+                for _fan, manuale in z.fancoil_units:
+                    out[switch_lever(manuale)] = "off"  # hand back to AUTO
+                continue
+            out[temperature_lever(z.climate)] = setpoint
+            if phase == "run":
+                load = cooling_load(
+                    z.temp, state.outdoor_temp, state.solar,
+                    a=COOL_GAIN_OUTDOOR, b=COOL_GAIN_SOLAR, c=COOL_GAIN_BASE,
                 )
-                self._phase[z.zone_id] = phase
-                out[switch_lever(z.manuale)] = "on"
-                out[fan_lever(z.fancoil)] = pct
-            elif z.zone_id in self._phase:
-                self._phase.pop(z.zone_id)
-                out[switch_lever(z.manuale)] = "off"  # release what we paced
+                pct = capacity_fan(
+                    load, pulldown=COOL_PULLDOWN, capacity=COOL_CAPACITY,
+                    fan_min_pct=z.fan_min, step=FAN_LEVEL_STEP,
+                )
+            else:  # rest -> min circulation (0 = off, held)
+                pct = z.fan_min
+            for fan, manuale in z.fancoil_units:
+                out[switch_lever(manuale)] = "on"
+                out[fan_lever(fan)] = pct
         return out
