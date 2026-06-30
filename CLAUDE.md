@@ -246,7 +246,14 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        in fail-safe) + `ZoneSnapshot.model_*` (blended, fed to control only in F2b)
        + diagnostic `sensor.hvac_model_<zone>` (G + a,b,c,k + confidence). Opt-in
        `OPT_MODEL_ENABLED` (default on; observer is read-only).
-       TODO: F2b learn k (w=True+fan-held, actual %); F3a regime classify; F3b 12h
+       F2b DONE (v0.19.0): capacity k learned on w=True + HELD-steady-fan windows
+       (manuale on + known %, `MODEL_CAP_FAN_STABILITY` spread cap; never AUTO/
+       transient) via `rls_capacity_update`; the BLENDED model_* now FEEDS the fan
+       sizing (`FanBandController` uses z.model_{a,b,c,k} else COOL_* prior);
+       `capacity_fan` gained level hysteresis (`FAN_LEVEL_HYSTERESIS`) to stop fan
+       hunting; ZoneSnapshot gained `fan_pct`/`manuale_on`. Until k converges the
+       blend returns the prior → fan sizing == F1.
+       TODO: F3a regime classify; F3b 12h
        per-room sim; F3c coalescing (gated on k-convergence); F4a solar forecast;
        F4b comfort windows; F4c MPC-lite (optional). Cross-cutting (from review):
        identifiability gating, hard-room trajectories ADVISORY until k learned

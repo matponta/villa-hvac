@@ -524,6 +524,9 @@ MODEL_P0_K = 4.0
 # control (smooth blend weight = n / (n + conf_min)).
 MODEL_ABC_CONF_MIN = 40
 MODEL_K_CONF_MIN = 20
+# k is learned only on a HELD, STEADY fan window (manuale on + the % barely moving),
+# never from AUTO/unknown or a pull-down transient.
+MODEL_CAP_FAN_STABILITY = 12   # max (max-min) fan % spread over the window to learn k
 
 # --- #9 forecast run-window planner (pre-cool) -------------------------------
 # Feed-forward on the hourly weather forecast: if a hot peak is coming within the

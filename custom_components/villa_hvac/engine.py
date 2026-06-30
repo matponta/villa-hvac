@@ -287,6 +287,21 @@ def build_house_state(
             _manuale_switch(fancoil) if fancoil else None
         )
         emitter = zone.get("emitter")
+        # F2b: current commanded fan % + whether ANY unit's manuale is on (held).
+        fan_pct: int | None = None
+        manuale_on = False
+        if emitter == "fancoil" and fancoils:
+            fs = hass.states.get(fancoils[0])
+            if fs is not None:
+                try:
+                    fan_pct = int(float(fs.attributes.get(ATTR_PERCENTAGE)))
+                except (TypeError, ValueError):
+                    fan_pct = None
+            for f in fancoils:
+                ms = hass.states.get(_manuale_switch(f))
+                if ms is not None and ms.state == STATE_ON:
+                    manuale_on = True
+                    break
         # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
         m_a = m_b = m_c = m_k = m_conf = m_kconf = None
         is_leader = bool(
@@ -317,6 +332,7 @@ def build_house_state(
             fancoil_units=tuple((f, _manuale_switch(f)) for f in fancoils),
             model_a=m_a, model_b=m_b, model_c=m_c, model_k=m_k,
             model_confidence=m_conf, model_k_confidence=m_kconf,
+            fan_pct=fan_pct, manuale_on=manuale_on,
         )
 
     # #6: enrich each shadeable cover with its room's shade target + block flag.

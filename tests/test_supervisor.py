@@ -589,3 +589,12 @@ def test_confidence_monotone():
     p = replace(_seed(), n=40, n_k=20)
     assert abs(abc_confidence(p, conf_min=40) - 0.5) < 1e-9
     assert abs(k_confidence(p, conf_min=20) - 0.5) < 1e-9
+
+
+def test_capacity_fan_hysteresis_holds_level():
+    # raw 45% near last level 50, within step/2+hyst (10) -> hold 50 (no hunt).
+    assert capacity_fan(0.45, pulldown=0.0, capacity=1.0, fan_min_pct=0,
+                        last_level=50, hysteresis=5) == 50
+    # raw 35% is beyond the boundary -> step down to 40.
+    assert capacity_fan(0.35, pulldown=0.0, capacity=1.0, fan_min_pct=0,
+                        last_level=50, hysteresis=5) == 40

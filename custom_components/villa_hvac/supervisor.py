@@ -349,12 +349,22 @@ def capacity_fan(
     capacity: float,
     fan_min_pct: int,
     step: int = 10,
+    last_level: int | None = None,
+    hysteresis: int = 0,
 ) -> int:
     """Fan % to deliver (load + pulldown) of cooling given capacity k (°C/h at
-    100%). Capacity ≤ 0 → full fan (can't size). Quantized to levels."""
+    100%). Capacity ≤ 0 → full fan (can't size). Quantized to `step` levels.
+
+    With `last_level`/`hysteresis`, holds the previous level until the raw demand
+    moves past the level boundary by more than `step/2 + hysteresis` — so the fan
+    doesn't hunt between adjacent levels as the load jitters."""
     if capacity <= 0:
         return 100
-    return fan_level((load + pulldown) / capacity, fan_min_pct, step=step)
+    raw = max(0.0, min(1.0, (load + pulldown) / capacity)) * 100.0
+    level = round(raw / step) * step
+    if last_level is not None and abs(raw - last_level) < (step / 2 + hysteresis):
+        level = last_level
+    return int(min(100, max(fan_min_pct, level)))
 
 
 # --- F2: online self-refining per-room thermal model (pure RLS) --------------
@@ -567,6 +577,10 @@ class ZoneSnapshot:
     model_k: float | None = None
     model_confidence: float | None = None    # min(abc, k) confidence, for display
     model_k_confidence: float | None = None   # k-only confidence (regime/F2b gating)
+    # F2b: live actuation state, so the estimator can learn k only on held-fan
+    # windows (manuale on + known %) — never from AUTO/unknown fan.
+    fan_pct: int | None = None
+    manuale_on: bool = False
 
 
 @dataclass(frozen=True)

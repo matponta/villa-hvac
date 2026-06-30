@@ -443,3 +443,33 @@ def test_estimator_model_for_blends_prior_when_unconverged():
     # no learning yet -> model_for returns the prior (control behaves like F1).
     m = est.model_for("lr")
     assert m.a > 0 and m.k > 0  # the COOL_* prior
+
+
+def test_estimator_learns_capacity_on_held_steady_window():
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    for m in range(0, 17, 2):  # w=True, fan HELD at 50% steady, manuale on
+        z = _leader(temp=25.0 - 0.2 * (m / 60.0), demand=True, fan_pct=50, manuale_on=True)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
+    assert est.params["lr"].n_k >= 1     # capacity learned
+    assert est.params["lr"].n == 0        # passive untouched on a cooling window
+
+
+def test_estimator_skips_capacity_when_fan_not_held():
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    for m in range(0, 17, 2):  # AUTO (manuale off) -> unknown fan -> never learn k
+        z = _leader(temp=25.0, demand=True, fan_pct=100, manuale_on=False)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
+    p = est.params.get("lr")
+    assert p is None or p.n_k == 0
+
+
+def test_band_fan_uses_learned_capacity():
+    from dataclasses import replace as _replace
+    z = _fanzone("a", temp=26.0)
+    low_k = _replace(z, model_a=0.0, model_b=0.0, model_c=0.0, model_k=0.5)
+    out_low = FanBandController()(_state([low_k], **_BAND))
+    out_prior = FanBandController()(_state([z], **_BAND))  # model_* None -> prior k
+    # a learned LOW capacity demands at least as much fan as the (higher) prior.
+    assert out_low["fan:fan.a"] >= out_prior["fan:fan.a"]

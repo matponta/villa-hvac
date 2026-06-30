@@ -26,9 +26,11 @@ from .const import (
     COOL_PULLDOWN,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
+    FAN_LEVEL_HYSTERESIS,
     FAN_LEVEL_STEP,
     MODE_PRESET,
     MODEL_ABC_CONF_MIN,
+    MODEL_CAP_FAN_STABILITY,
     MODEL_FORGETTING,
     MODEL_K_CONF_MIN,
     MODEL_MAX_A,
@@ -66,6 +68,7 @@ from .supervisor import (
     fan_lever,
     k_confidence,
     preset_lever,
+    rls_capacity_update,
     rls_passive_update,
     seed_params,
     switch_lever,
@@ -325,6 +328,7 @@ class FanBandController:
 
     def __init__(self) -> None:
         self._states: dict[str, BandState] = {}
+        self._last_fan: dict[str, int] = {}
 
     def _release_all(self, state: HouseState) -> Desired:
         """Hand every fan we were holding back to AUTO (manuale off), once. Levers
@@ -339,6 +343,7 @@ class FanBandController:
                 for _fan, manuale in z.fancoil_units:
                     out[switch_lever(manuale)] = "off"
         self._states.clear()
+        self._last_fan.clear()
         return out
 
     def __call__(self, state: HouseState) -> Desired:
@@ -376,21 +381,28 @@ class FanBandController:
             )
             self._states[z.zone_id] = BandState(phase=phase)
             if phase == "released":
+                self._last_fan.pop(z.zone_id, None)
                 for _fan, manuale in z.fancoil_units:
                     out[switch_lever(manuale)] = "off"  # hand back to AUTO
                 continue
             out[temperature_lever(z.climate)] = setpoint
             if phase == "run":
-                load = cooling_load(
-                    z.temp, state.outdoor_temp, state.solar,
-                    a=COOL_GAIN_OUTDOOR, b=COOL_GAIN_SOLAR, c=COOL_GAIN_BASE,
-                )
+                # F2: use the learned (blended) model where available, else priors.
+                a = z.model_a if z.model_a is not None else COOL_GAIN_OUTDOOR
+                b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
+                c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
+                k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
+                load = cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c)
                 pct = capacity_fan(
-                    load, pulldown=COOL_PULLDOWN, capacity=COOL_CAPACITY,
+                    load, pulldown=COOL_PULLDOWN, capacity=k,
                     fan_min_pct=z.fan_min, step=FAN_LEVEL_STEP,
+                    last_level=self._last_fan.get(z.zone_id),
+                    hysteresis=FAN_LEVEL_HYSTERESIS,
                 )
+                self._last_fan[z.zone_id] = pct
             else:  # rest -> min circulation (0 = off, held)
                 pct = z.fan_min
+                self._last_fan.pop(z.zone_id, None)
             for fan, manuale in z.fancoil_units:
                 out[switch_lever(manuale)] = "on"
                 out[fan_lever(fan)] = pct
@@ -479,26 +491,41 @@ class ThermalEstimator:
             buf.clear()  # a chilled-water edge -> start a fresh homogeneous window
         self._last_w[zid] = w
         now = state.now
-        buf.append((now, float(temp), float(t_out), float(solar)))
+        buf.append((now, float(temp), float(t_out), float(solar), z.fan_pct, z.manuale_on))
         while buf and (now - buf[0][0]) > self._max_window:
             buf.pop(0)
         if not buf or (now - buf[0][0]).total_seconds() / 3600.0 < self._window_h:
             return
-        rate = estimate_rate([(t, v) for (t, v, _, _) in buf], min_span_h=self._window_h)
+        rate = estimate_rate([(s[0], s[1]) for s in buf], min_span_h=self._window_h)
         if rate is None:
             return
         n = len(buf)
         mt_out = sum(s[2] for s in buf) / n
         mtemp = sum(s[1] for s in buf) / n
         msolar = sum(s[3] for s in buf) / n
-        if not w:  # F2a: passive {a,b,c} on a no-chilled-water window
+        if not w:
+            # F2a: passive {a,b,c} on a no-chilled-water window.
             self.params[zid] = rls_passive_update(
                 self.params[zid], dt_dt=rate, t_out=mt_out, temp=mtemp, solar=msolar,
                 forgetting=MODEL_FORGETTING, bounds=self._bounds,
             )
-        # F2b adds the capacity (k) branch here (w=True + fan held).
+        else:
+            # F2b: capacity k — only on a HELD, STEADY fan window (manuale on by
+            # us + a known %), never from AUTO/unknown or a pull-down transient.
+            fans = [s[4] for s in buf]
+            held = all(s[5] for s in buf)
+            if held and all(f is not None for f in fans) and (
+                max(fans) - min(fans) <= MODEL_CAP_FAN_STABILITY
+            ):
+                u = (sum(fans) / n) / 100.0
+                if u > 0:
+                    self.params[zid] = rls_capacity_update(
+                        self.params[zid], dt_dt=rate, t_out=mt_out, temp=mtemp,
+                        solar=msolar, u=u, forgetting=MODEL_FORGETTING,
+                        bounds=self._bounds,
+                    )
         buf.clear()
-        buf.append((now, float(temp), float(t_out), float(solar)))  # fresh window
+        buf.append((now, float(temp), float(t_out), float(solar), z.fan_pct, z.manuale_on))
 
     # -- persistence (engine drives the Store) --------------------------------
     def load(self, data: dict | None) -> None:
