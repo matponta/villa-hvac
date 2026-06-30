@@ -42,6 +42,8 @@ from .const import (
     MODEL_P0_PASSIVE,
     MODEL_RATE_MAX_MIN,
     MODEL_RATE_WINDOW_MIN,
+    COALESCE_ENTER_FRACTION,
+    COALESCE_EXIT_FRACTION,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_SUMMER,
@@ -51,10 +53,14 @@ from .const import (
 from .supervisor import (
     BLOCCO_BLOCK,
     BLOCCO_LEVER,
+    BLOCCO_RELEASE,
     BandState,
     _is_cooling_leader,
     DutyState,
     HouseState,
+    REGIME_MEDIUM,
+    RegimeState,
+    coalesce_phase,
     ParamBounds,
     ThermalParams,
     ZoneSnapshot,
@@ -337,9 +343,12 @@ class FanBandController:
         self._last_fan.clear()
         return out
 
-    def __call__(self, state: HouseState) -> Desired:
+    def __call__(
+        self, state: HouseState, phase_override: dict[str, str] | None = None
+    ) -> Desired:
         if not state.fan_pacing_enabled or state.season != SEASON_SUMMER:
             return self._release_all(state)
+        override = phase_override or {}
         center_base = None
         if state.house_setpoint is not None and state.mode_offset is not None:
             center_base = state.house_setpoint + state.mode_offset
@@ -366,14 +375,21 @@ class FanBandController:
             # the engine so center never exceeds duty_comfort_max).
             if eligible and center is not None and z.comfort_relax:
                 center += z.comfort_relax
-            phase, setpoint = band_step(
-                self._states.get(z.zone_id, BandState()).phase,
-                eligible=bool(eligible),
-                temp=z.temp,
-                center=center if eligible else None,
-                band=band,
-                slam=slam,
-            )
+            # F3c: when the regime coordinator coalesces, it dictates the phase;
+            # the band controller still slams the setpoint + sizes the fan exactly
+            # as usual, so exactly ONE component decides the phase per zone.
+            if eligible and z.zone_id in override:
+                phase = override[z.zone_id]
+                setpoint = round((center - slam) if phase == "run" else (center + slam), 2)
+            else:
+                phase, setpoint = band_step(
+                    self._states.get(z.zone_id, BandState()).phase,
+                    eligible=bool(eligible),
+                    temp=z.temp,
+                    center=center if eligible else None,
+                    band=band,
+                    slam=slam,
+                )
             self._states[z.zone_id] = BandState(phase=phase)
             if phase == "released":
                 self._last_fan.pop(z.zone_id, None)
@@ -550,3 +566,56 @@ class ThermalEstimator:
             }
             for zid, p in self.params.items()
         }
+
+
+class RegimeCoordinator:
+    """F3c: synchronizes the house RUN/REST in the MEDIUM regime so the PdC does
+    fewer, longer cycles. NOT a merge controller — the engine drives it explicitly
+    (it needs the regime + center), and it returns the per-leader phase_override
+    map (handed to FanBandController) + its BLOCCO opinion. Holds RegimeState.
+
+    Rest is enforced through the band setpoint (valves close), not BLOCCO, so the
+    fail-safe fully restores native KNX. BLOCCO is only RELEASE here (override the
+    duty cooloff — coalescing handles the rest). Resets when not coalescing, so a
+    transition out of MEDIUM hands every room back to per-room band control.
+    """
+
+    def __init__(self) -> None:
+        self._rs = RegimeState()
+
+    @property
+    def regime_state(self) -> RegimeState:
+        return self._rs
+
+    def step(
+        self, state: HouseState, *,
+        regime: str, center: float | None, min_on, min_off,
+    ) -> tuple[dict[str, str], str | None]:
+        """Advance coalescing. Returns (phase_override, blocco_opinion). When not
+        in MEDIUM (or no eligible leaders) it resets and yields ({}, None) so the
+        legacy DutyController BLOCCO + per-room band control take over."""
+        if regime != REGIME_MEDIUM or center is None or _free_cooling(state):
+            self._rs = RegimeState()
+            return {}, None
+        leaders = [
+            z for z in state.zones.values()
+            if _is_cooling_leader(z) and z.enabled and not z.paused
+            and not (z.bedroom and state.night_active) and z.temp is not None
+        ]
+        if not leaders:
+            self._rs = RegimeState()
+            return {}, None
+        band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
+        # comfort_relax lowers a room's effective temp (it's allowed to drift warm).
+        room_temps = {z.zone_id: z.temp - z.comfort_relax for z in leaders}
+        breach = state.duty_comfort_max is not None and any(
+            z.temp > state.duty_comfort_max for z in leaders
+        )
+        self._rs, house_phase = coalesce_phase(
+            self._rs, room_temps=room_temps, center=center, band=band, now=state.now,
+            min_on=min_on, min_off=min_off,
+            enter_frac=COALESCE_ENTER_FRACTION, exit_frac=COALESCE_EXIT_FRACTION,
+            comfort_breach=breach,
+        )
+        override = {z.zone_id: house_phase for z in leaders}
+        return override, BLOCCO_RELEASE

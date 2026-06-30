@@ -82,11 +82,14 @@ from .const import (
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
+    DEFAULT_MIN_COMPRESSOR_OFF,
+    DEFAULT_MIN_COMPRESSOR_ON,
     DEFAULT_MODEL_ENABLED,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
+    DEFAULT_REGIME_ENABLED,
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
     DEFAULT_SHADING_ENABLED,
@@ -102,17 +105,21 @@ from .const import (
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_MIN_COMPRESSOR_OFF,
+    OPT_MIN_COMPRESSOR_ON,
     OPT_MODEL_ENABLED,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_MAX_DEPTH,
     OPT_PRECOOL_OFFSET,
+    OPT_REGIME_ENABLED,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
     OPT_SOLAR_FORECAST,
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
+    SEASON_SUMMER,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
@@ -140,7 +147,12 @@ from .controller import (
     shade_position,
     supervisor_enabled,
 )
-from .policies import DutyController, ThermalEstimator
+from .policies import (
+    DutyController,
+    FanBandController,
+    RegimeCoordinator,
+    ThermalEstimator,
+)
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -553,6 +565,13 @@ class SupervisorEngine:
         # actuates; the engine ticks it every cycle (even deploy-dark) so passive
         # params converge before actuation lights up.
         self.thermal = ThermalEstimator()
+        # F3c: the coalescing coordinator. Driven explicitly (needs regime+center);
+        # emits a per-leader phase_override + a BLOCCO opinion. Placed BEFORE the
+        # DutyController in the merge so its BLOCCO wins when it's coalescing.
+        self.regime = RegimeCoordinator()
+        self._fan_controller = next(
+            (c for c in self.controllers if isinstance(c, FanBandController)), None
+        )
         self._model_store = model_store
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
@@ -626,7 +645,19 @@ class SupervisorEngine:
             pure_outputs = [policy(state) for policy in self.policies]
             self._plan_view = self._build_plan_view(state, pure_outputs)
             if actuate:
-                ctrl_outputs = [c(state) for c in self.controllers]
+                # F3c: advance the coalescing coordinator first (it owns BLOCCO +
+                # the per-leader phase_override when MEDIUM-coalescing). Its BLOCCO
+                # opinion is merged BEFORE the DutyController so it wins; when it
+                # yields, the legacy duty BLOCCO survives.
+                phase_override, regime_blocco = self._regime_step(state)
+                ctrl_outputs: list = []
+                if regime_blocco is not None:
+                    ctrl_outputs.append({BLOCCO_LEVER: regime_blocco})
+                for c in self.controllers:
+                    if c is self._fan_controller:
+                        ctrl_outputs.append(c(state, phase_override=phase_override))
+                    else:
+                        ctrl_outputs.append(c(state))
                 # Controllers first: the #3 band controller's setpoint must win
                 # over house_mode for the cooling zones it actively manages. It
                 # already yields (no opinion) on disabled/paused/free-cool zones,
@@ -702,6 +733,55 @@ class SupervisorEngine:
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
             solar_model=solar_model,
+        )
+
+    def _regime_step(self, state: HouseState) -> tuple[dict[str, str], str | None]:
+        """F3c: classify the regime and, if coalescing is enabled + MEDIUM, advance
+        the coordinator and return (phase_override, BLOCCO opinion). Gated by
+        regime_enabled AND duty_cycle AND fan_pacing; otherwise resets + yields."""
+        coalescing = (
+            self.entry.options.get(OPT_REGIME_ENABLED, DEFAULT_REGIME_ENABLED)
+            and duty_cycle_enabled(self.hass, self.entry)
+            and fan_pacing_enabled(self.hass, self.entry)
+        )
+        if not coalescing:
+            return self.regime.step(state, regime="low", center=None, min_on=None, min_off=None)
+        load = house_load_index(
+            state, default_a=COOL_GAIN_OUTDOOR, default_b=COOL_GAIN_SOLAR,
+            default_c=COOL_GAIN_BASE, default_capacity=COOL_CAPACITY,
+            k_conf_min=REGIME_K_CONF_MIN,
+        )
+        at_peak = (
+            state.outdoor_temp is not None and state.duty_peak_outdoor is not None
+            and state.outdoor_temp >= state.duty_peak_outdoor
+        )
+        free_cool = (
+            state.free_cool_enabled and state.season == SEASON_SUMMER
+            and state.outdoor_temp is not None and state.free_cool_threshold is not None
+            and state.outdoor_temp < state.free_cool_threshold
+        )
+        regime = select_regime(
+            load, at_peak=at_peak, free_cool=free_cool,
+            peak_ratio=float(
+                self.entry.options.get(OPT_REGIME_PEAK_RATIO, DEFAULT_REGIME_PEAK_RATIO)
+            ),
+            medium_ratio=float(
+                self.entry.options.get(OPT_REGIME_MEDIUM_RATIO, DEFAULT_REGIME_MEDIUM_RATIO)
+            ),
+        )
+        center = (
+            state.house_setpoint + state.mode_offset
+            if (state.house_setpoint is not None and state.mode_offset is not None)
+            else None
+        )
+        return self.regime.step(
+            state, regime=regime, center=center,
+            min_on=timedelta(
+                minutes=float(self.entry.options.get(OPT_MIN_COMPRESSOR_ON, DEFAULT_MIN_COMPRESSOR_ON))
+            ),
+            min_off=timedelta(
+                minutes=float(self.entry.options.get(OPT_MIN_COMPRESSOR_OFF, DEFAULT_MIN_COMPRESSOR_OFF))
+            ),
         )
 
     def _room_params(self, state: HouseState) -> dict[str, RoomParams]:

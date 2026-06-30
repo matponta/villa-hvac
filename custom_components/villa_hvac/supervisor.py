@@ -1255,3 +1255,58 @@ def in_window(minute_of_day: int, from_min: int, to_min: int) -> bool:
     if from_min < to_min:
         return from_min <= m < to_min
     return m >= from_min or m < to_min  # wraps midnight
+
+
+# --- F3c: demand coalescing (pure) -------------------------------------------
+# In MEDIUM load, sync all leader rooms to RUN together then REST together so the
+# PdC does fewer, longer cycles. The house_phase is decided here from the room
+# temps with wide enter/exit hysteresis + min compressor on/off floors. REST only
+# when EVERY room is satisfied (a fast room must never force-rest a slow one), and
+# a comfort breach forces RUN regardless. The band controller is told the phase
+# via an explicit override; rest closes valves through the raised setpoint (NOT
+# BLOCCO), so the fail-safe fully restores native KNX.
+
+
+@dataclass(frozen=True)
+class RegimeState:
+    house_phase: str = "rest"            # "run" | "rest"
+    run_started: datetime | None = None
+    rest_started: datetime | None = None
+
+
+def run_rest_durations(
+    g: float, k: float, u: float, band: float
+) -> tuple[timedelta | None, timedelta | None]:
+    """Backstop estimate of run/rest length from the model: run = B/(k·u−G),
+    rest = B/G. None when the net rate is non-positive. Clamped to ≤ 6 h.
+    Diagnostic only — the temp crossing + min floors drive the actual coalescing."""
+    cap = timedelta(hours=6)
+    net = k * u - g
+    run = min(cap, timedelta(hours=band / net)) if net > 0 else None
+    rest = min(cap, timedelta(hours=band / g)) if g > 0 else None
+    return run, rest
+
+
+def coalesce_phase(
+    rs: RegimeState, *,
+    room_temps: dict[str, float], center: float, band: float, now: datetime,
+    min_on: timedelta, min_off: timedelta,
+    enter_frac: float, exit_frac: float, comfort_breach: bool,
+) -> tuple[RegimeState, str]:
+    """Advance the synchronized house RUN/REST. RUN when the hottest room rises to
+    center + enter·B/2 (and min-off elapsed) or a comfort breach; REST only when
+    EVERY room has fallen to center − exit·B/2 (and min-on elapsed)."""
+    if not room_temps:
+        return rs, rs.house_phase
+    hottest = max(room_temps.values())
+    half = band / 2.0
+    if rs.house_phase == "run":
+        elapsed = (now - rs.run_started) if rs.run_started else min_on
+        if hottest <= center - exit_frac * half and elapsed >= min_on:
+            return replace(rs, house_phase="rest", rest_started=now), "rest"
+        return rs, "run"
+    # currently resting
+    elapsed = (now - rs.rest_started) if rs.rest_started else min_off
+    if comfort_breach or (hottest >= center + enter_frac * half and elapsed >= min_off):
+        return replace(rs, house_phase="run", run_started=now), "run"
+    return rs, "rest"

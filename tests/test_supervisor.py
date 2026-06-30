@@ -816,3 +816,59 @@ def test_in_window_wraps_midnight():
 
 def test_in_window_equal_bounds_is_always():
     assert in_window(123, 600, 600) is True
+
+
+# --- F3c: coalescing (pure) --------------------------------------------------
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    RegimeState, coalesce_phase, run_rest_durations,
+)
+
+_MON = timedelta(minutes=10)
+_CK = dict(center=24.0, band=1.5, min_on=_MON, min_off=_MON,
+           enter_frac=0.5, exit_frac=0.5)
+
+
+def test_coalesce_rest_holds_below_enter():
+    rs = RegimeState(house_phase="rest", rest_started=T0 - timedelta(hours=1))
+    _, ph = coalesce_phase(rs, room_temps={"a": 24.2}, now=T0, comfort_breach=False, **_CK)
+    assert ph == "rest"  # 24.2 < enter (24.375)
+
+
+def test_coalesce_rest_to_run_when_hot_and_min_off_elapsed():
+    rs = RegimeState(house_phase="rest", rest_started=T0 - timedelta(hours=1))
+    ns, ph = coalesce_phase(rs, room_temps={"a": 25.0}, now=T0, comfort_breach=False, **_CK)
+    assert ph == "run" and ns.run_started == T0
+
+
+def test_coalesce_min_off_blocks_run():
+    rs = RegimeState(house_phase="rest", rest_started=T0 - timedelta(minutes=2))
+    _, ph = coalesce_phase(rs, room_temps={"a": 25.0}, now=T0, comfort_breach=False, **_CK)
+    assert ph == "rest"  # min_off not yet elapsed
+
+
+def test_coalesce_comfort_breach_forces_run():
+    rs = RegimeState(house_phase="rest", rest_started=T0 - timedelta(minutes=1))
+    _, ph = coalesce_phase(rs, room_temps={"a": 24.0}, now=T0, comfort_breach=True, **_CK)
+    assert ph == "run"  # breach overrides min_off
+
+
+def test_coalesce_run_to_rest_only_when_all_cool():
+    rs = RegimeState(house_phase="run", run_started=T0 - timedelta(hours=1))
+    # a fast room is cool but a slow room is still warm -> stay RUN (never force-rest)
+    _, ph = coalesce_phase(
+        rs, room_temps={"a": 23.4, "b": 24.6}, now=T0, comfort_breach=False, **_CK
+    )
+    assert ph == "run"
+    # ALL rooms cool -> REST
+    _, ph2 = coalesce_phase(
+        rs, room_temps={"a": 23.4, "b": 23.5}, now=T0, comfort_breach=False, **_CK
+    )
+    assert ph2 == "rest"
+
+
+def test_run_rest_durations():
+    run, rest = run_rest_durations(0.5, 1.2, 1.0, 1.5)
+    assert run is not None and rest is not None
+    assert run_rest_durations(1.5, 1.2, 1.0, 1.5)[0] is None   # net<=0 -> no run
+    assert run_rest_durations(0.0, 1.2, 1.0, 1.5)[1] is None   # g=0 -> no rest

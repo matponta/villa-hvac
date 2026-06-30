@@ -485,3 +485,36 @@ def test_band_comfort_relax_raises_center_to_rest():
     # no relax -> center 24, temp 25 >= 24.75 -> RUN (setpoint 24-0.75).
     out0 = FanBandController()(_state([z], **_BAND))
     assert out0[temperature_lever("climate.a")] == 23.25
+
+
+# --- F3c: RegimeCoordinator + phase override ---------------------------------
+
+from datetime import timedelta as _td  # noqa: E402
+
+from custom_components.villa_hvac.policies import RegimeCoordinator  # noqa: E402
+
+
+def test_regime_coordinator_yields_when_not_medium():
+    rc = RegimeCoordinator()
+    ov, bl = rc.step(
+        _state([_fanzone("a", temp=25.0)], **_BAND),
+        regime="low", center=24.0, min_on=_td(minutes=10), min_off=_td(minutes=10),
+    )
+    assert ov == {} and bl is None  # yields -> duty BLOCCO survives
+
+
+def test_regime_coordinator_coalesces_in_medium():
+    rc = RegimeCoordinator()
+    ov, bl = rc.step(
+        _state([_fanzone("a", temp=26.0)], **_BAND),
+        regime="medium", center=24.0, min_on=_td(minutes=10), min_off=_td(minutes=10),
+    )
+    assert bl == "off"                  # BLOCCO_RELEASE (coalescing rests via setpoint)
+    assert ov.get("a") == "run"          # hot room -> house RUN
+
+
+def test_band_phase_override_forces_phase():
+    z = _fanzone("a", temp=26.0)         # would RUN on its own
+    out = FanBandController()(_state([z], **_BAND), phase_override={"a": "rest"})
+    assert out[temperature_lever("climate.a")] == 24.75   # forced REST -> center+slam
+    assert out["fan:fan.a"] == 0                          # rest -> fan_min

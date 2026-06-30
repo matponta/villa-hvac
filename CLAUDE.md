@@ -257,12 +257,29 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        (peak/medium/low) on sensor.hvac_plan (g_house/k_house/load_ratio), read-only
        / deploy-dark; ratio trusted only for converged-k zones, PEAK keys off
        at_peak on priors. No actuation yet (F3c).
-       TODO: F3b 12h
-       per-room sim; F3c coalescing (gated on k-convergence); F4a solar forecast;
-       F4b comfort windows; F4c MPC-lite (optional). Cross-cutting (from review):
-       identifiability gating, hard-room trajectories ADVISORY until k learned
-       (4-param model predicts ~0.6°C/h cooling at the verified ~0-net 34°C peak),
-       controllers-first merge, recorder-exclude the 12h trajectory.
+       F3b DONE (v0.21.0): pure simulate_room/schedule_precool/build_room_plans
+       (reuse band_step/cooling_load/capacity_fan; Euler sub-step guard; fixed-start
+       depth grid-scan precool; shared peak_window) -> sensor.hvac_plan.room_plans
+       (downsampled, recorder-excluded), PLAN-ONLY.
+       F4a DONE (v0.22.0): clear_sky_solar + solar_forecast_curve (sun elevation ×
+       clear-sky × forecast cloud, W/m² matching gw3000a) -> replaces the flat-solar
+       prior in build_room_plans; opt-in OPT_SOLAR_FORECAST until validated; plan
+       solar_model marker.
+       F4b DONE (v0.23.0): per-room/per-fascia comfort windows -> ZoneSnapshot
+       comfort_relax raises the band center OUTSIDE the window (capped at
+       duty_comfort_max, never a BP slam, never suppresses a breach); bedrooms use
+       the night window, day rooms the day window; opt-in OPT_COMFORT_ENABLED.
+       F3c DONE (v0.24.0): RegimeCoordinator + pure coalesce_phase/run_rest_durations
+       -> in MEDIUM, syncs all leaders RUN/REST together via an explicit
+       phase_override into FanBandController (REST closes valves via setpoint, not
+       BLOCCO -> fail-safe clean); REST only when ALL rooms cool (a fast room can't
+       force-rest a slow one), comfort breach forces RUN, min compressor on/off 10/10
+       guardrail; coordinator BLOCCO opinion merged before DutyController (yields ->
+       duty survives). Opt-in OPT_REGIME_ENABLED (default off) AND duty AND fan_pacing.
+       F4c MPC-lite: DEFERRED (owner). Cross-cutting (from review): identifiability
+       gating, hard-room trajectories ADVISORY until k learned (4-param model
+       predicts ~0.6°C/h cooling at the verified ~0-net 34°C peak), controllers-first
+       merge, recorder-excluded 12h trajectory. 186 tests.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to
