@@ -739,6 +739,7 @@ class PlanView:
     load_ratio: float | None = None
     # F3b: per-room 12h trajectories (set by the engine via replace()).
     room_trajectories: tuple = ()
+    solar_model: str = "flat"   # F4a: "flat" prior vs "forecast" (sun×cloud model)
 
 
 def _is_free_cooling(state: HouseState) -> bool:
@@ -1202,3 +1203,37 @@ def build_room_plans(
         )
         out.append(_downsample(traj, downsample_min, dt_min))
     return tuple(out)
+
+
+# --- F4a: solar forecast (pure) ----------------------------------------------
+# gw3000a reads only the CURRENT horizontal irradiance; the 12h sim needs a curve.
+# Estimate it from sun elevation + forecast cloud cover. Output is W/m² on the
+# HORIZONTAL plane to MATCH the gw3000a pyranometer that the model's b was fit
+# against — a plane-of-array unit mismatch would silently rescale b.
+
+
+def clear_sky_solar(
+    *, elevation_deg: float, clear_sky_ghi: float, cloud_fraction: float | None
+) -> float:
+    """Horizontal GHI proxy (W/m²): clear_sky_ghi · sin(elevation) · (1 − cloud).
+    Below the horizon → 0; missing cloud → assume clear."""
+    if elevation_deg <= 0:
+        return 0.0
+    cloud = 0.0 if cloud_fraction is None else max(0.0, min(1.0, cloud_fraction))
+    return clear_sky_ghi * math.sin(math.radians(elevation_deg)) * (1.0 - cloud)
+
+
+def solar_forecast_curve(
+    *, elevations: list[float], clouds: list[float | None], clear_sky_ghi: float
+) -> list[float]:
+    """Per-step horizontal-GHI estimate from the sun-elevation track + the
+    per-step cloud fraction. Guards missing cloud (assume clear)."""
+    out: list[float] = []
+    for i, elev in enumerate(elevations):
+        cloud = clouds[i] if i < len(clouds) else None
+        out.append(round(
+            clear_sky_solar(
+                elevation_deg=elev, clear_sky_ghi=clear_sky_ghi, cloud_fraction=cloud
+            ), 1,
+        ))
+    return out

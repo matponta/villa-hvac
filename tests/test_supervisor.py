@@ -763,3 +763,36 @@ def test_build_room_plans_one_per_leader_downsampled():
     )
     assert len(trs) == 1 and trs[0].zone_id == "lr"
     assert len(trs[0].points) <= 14  # downsampled to ~hourly (not 49 macro steps)
+
+
+# --- F4a: solar forecast -----------------------------------------------------
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    clear_sky_solar, solar_forecast_curve,
+)
+
+
+def test_clear_sky_solar_zero_at_night_and_scales():
+    assert clear_sky_solar(elevation_deg=-5.0, clear_sky_ghi=950.0, cloud_fraction=0.0) == 0.0
+    noon = clear_sky_solar(elevation_deg=90.0, clear_sky_ghi=950.0, cloud_fraction=0.0)
+    assert abs(noon - 950.0) < 1e-6  # sin(90)=1, no cloud
+    half = clear_sky_solar(elevation_deg=30.0, clear_sky_ghi=950.0, cloud_fraction=0.0)
+    assert abs(half - 475.0) < 1.0   # sin(30)=0.5
+
+
+def test_clear_sky_solar_cloud_and_missing():
+    clear = clear_sky_solar(elevation_deg=45.0, clear_sky_ghi=900.0, cloud_fraction=0.0)
+    cloudy = clear_sky_solar(elevation_deg=45.0, clear_sky_ghi=900.0, cloud_fraction=0.6)
+    assert cloudy < clear and abs(cloudy - clear * 0.4) < 1e-6
+    # missing cloud -> assume clear (== no cloud)
+    miss = clear_sky_solar(elevation_deg=45.0, clear_sky_ghi=900.0, cloud_fraction=None)
+    assert abs(miss - clear) < 1e-6
+
+
+def test_solar_forecast_curve_zeroes_night_and_guards_cloud():
+    curve = solar_forecast_curve(
+        elevations=[-10.0, 20.0, 60.0], clouds=[0.0, None, 0.5], clear_sky_ghi=950.0,
+    )
+    assert curve[0] == 0.0          # below horizon
+    assert curve[1] > 0.0           # missing cloud -> clear
+    assert curve[2] > 0.0 and curve[2] < 950.0

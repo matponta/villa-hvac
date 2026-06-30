@@ -31,6 +31,7 @@ from .const import (
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
+    DEFAULT_SOLAR_FORECAST,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
@@ -58,6 +59,7 @@ from .const import (
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
+    OPT_SOLAR_FORECAST,
     OPT_WEATHER_ENTITY,
     OPT_SUMMER_NOTTE_OFFSET,
     OPT_SUMMER_VIA_OFFSET,
@@ -232,6 +234,10 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_PRECOOL_MAX_DEPTH, DEFAULT_PRECOOL_MAX_DEPTH
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0, max=6)),
+                vol.Optional(
+                    OPT_SOLAR_FORECAST,
+                    default=options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

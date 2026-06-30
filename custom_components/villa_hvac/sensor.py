@@ -211,6 +211,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "g_house": plan.g_house,
             "k_house": plan.k_house,
             "load_ratio": plan.load_ratio,
+            "solar_model": plan.solar_model,
             "season": plan.season,
             "house_mode": plan.house_mode,
             "cooling": plan.cooling,

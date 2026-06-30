@@ -59,6 +59,7 @@ from .const import (
     COOL_GAIN_BASE,
     COOL_GAIN_OUTDOOR,
     COOL_GAIN_SOLAR,
+    CLEAR_SKY_GHI,
     COOL_PULLDOWN,
     COOL_VALVES,
     DEFAULT_BAND_SLAM,
@@ -77,6 +78,7 @@ from .const import (
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
     DEFAULT_SHADING_ENABLED,
+    DEFAULT_SOLAR_FORECAST,
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
     FORECAST_REFRESH,
@@ -95,6 +97,7 @@ from .const import (
     OPT_PRECOOL_OFFSET,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
+    OPT_SOLAR_FORECAST,
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
@@ -144,6 +147,7 @@ from .supervisor import (
     plan_run,
     reconcile,
     select_regime,
+    solar_forecast_curve,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -169,6 +173,17 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
 def _manuale_switch(fan_entity: str) -> str:
     """Manuale switch for a fancoil fan (verified: fan.fancoil_X -> switch.fancoil_X_manuale)."""
     return "switch." + fan_entity.removeprefix("fan.") + "_manuale"
+
+
+def _forecast_cloud_at(cloud: list, when) -> float | None:
+    """The cloud fraction at/before `when` from the cached (when, cloud) list."""
+    best = None
+    for w, c in cloud:
+        if w <= when:
+            best = c
+        else:
+            break
+    return best
 
 
 class RoomModelStore:
@@ -468,6 +483,7 @@ class SupervisorEngine:
         self._unsub = None
         self._busy = False
         self._forecast: list[tuple] = []
+        self._cloud: list[tuple] = []
         self._forecast_ts = None
         self._plan_view: PlanView | None = None
 
@@ -597,9 +613,10 @@ class SupervisorEngine:
             ),
         )
         # F3b: per-room 12h forward simulation + pre-cool (pure, plan-only).
+        solar_curve, solar_model = self._solar_forecast(state)
         trajectories = build_room_plans(
             state, self._room_params(state), list(self._forecast),
-            self._solar_forecast(state), _lookahead(self.entry),
+            solar_curve, _lookahead(self.entry),
             dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
             max_precool_depth=float(
                 self.entry.options.get(OPT_PRECOOL_MAX_DEPTH, DEFAULT_PRECOOL_MAX_DEPTH)
@@ -608,6 +625,7 @@ class SupervisorEngine:
         return replace(
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
+            solar_model=solar_model,
         )
 
     def _room_params(self, state: HouseState) -> dict[str, RoomParams]:
@@ -626,13 +644,41 @@ class SupervisorEngine:
             )
         return out
 
-    def _solar_forecast(self, state: HouseState) -> list[float]:
-        """Hourly solar estimate over the lookahead. F3b prior: flat current solar
-        (grossly wrong at night/noon) — F4a replaces this with a sun-elevation ×
-        clear-sky × cloud model."""
+    def _solar_forecast(self, state: HouseState) -> tuple[list[float], str]:
+        """Per-step solar estimate over the lookahead + a model marker.
+
+        F4a (opt-in OPT_SOLAR_FORECAST): sun elevation (astral) × clear-sky × the
+        forecast cloud cover. Otherwise the F3b flat-current-solar prior (wrong at
+        night/noon — fine for an advisory plan)."""
         n = int(_lookahead(self.entry).total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
-        cur = state.solar if state.solar is not None else 0.0
-        return [cur] * n
+        if not self.entry.options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST):
+            cur = state.solar if state.solar is not None else 0.0
+            return [cur] * n, "flat"
+        try:
+            from astral import Observer
+            from astral.sun import elevation as _sun_elevation
+
+            obs = Observer(
+                latitude=self.hass.config.latitude,
+                longitude=self.hass.config.longitude,
+                elevation=self.hass.config.elevation or 0.0,
+            )
+            elevations: list[float] = []
+            clouds: list[float | None] = []
+            for i in range(n):
+                when = state.now + timedelta(minutes=i * PLAN_SIM_STEP_MIN)
+                elevations.append(_sun_elevation(obs, when))
+                clouds.append(_forecast_cloud_at(self._cloud, when))
+            return (
+                solar_forecast_curve(
+                    elevations=elevations, clouds=clouds, clear_sky_ghi=CLEAR_SKY_GHI
+                ),
+                "forecast",
+            )
+        except Exception:  # noqa: BLE001 - solar estimate is best-effort -> fall back
+            _LOGGER.debug("Solar forecast failed; using flat prior", exc_info=True)
+            cur = state.solar if state.solar is not None else 0.0
+            return [cur] * n, "flat"
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)
@@ -747,6 +793,7 @@ class SupervisorEngine:
             return
         entries = (resp or {}).get(entity, {}).get("forecast") or []
         parsed: list[tuple] = []
+        clouds: list[tuple] = []
         for item in entries:
             temp = item.get("temperature")
             when = dt_util.parse_datetime(item.get("datetime") or "")
@@ -755,7 +802,11 @@ class SupervisorEngine:
                     parsed.append((when, float(temp)))
                 except (TypeError, ValueError):
                     continue
+                # F4a: capture cloud cover (0-1) for the solar estimate; often absent.
+                cc = item.get("cloud_coverage")
+                clouds.append((when, float(cc) / 100.0 if cc is not None else None))
         self._forecast = parsed
+        self._cloud = clouds
 
     # -- fail-safe ------------------------------------------------------------
     async def async_fail_safe(self) -> None:

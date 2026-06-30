@@ -547,6 +547,14 @@ OPT_PRECOOL_MAX_DEPTH = "precool_max_depth"
 DEFAULT_PRECOOL_MAX_DEPTH = 3.0      # °C: deepest pre-cool the planner will schedule
 PLAN_SIM_STEP_MIN = 15              # forward-Euler macro step (sub-stepped internally)
 PLAN_SIM_DOWNSAMPLE_MIN = 60       # store ~hourly points on the sensor
+
+# --- F4a: solar forecast ------------------------------------------------------
+# gw3000a gives only CURRENT solar; the 12h sim needs a curve. Estimate horizontal
+# GHI (W/m², matching the gw3000a pyranometer) = clear_sky_ghi * sin(elevation) *
+# (1 - cloud_fraction), from sun elevation (astral) × forecast cloud cover.
+OPT_SOLAR_FORECAST = "solar_forecast_enabled"
+DEFAULT_SOLAR_FORECAST = False      # opt-in until validated vs gw3000a on clear days
+CLEAR_SKY_GHI = 950.0              # W/m² peak clear-sky horizontal GHI (tunable)
 # Coalescing band hysteresis (separate enter/exit so house RUN/REST doesn't flap):
 COALESCE_ENTER_FRACTION = 0.5        # enter RUN at center + ENTER_FRACTION*B/2 above
 COALESCE_EXIT_FRACTION = 0.5         # exit REST only when leader <= center - EXIT*B/2
