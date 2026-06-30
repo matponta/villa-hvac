@@ -66,9 +66,31 @@ helps in *mild* weather → duty-adaptive, tune on post-deploy mild data.
 | E | #7 anticipatory (summer pre-cool live, winter heat behind flag) | v0.13.0 |
 | F | #8 scenes | v0.14.0 |
 | F2 | #11 plan visualization — `sensor.hvac_plan` (state=regime; attrs=forecast curve+peak, duty run/rest windows, per-zone setpoints, shading). Pure `build_plan` + `engine.plan_view`; computed every cycle even deploy-dark (pure policies run read-only). ✅ | v0.15.0 |
-| G | Deploy + retire legacy + verify BLOCCO polarity + tune #9 on mild data | v1.0.0 |
+| #6′ | Per-room shade position + block override (set_cover_position) ✅ | v0.16.0 |
 
-Cadence: build A→D back-to-back, then check in before #3-rest/#7/#8 + deploy.
+## Self-refining model layer (workflow-vetted F-plan; ALL shipped, deploy-safe)
+
+Designed + adversarially reviewed via a Workflow (4 designers → reviewers → synthesis),
+sequenced into small gated releases. All opt-in / observe / plan-only except F1.
+
+| Phase | Content | Release |
+|---|---|---|
+| F1 | #3 v2: comfort-band setpoint control (wide hysteresis, kills valve chatter) + capacity-matched fan; salotto+cucina one unit; opt-in `fan_pacing` | v0.17.0 |
+| F2a | Online passive estimator {a,b,c} (RLS observer, learns deploy-dark); `RoomModelStore`; `sensor.hvac_model_<zone>` | v0.18.0 |
+| F2b | Learn capacity k (held-fan windows) → blended model feeds fan sizing + level hysteresis | v0.19.0 |
+| F3a | Regime peak/medium/low on `sensor.hvac_plan` (diagnostic; ratio gated on k-convergence) | v0.20.0 |
+| F3b | 12h per-room forward sim + grid-scan precool → `room_plans` (recorder-excluded); plan-only | v0.21.0 |
+| F4a | Solar forecast (sun elev × clear-sky × cloud); opt-in `solar_forecast_enabled` | v0.22.0 |
+| F4b | Per-room/per-fascia comfort windows (capped center relax, never BP slam); opt-in `comfort_windows_enabled` | v0.23.0 |
+| F3c | Demand coalescing (MEDIUM regime sync via phase_override; REST via setpoint; min-on/off 10/10); opt-in `regime_enabled` | v0.24.0 |
+| F4c | MPC-lite receding-horizon optimiser | DEFERRED (owner) |
+| G | Deploy v0.24.0 to live + tune on data + live-verify gates + retire legacy | v1.0.0 |
+
+Cross-cutting (from review): identifiability gating (k vs {a,b,c} on disjoint windows);
+hard-room trajectories ADVISORY until k learns (4-param can't reproduce ~0-net cooling
+at 34°C peak — comfort always guaranteed by the live band); controllers-first merge;
+recorder-excluded trajectory. LIVE = old v0.16.0 still (see NEXT_SESSION.md); deploy
+v0.24.0 to light up the model.
 
 ## Live-verify gates (supervised, at deploy — never headless)
 
