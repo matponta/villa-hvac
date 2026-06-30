@@ -59,6 +59,7 @@ from .const import (
     COOL_GAIN_BASE,
     COOL_GAIN_OUTDOOR,
     COOL_GAIN_SOLAR,
+    COOL_PULLDOWN,
     COOL_VALVES,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
@@ -71,6 +72,7 @@ from .const import (
     DEFAULT_MODEL_ENABLED,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
+    DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
@@ -89,9 +91,12 @@ from .const import (
     OPT_MODEL_ENABLED,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
+    OPT_PRECOOL_MAX_DEPTH,
     OPT_PRECOOL_OFFSET,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
+    PLAN_SIM_DOWNSAMPLE_MIN,
+    PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
@@ -131,7 +136,9 @@ from .supervisor import (
     PlanView,
     RunPlan,
     ZoneSnapshot,
+    RoomParams,
     build_plan,
+    build_room_plans,
     house_load_index,
     merge_desired,
     plan_run,
@@ -589,10 +596,43 @@ class SupervisorEngine:
                 )
             ),
         )
+        # F3b: per-room 12h forward simulation + pre-cool (pure, plan-only).
+        trajectories = build_room_plans(
+            state, self._room_params(state), list(self._forecast),
+            self._solar_forecast(state), _lookahead(self.entry),
+            dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
+            max_precool_depth=float(
+                self.entry.options.get(OPT_PRECOOL_MAX_DEPTH, DEFAULT_PRECOOL_MAX_DEPTH)
+            ),
+        )
         return replace(
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
-            load_ratio=load.load_ratio,
+            load_ratio=load.load_ratio, room_trajectories=trajectories,
         )
+
+    def _room_params(self, state: HouseState) -> dict[str, RoomParams]:
+        """Per-leader RoomParams from the blended model on each ZoneSnapshot (prior
+        until a room converges) — the same model the controller uses."""
+        out: dict[str, RoomParams] = {}
+        for z in state.zones.values():
+            if not (z.climate and z.emitter == "fancoil" and z.fancoil_units and not z.follows):
+                continue
+            out[z.zone_id] = RoomParams(
+                a=z.model_a if z.model_a is not None else COOL_GAIN_OUTDOOR,
+                b=z.model_b if z.model_b is not None else COOL_GAIN_SOLAR,
+                c=z.model_c if z.model_c is not None else COOL_GAIN_BASE,
+                k=z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY,
+                pulldown=COOL_PULLDOWN, fan_min=z.fan_min,
+            )
+        return out
+
+    def _solar_forecast(self, state: HouseState) -> list[float]:
+        """Hourly solar estimate over the lookahead. F3b prior: flat current solar
+        (grossly wrong at night/noon) — F4a replaces this with a sun-elevation ×
+        clear-sky × cloud model."""
+        n = int(_lookahead(self.entry).total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
+        cur = state.solar if state.solar is not None else 0.0
+        return [cur] * n
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)

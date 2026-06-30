@@ -667,3 +667,99 @@ def test_select_regime_medium_and_peak_when_converged():
     peak = HouseLoad(g_house=1.5, k_house=1.6, load_ratio=0.94, n_eligible=2)
     assert select_regime(peak, at_peak=False, free_cool=False,
                          peak_ratio=0.85, medium_ratio=0.1) == REGIME_PEAK
+
+
+# --- F3b: 12h per-room forward simulation + precool --------------------------
+
+import math  # noqa: E402
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    RoomParams, build_room_plans, peak_window, schedule_precool, simulate_room,
+)
+
+_NOW = datetime(2026, 6, 30, 8, 0, 0)
+_LOOK = timedelta(hours=12)
+_RP = RoomParams(a=0.03, b=0.0008, c=0.0, k=1.2, pulldown=0.3, fan_min=0)
+
+
+def _fc(peak=35.0, base=26.0):
+    # hourly forecast rising to `peak` at +6h then falling.
+    return [
+        (_NOW + timedelta(hours=h), round(base + (peak - base) * (1 - abs(h - 6) / 6), 2))
+        for h in range(13)
+    ]
+
+
+def test_peak_window_argmax_and_empty():
+    pk = peak_window(_fc(35.0), _NOW, _LOOK)
+    assert pk is not None and pk[1] == 35.0
+    assert peak_window([], _NOW, _LOOK) is None
+
+
+def test_simulate_room_step0_matches_band_step():
+    tr = simulate_room(
+        zone_id="a", params=_RP, t0=26.0, center=24.0, band=1.5, slam=0.75,
+        forecast=_fc(), solar=None, now=_NOW, lookahead=_LOOK, dt_min=15,
+    )
+    ph, sp = band_step("run", eligible=True, temp=26.0, center=24.0, band=1.5, slam=0.75)
+    assert tr.points[0].phase == ph and abs(tr.points[0].setpoint - sp) < 1e-6
+    assert tr.points[0].minute == 0 and tr.points[-1].minute == 12 * 60
+
+
+def test_simulate_room_water_gate_no_cooling():
+    n = int(_LOOK.total_seconds() / 60 // 15) + 1
+    tr = simulate_room(
+        zone_id="a", params=_RP, t0=24.0, center=24.0, band=1.5, slam=0.75,
+        forecast=_fc(), solar=[800.0] * n, now=_NOW, lookahead=_LOOK,
+        water_available=[False] * n, dt_min=15,
+    )
+    assert tr.max_temp >= 24.0  # no chilled water + sun -> only warms
+
+
+def test_simulate_room_large_k_stays_bounded():
+    rp = RoomParams(a=0.1, b=0.0, c=0.0, k=4.0, pulldown=0.3, fan_min=0)
+    tr = simulate_room(
+        zone_id="a", params=rp, t0=28.0, center=24.0, band=1.5, slam=0.75,
+        forecast=_fc(), solar=None, now=_NOW, lookahead=_LOOK, dt_min=15,
+    )
+    assert all(math.isfinite(p.temp) for p in tr.points)
+    assert -10.0 < tr.points[-1].temp < 50.0  # sub-stepping prevents blow-up
+
+
+def test_schedule_precool_no_breach_depth_zero():
+    rp = RoomParams(a=0.02, b=0.0, c=0.0, k=2.0, pulldown=0.3, fan_min=0)
+    tr = schedule_precool(
+        zone_id="a", params=rp, t0=24.0, center=24.0, band=1.5, slam=0.75,
+        forecast=_fc(30.0), solar=None, now=_NOW, lookahead=_LOOK,
+        max_depth=3.0, dt_min=15,
+    )
+    assert tr.precool_depth == 0.0 and tr.peak_breach is False
+
+
+def test_schedule_precool_gain_limited_flags_breach():
+    # harsh params (huge gain, tiny capacity) -> even max precool can't hold.
+    rp = RoomParams(a=0.5, b=0.005, c=0.5, k=0.3, pulldown=0.3, fan_min=0)
+    n = int(_LOOK.total_seconds() / 60 // 15) + 1
+    tr = schedule_precool(
+        zone_id="a", params=rp, t0=27.0, center=24.0, band=1.5, slam=0.75,
+        forecast=_fc(36.0), solar=[700.0] * n, now=_NOW, lookahead=_LOOK,
+        max_depth=3.0, dt_min=15,
+    )
+    assert tr.peak_breach is True
+
+
+def test_build_room_plans_one_per_leader_downsampled():
+    z = ZoneSnapshot(
+        zone_id="lr", name="lr", climate="climate.lr", emitter="fancoil",
+        fancoil_units=(("fan.lr", "switch.lr_man"),), temp=26.0,
+        model_a=0.03, model_b=0.0008, model_c=0.0, model_k=1.2,
+    )
+    st = HouseState(
+        now=_NOW, zones={"lr": z}, house_setpoint=24.0, mode_offset=0.0,
+        band_width=1.5, band_slam=0.75, outdoor_temp=30.0, solar=200.0,
+    )
+    trs = build_room_plans(
+        st, {"lr": _RP}, _fc(), [200.0] * 60, _LOOK, dt_min=15, downsample_min=60,
+    )
+    assert len(trs) == 1 and trs[0].zone_id == "lr"
+    assert len(trs[0].points) <= 14  # downsampled to ~hourly (not 49 macro steps)

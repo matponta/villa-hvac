@@ -542,6 +542,11 @@ DEFAULT_REGIME_MEDIUM_RATIO = 0.10   # above this (and below peak) -> MEDIUM coa
 DEFAULT_MIN_COMPRESSOR_ON = 10       # minutes: anti-short-cycle floor (guardrail)
 DEFAULT_MIN_COMPRESSOR_OFF = 10
 REGIME_K_CONF_MIN = 0.5              # per-zone k confidence to count toward the ratio
+# F3b 12h per-room forward sim:
+OPT_PRECOOL_MAX_DEPTH = "precool_max_depth"
+DEFAULT_PRECOOL_MAX_DEPTH = 3.0      # °C: deepest pre-cool the planner will schedule
+PLAN_SIM_STEP_MIN = 15              # forward-Euler macro step (sub-stepped internally)
+PLAN_SIM_DOWNSAMPLE_MIN = 60       # store ~hourly points on the sensor
 # Coalescing band hysteresis (separate enter/exit so house RUN/REST doesn't flap):
 COALESCE_ENTER_FRACTION = 0.5        # enter RUN at center + ENTER_FRACTION*B/2 above
 COALESCE_EXIT_FRACTION = 0.5         # exit REST only when leader <= center - EXIT*B/2

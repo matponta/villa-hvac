@@ -29,6 +29,7 @@ from .const import (
     DEFAULT_NIGHT_THRESHOLD,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
+    DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_POSITION,
@@ -51,6 +52,7 @@ from .const import (
     OPT_NIGHT_THRESHOLD,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
+    OPT_PRECOOL_MAX_DEPTH,
     OPT_PRECOOL_OFFSET,
     OPT_SEASON,
     OPT_SHADING_DEFAULT_POSITION,
@@ -224,6 +226,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_MODEL_ENABLED,
                     default=options.get(OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
                 ): bool,
+                vol.Optional(
+                    OPT_PRECOOL_MAX_DEPTH,
+                    default=options.get(
+                        OPT_PRECOOL_MAX_DEPTH, DEFAULT_PRECOOL_MAX_DEPTH
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=6)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

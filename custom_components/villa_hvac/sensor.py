@@ -166,6 +166,11 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
 
     _attr_has_entity_name = True
     _attr_name = "HVAC plan"
+    # Recorder-exclude the heavy, every-30s attributes so they don't bloat the DB
+    # (the 12h per-room trajectories + the forecast curve + per-zone lists).
+    _unrecorded_attributes = frozenset(
+        {"room_plans", "forecast", "zones", "covers_closing", "per_zone"}
+    )
 
     def __init__(
         self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
@@ -231,6 +236,21 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "forecast": [
                 {"datetime": _iso(when), "temperature": temp}
                 for when, temp in plan.forecast
+            ],
+            "room_plans": [
+                {
+                    "zone": tr.zone_id,
+                    "precool_depth": tr.precool_depth,
+                    "precool_start_min": tr.precool_start_min,
+                    "peak_breach": tr.peak_breach,
+                    "max_temp": tr.max_temp,
+                    "points": [
+                        {"min": p.minute, "temp": p.temp, "setpoint": p.setpoint,
+                         "fan": p.fan, "phase": p.phase, "saturated": p.saturated}
+                        for p in tr.points
+                    ],
+                }
+                for tr in plan.room_trajectories
             ],
             "zones": [
                 {

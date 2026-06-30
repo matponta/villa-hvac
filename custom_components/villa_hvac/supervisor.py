@@ -253,19 +253,31 @@ def plan_run(
     The long lookahead lets a high-mass house start early; the margin keeps it
     from pre-cooling all day.
     """
+    pk = peak_window(forecast, now, lookahead)
+    if pk is None:
+        return RunPlan()
+    peak_when, peak_temp = pk
+    eta = peak_when - now
+    if peak_temp < peak_threshold or current_outdoor is None:
+        return RunPlan(precool=False, forecast_peak=peak_temp, peak_eta=eta)
+    precool = peak_when > now and (peak_temp - current_outdoor) >= margin
+    return RunPlan(precool=precool, forecast_peak=peak_temp, peak_eta=eta)
+
+
+def peak_window(
+    forecast: list[tuple[datetime, float]], now: datetime, lookahead: timedelta
+) -> tuple[datetime, float] | None:
+    """The hottest forecast point in [now, now+lookahead] (argmax). The SINGLE
+    peak definition shared by plan_run (the scalar #9 flag) and the per-room
+    forward simulation, so they never disagree on where the peak is."""
     window = [
         (when, t)
         for (when, t) in forecast
         if now <= when <= now + lookahead and t is not None
     ]
     if not window:
-        return RunPlan()
-    peak_when, peak_temp = max(window, key=lambda wt: wt[1])
-    eta = peak_when - now
-    if peak_temp < peak_threshold or current_outdoor is None:
-        return RunPlan(precool=False, forecast_peak=peak_temp, peak_eta=eta)
-    precool = peak_when > now and (peak_temp - current_outdoor) >= margin
-    return RunPlan(precool=precool, forecast_peak=peak_temp, peak_eta=eta)
+        return None
+    return max(window, key=lambda wt: wt[1])
 
 
 # --- #3 v2: comfort-band control + capacity-matched fan (pure) ---------------
@@ -965,3 +977,228 @@ def build_plan(
         covers_closing=covers_closing,
         forecast=window,
     )
+
+
+# --- F3b: 12h per-room forward simulation + precool scheduler (pure) ----------
+# Integrate each room's grey-box forward on the forecast under the F1 band/fan
+# policy, to (a) show the 12h intent per room and (b) size pre-cool. Reuses
+# band_step / cooling_load / capacity_fan — never re-derives them. Plan-only:
+# nothing here actuates. NOTE: until k is learned (F2), hard-room trajectories are
+# ADVISORY — the 4-param model can't reproduce the verified ~0-net cooling at the
+# 34°C peak; comfort is guaranteed by the live band, never by this prediction.
+
+
+@dataclass(frozen=True)
+class RoomParams:
+    """Thermal model + control params for one room's simulation."""
+
+    a: float
+    b: float
+    c: float
+    k: float
+    pulldown: float
+    fan_min: int
+    fan_step: int = 10
+
+
+@dataclass(frozen=True)
+class TrajPoint:
+    minute: int          # offset from now
+    temp: float          # predicted room temp
+    setpoint: float      # band setpoint commanded at this step
+    fan: int             # quantized fan %
+    phase: str           # run / rest
+    saturated: bool      # fan demand >= 100% (can't cool faster)
+
+
+@dataclass(frozen=True)
+class RoomTrajectory:
+    zone_id: str
+    points: tuple[TrajPoint, ...] = ()
+    precool_depth: float = 0.0
+    precool_start_min: int | None = None
+    peak_breach: bool = False     # comfort upper exceeded somewhere in the horizon
+    max_temp: float | None = None
+
+
+def _forecast_temp_at(
+    forecast: list[tuple[datetime, float]], when: datetime
+) -> float | None:
+    """Step-interpolate the forecast: the last point at/before `when` (else the
+    first available)."""
+    best = None
+    for w, t in forecast:
+        if t is None:
+            continue
+        if w <= when:
+            best = t
+        else:
+            return best if best is not None else t
+    return best
+
+
+def _solar_at(solar: list[float] | None, i: int) -> float:
+    if not solar:
+        return 0.0
+    return solar[min(i, len(solar) - 1)]
+
+
+def simulate_room(
+    *, zone_id: str, params: RoomParams, t0: float,
+    center: float, band: float, slam: float,
+    forecast: list[tuple[datetime, float]], solar: list[float] | None,
+    now: datetime, lookahead: timedelta,
+    water_available: list[bool] | None = None,
+    precool_depth: float = 0.0, precool_start_min: int | None = None,
+    dt_min: int = 15,
+) -> RoomTrajectory:
+    """Forward-Euler the room under the band/fan policy. Pre-cool lowers the band
+    CENTER by `precool_depth` from `precool_start_min` up to the forecast peak.
+    Euler is sub-stepped so a large learned k can't make the trajectory explode."""
+    n_steps = max(1, int(lookahead.total_seconds() / 60 // dt_min))
+    dt_h = dt_min / 60.0
+    n_sub = max(1, math.ceil((params.a + params.k) * dt_h / 0.25))
+    sub_h = dt_h / n_sub
+    half = band / 2.0
+    pk = peak_window(forecast, now, lookahead)
+    peak_min = int((pk[0] - now).total_seconds() / 60) if pk else None
+
+    temp = t0
+    phase = "run" if t0 >= center else "rest"
+    points: list[TrajPoint] = []
+    breach = False
+    max_temp = t0
+    for i in range(n_steps + 1):
+        minute = i * dt_min
+        when = now + timedelta(minutes=minute)
+        t_out = _forecast_temp_at(forecast, when)
+        if t_out is None:
+            t_out = temp  # no forecast -> assume neutral envelope
+        s = _solar_at(solar, i)
+        eff_center = center
+        if (
+            precool_depth > 0 and precool_start_min is not None
+            and minute >= precool_start_min
+            and (peak_min is None or minute <= peak_min)
+        ):
+            eff_center = center - precool_depth
+        phase, setpoint = band_step(
+            phase, eligible=True, temp=temp, center=eff_center, band=band, slam=slam
+        )
+        if phase == "run":
+            load = cooling_load(temp, t_out, s, a=params.a, b=params.b, c=params.c)
+            u_needed = (load + params.pulldown) / params.k if params.k > 0 else 1.0
+            fan = capacity_fan(
+                load, pulldown=params.pulldown, capacity=params.k,
+                fan_min_pct=params.fan_min, step=params.fan_step,
+            )
+        else:
+            u_needed = 0.0
+            fan = params.fan_min
+        points.append(TrajPoint(
+            minute=minute, temp=round(temp, 2),
+            setpoint=round(setpoint if setpoint is not None else eff_center, 2),
+            fan=fan, phase=phase, saturated=u_needed >= 1.0,
+        ))
+        max_temp = max(max_temp, temp)
+        if temp > center + half + 1e-6:
+            breach = True
+        # integrate to the next step (sub-stepped Euler).
+        w = True if water_available is None else water_available[min(i, len(water_available) - 1)]
+        u = fan / 100.0
+        for _ in range(n_sub):
+            d = params.a * (t_out - temp) + params.b * s + params.c
+            if w:
+                d -= params.k * u
+            temp += d * sub_h
+    return RoomTrajectory(
+        zone_id=zone_id, points=tuple(points),
+        precool_depth=precool_depth, precool_start_min=precool_start_min,
+        peak_breach=breach, max_temp=round(max_temp, 2),
+    )
+
+
+def schedule_precool(
+    *, zone_id: str, params: RoomParams, t0: float,
+    center: float, band: float, slam: float,
+    forecast: list[tuple[datetime, float]], solar: list[float] | None,
+    now: datetime, lookahead: timedelta,
+    water_available: list[bool] | None = None,
+    max_depth: float = 3.0, grid_points: int = 12, dt_min: int = 15,
+) -> RoomTrajectory:
+    """Pick the SMALLEST pre-cool depth that keeps the room in comfort through the
+    peak, via a fixed-start depth GRID SCAN (bisection is unsound here: feasibility
+    isn't monotone in start time). No breach with depth 0 → no pre-cool. If even
+    max_depth still breaches (gain-limited) → return it flagged peak_breach."""
+    base = simulate_room(
+        zone_id=zone_id, params=params, t0=t0, center=center, band=band, slam=slam,
+        forecast=forecast, solar=solar, now=now, lookahead=lookahead,
+        water_available=water_available, dt_min=dt_min,
+    )
+    if not base.peak_breach:
+        return base
+    pk = peak_window(forecast, now, lookahead)
+    if pk is None:
+        return base
+    peak_min = int((pk[0] - now).total_seconds() / 60)
+    g_peak = cooling_load(
+        center, pk[1], _solar_at(solar, peak_min // dt_min),
+        a=params.a, b=params.b, c=params.c,
+    )
+    worst = base
+    for j in range(1, grid_points + 1):
+        depth = max_depth * j / grid_points
+        lead = math.ceil(depth / max(0.1, params.k - g_peak) * 60.0)
+        start = max(0, peak_min - lead)
+        traj = simulate_room(
+            zone_id=zone_id, params=params, t0=t0, center=center, band=band,
+            slam=slam, forecast=forecast, solar=solar, now=now, lookahead=lookahead,
+            water_available=water_available, precool_depth=depth,
+            precool_start_min=start, dt_min=dt_min,
+        )
+        if not traj.peak_breach:
+            return traj   # smallest feasible depth
+        worst = traj
+    return worst          # max depth still breaches -> advisory peak_breach
+
+
+def _downsample(traj: RoomTrajectory, downsample_min: int, dt_min: int) -> RoomTrajectory:
+    """Thin a trajectory to ~hourly points to keep the sensor attribute small."""
+    stride = max(1, downsample_min // dt_min)
+    pts = traj.points[::stride]
+    if traj.points and pts and pts[-1].minute != traj.points[-1].minute:
+        pts = (*pts, traj.points[-1])
+    return replace(traj, points=tuple(pts))
+
+
+def build_room_plans(
+    state: HouseState, params_by_zone: dict[str, RoomParams],
+    forecast: list[tuple[datetime, float]], solar: list[float] | None,
+    lookahead: timedelta, *,
+    dt_min: int = 15, downsample_min: int = 60, max_precool_depth: float = 3.0,
+) -> tuple[RoomTrajectory, ...]:
+    """Per-leader 12h trajectory + pre-cool schedule (downsampled). Plan-only."""
+    if state.house_setpoint is None or state.mode_offset is None:
+        return ()
+    center = state.house_setpoint + state.mode_offset
+    band = state.band_width if state.band_width is not None else 1.5
+    slam = state.band_slam if state.band_slam is not None else 0.75
+    free = _is_free_cooling(state)
+    n_steps = max(1, int(lookahead.total_seconds() / 60 // dt_min)) + 1
+    out: list[RoomTrajectory] = []
+    for z in state.zones.values():
+        if not _is_cooling_leader(z) or not z.enabled or z.paused:
+            continue
+        if z.bedroom and state.night_active:
+            continue
+        if z.temp is None or z.zone_id not in params_by_zone:
+            continue
+        wa = [False] * n_steps if free else None
+        traj = schedule_precool(
+            zone_id=z.zone_id, params=params_by_zone[z.zone_id], t0=z.temp,
+            center=center, band=band, slam=slam, forecast=forecast, solar=solar,
+            now=state.now, lookahead=lookahead, water_available=wa,
+            max_depth=max_precool_depth, dt_min=dt_min,
+        )
+        out.append(_downsample(traj, downsample_min, dt_min))
+    return tuple(out)
