@@ -528,6 +528,24 @@ MODEL_K_CONF_MIN = 20
 # never from AUTO/unknown or a pull-down transient.
 MODEL_CAP_FAN_STABILITY = 12   # max (max-min) fan % spread over the window to learn k
 
+# --- F3: regime selector + coalescing -----------------------------------------
+# Aggregate per-room load/capacity -> regime; in MEDIUM, coalesce demand into
+# shared run/rest windows. Ratio path trusted only once k has converged.
+OPT_REGIME_ENABLED = "regime_enabled"        # opt-in to coalescing ACTUATION (F3c)
+OPT_REGIME_PEAK_RATIO = "regime_peak_ratio"
+OPT_REGIME_MEDIUM_RATIO = "regime_medium_ratio"
+OPT_MIN_COMPRESSOR_ON = "min_compressor_on"
+OPT_MIN_COMPRESSOR_OFF = "min_compressor_off"
+DEFAULT_REGIME_ENABLED = False
+DEFAULT_REGIME_PEAK_RATIO = 0.85     # g/k at/above this -> PEAK (no coalescing)
+DEFAULT_REGIME_MEDIUM_RATIO = 0.10   # above this (and below peak) -> MEDIUM coalesce
+DEFAULT_MIN_COMPRESSOR_ON = 10       # minutes: anti-short-cycle floor (guardrail)
+DEFAULT_MIN_COMPRESSOR_OFF = 10
+REGIME_K_CONF_MIN = 0.5              # per-zone k confidence to count toward the ratio
+# Coalescing band hysteresis (separate enter/exit so house RUN/REST doesn't flap):
+COALESCE_ENTER_FRACTION = 0.5        # enter RUN at center + ENTER_FRACTION*B/2 above
+COALESCE_EXIT_FRACTION = 0.5         # exit REST only when leader <= center - EXIT*B/2
+
 # --- #9 forecast run-window planner (pre-cool) -------------------------------
 # Feed-forward on the hourly weather forecast: if a hot peak is coming within the
 # lead window, "pre-cool" — don't let the duty cycle rest (bank coolth) and nudge

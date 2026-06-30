@@ -52,6 +52,7 @@ from .supervisor import (
     BLOCCO_BLOCK,
     BLOCCO_LEVER,
     BandState,
+    _is_cooling_leader,
     DutyState,
     HouseState,
     ParamBounds,
@@ -76,16 +77,6 @@ from .supervisor import (
 )
 
 Desired = dict[str, str | float | None]
-
-
-def _is_cooling_leader(z: ZoneSnapshot) -> bool:
-    """A cooling fancoil LEADER: owns a thermostat + its fancoil units, and is not
-    a follower (open-space followers like Cucina are driven by their leader).
-    Shared by FanBandController, ThermalEstimator and (F3) the planner so the set
-    never drifts between them."""
-    return bool(
-        z.climate and z.emitter == "fancoil" and z.fancoil_units and not z.follows
-    )
 
 
 def _controllable(zone: ZoneSnapshot) -> bool:

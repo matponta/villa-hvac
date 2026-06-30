@@ -598,3 +598,72 @@ def test_capacity_fan_hysteresis_holds_level():
     # raw 35% is beyond the boundary -> step down to 40.
     assert capacity_fan(0.35, pulldown=0.0, capacity=1.0, fan_min_pct=0,
                         last_level=50, hysteresis=5) == 40
+
+
+# --- F3a: house load index + regime selector ---------------------------------
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    REGIME_LOW, REGIME_MEDIUM, REGIME_PEAK, HouseLoad,
+    house_load_index, select_regime,
+)
+
+_DEF = dict(default_a=0.03, default_b=0.0008, default_c=0.0, default_capacity=1.2,
+            k_conf_min=0.5)
+
+
+def _hz(zid, *, temp, model_k=None, kconf=None, enabled=True, paused=False,
+        bedroom=False):
+    return ZoneSnapshot(
+        zone_id=zid, name=zid, climate=f"climate.{zid}", emitter="fancoil",
+        fancoil_units=((f"fan.{zid}", f"switch.{zid}_man"),),
+        temp=temp, enabled=enabled, paused=paused, bedroom=bedroom,
+        model_k=model_k, model_k_confidence=kconf,
+    )
+
+
+def _hstate(zones, *, outdoor=33.0, solar=600.0, night=False):
+    return HouseState(now=T0, zones={z.zone_id: z for z in zones},
+                      outdoor_temp=outdoor, solar=solar, night_active=night)
+
+
+def test_house_load_index_counts_only_converged_k():
+    # one converged zone, one still on priors (kconf None) -> only the first
+    # contributes to the ratio; both appear in per_zone.
+    zones = [
+        _hz("a", temp=26.0, model_k=0.8, kconf=0.9),  # converged
+        _hz("b", temp=26.0),                           # prior k, not counted
+    ]
+    load = house_load_index(_hstate(zones), **_DEF)
+    assert load.n_eligible == 1
+    assert "a" in load.per_zone and "b" in load.per_zone
+    assert load.k_house == 0.8  # only the converged zone's k
+
+
+def test_house_load_index_excludes_disabled_paused_night_bedroom():
+    zones = [
+        _hz("dis", temp=26.0, model_k=0.8, kconf=0.9, enabled=False),
+        _hz("pause", temp=26.0, model_k=0.8, kconf=0.9, paused=True),
+        _hz("bed", temp=26.0, model_k=0.8, kconf=0.9, bedroom=True),
+    ]
+    load = house_load_index(_hstate(zones, night=True), **_DEF)
+    assert load.n_eligible == 0 and load.per_zone == {}
+
+
+def test_select_regime_free_cool_and_peak_and_low_on_priors():
+    # priors -> no converged k -> n_eligible 0 -> LOW unless at_peak.
+    load = HouseLoad(g_house=0.0, k_house=0.0, load_ratio=0.0, n_eligible=0)
+    assert select_regime(load, at_peak=False, free_cool=True,
+                         peak_ratio=0.85, medium_ratio=0.1) == REGIME_LOW
+    assert select_regime(load, at_peak=True, free_cool=False,
+                         peak_ratio=0.85, medium_ratio=0.1) == REGIME_PEAK
+    assert select_regime(load, at_peak=False, free_cool=False,
+                         peak_ratio=0.85, medium_ratio=0.1) == REGIME_LOW
+
+
+def test_select_regime_medium_and_peak_when_converged():
+    medium = HouseLoad(g_house=0.5, k_house=1.6, load_ratio=0.31, n_eligible=2)
+    assert select_regime(medium, at_peak=False, free_cool=False,
+                         peak_ratio=0.85, medium_ratio=0.1) == REGIME_MEDIUM
+    peak = HouseLoad(g_house=1.5, k_house=1.6, load_ratio=0.94, n_eligible=2)
+    assert select_regime(peak, at_peak=False, free_cool=False,
+                         peak_ratio=0.85, medium_ratio=0.1) == REGIME_PEAK

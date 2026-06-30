@@ -202,6 +202,10 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             rest_starts = _iso(plan.stint_start + plan.stint_cap)
         return {
             "supervisor_on": bool(getattr(engine, "enabled", False)),
+            "regime": plan.regime,
+            "g_house": plan.g_house,
+            "k_house": plan.k_house,
+            "load_ratio": plan.load_ratio,
             "season": plan.season,
             "house_mode": plan.house_mode,
             "cooling": plan.cooling,

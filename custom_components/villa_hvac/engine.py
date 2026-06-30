@@ -55,6 +55,10 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONSENSO_BLOCCO,
+    COOL_CAPACITY,
+    COOL_GAIN_BASE,
+    COOL_GAIN_OUTDOOR,
+    COOL_GAIN_SOLAR,
     COOL_VALVES,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
@@ -68,6 +72,8 @@ from .const import (
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_OFFSET,
+    DEFAULT_REGIME_MEDIUM_RATIO,
+    DEFAULT_REGIME_PEAK_RATIO,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
@@ -84,6 +90,9 @@ from .const import (
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_OFFSET,
+    OPT_REGIME_MEDIUM_RATIO,
+    OPT_REGIME_PEAK_RATIO,
+    REGIME_K_CONF_MIN,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
@@ -123,9 +132,11 @@ from .supervisor import (
     RunPlan,
     ZoneSnapshot,
     build_plan,
+    house_load_index,
     merge_desired,
     plan_run,
     reconcile,
+    select_regime,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -554,9 +565,33 @@ class SupervisorEngine:
         duty_state = (
             self._duty_controller.duty if self._duty_controller else DutyState()
         )
-        return build_plan(
+        plan = build_plan(
             state, run_plan, desired, duty_state,
             list(self._forecast), _lookahead(self.entry),
+        )
+        # F3a: classify the house regime read-only (pure; deploy-dark safe). On
+        # priors the ratio is mis-scaled, so it's trusted only for converged-k
+        # zones; PEAK still keys off at_peak alone.
+        load = house_load_index(
+            state,
+            default_a=COOL_GAIN_OUTDOOR, default_b=COOL_GAIN_SOLAR,
+            default_c=COOL_GAIN_BASE, default_capacity=COOL_CAPACITY,
+            k_conf_min=REGIME_K_CONF_MIN,
+        )
+        regime = select_regime(
+            load, at_peak=plan.at_peak, free_cool=plan.free_cool,
+            peak_ratio=float(
+                self.entry.options.get(OPT_REGIME_PEAK_RATIO, DEFAULT_REGIME_PEAK_RATIO)
+            ),
+            medium_ratio=float(
+                self.entry.options.get(
+                    OPT_REGIME_MEDIUM_RATIO, DEFAULT_REGIME_MEDIUM_RATIO
+                )
+            ),
+        )
+        return replace(
+            plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
+            load_ratio=load.load_ratio,
         )
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:

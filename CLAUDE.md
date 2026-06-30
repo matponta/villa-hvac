@@ -253,7 +253,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        `capacity_fan` gained level hysteresis (`FAN_LEVEL_HYSTERESIS`) to stop fan
        hunting; ZoneSnapshot gained `fan_pct`/`manuale_on`. Until k converges the
        blend returns the prior → fan sizing == F1.
-       TODO: F3a regime classify; F3b 12h
+       F3a DONE (v0.20.0): pure house_load_index + select_regime -> regime
+       (peak/medium/low) on sensor.hvac_plan (g_house/k_house/load_ratio), read-only
+       / deploy-dark; ratio trusted only for converged-k zones, PEAK keys off
+       at_peak on priors. No actuation yet (F3c).
+       TODO: F3b 12h
        per-room sim; F3c coalescing (gated on k-convergence); F4a solar forecast;
        F4b comfort windows; F4c MPC-lite (optional). Cross-cutting (from review):
        identifiability gating, hard-room trajectories ADVISORY until k learned

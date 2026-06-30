@@ -720,6 +720,13 @@ class PlanView:
     zones: tuple[ZonePlan, ...]
     covers_closing: tuple[str, ...]   # covers the shading policy is closing now
     forecast: tuple[tuple[datetime, float], ...]  # windowed curve for the timeline
+    # F3a: house regime + load aggregates (set by the engine via replace()).
+    regime: str | None = None
+    g_house: float | None = None
+    k_house: float | None = None
+    load_ratio: float | None = None
+    # F3b: per-room 12h trajectories (set by the engine via replace()).
+    room_trajectories: tuple = ()
 
 
 def _is_free_cooling(state: HouseState) -> bool:
@@ -730,6 +737,98 @@ def _is_free_cooling(state: HouseState) -> bool:
         and state.free_cool_threshold is not None
         and state.outdoor_temp < state.free_cool_threshold
     )
+
+
+def _is_cooling_leader(z: ZoneSnapshot) -> bool:
+    """A cooling fancoil LEADER: owns a thermostat + its fancoil units and is not
+    a follower (open-space followers like Cucina are driven by their leader).
+    The single shared definition for FanBandController / ThermalEstimator / the
+    regime index / the planner, so the set never drifts between them."""
+    return bool(
+        z.climate and z.emitter == "fancoil" and z.fancoil_units and not z.follows
+    )
+
+
+# --- F3a: house load index + regime selector (pure) --------------------------
+# Aggregate per-room heat-gain G and capacity k into a house regime: PEAK (no
+# coalescing headroom — lean on shading/precool), MEDIUM (coalesce demand into
+# shared run/rest windows), LOW (free-cool). On F1 priors the ratio is mis-scaled
+# (it reads ~0.4 at the verified 0-net 34°C peak), so the ratio path is trusted
+# ONLY for zones whose k has converged; PEAK otherwise keys off at_peak alone.
+
+REGIME_PEAK = "peak"
+REGIME_MEDIUM = "medium"
+REGIME_LOW = "low"
+
+
+@dataclass(frozen=True)
+class HouseLoad:
+    """Aggregate cooling demand vs capacity across the converged cooling rooms."""
+
+    g_house: float = 0.0          # Σ heat-gain G over converged-k leaders (°C/h)
+    k_house: float = 0.0          # Σ capacity k over the same (°C/h at full fan)
+    load_ratio: float = 0.0       # g_house / k_house (≥1 ⇒ gain-limited)
+    n_eligible: int = 0           # leaders counted toward the ratio (converged k)
+    per_zone: dict = field(default_factory=dict)  # zone_id -> (G, k) for display
+
+
+def house_load_index(
+    state: HouseState, *,
+    default_a: float, default_b: float, default_c: float, default_capacity: float,
+    k_conf_min: float,
+) -> HouseLoad:
+    """Build the house load index. A leader contributes to the RATIO only when its
+    k is confidence-converged (so the ratio isn't mis-scaled on priors); all
+    eligible leaders appear in per_zone for display."""
+    free = _is_free_cooling(state)
+    g_sum = k_sum = 0.0
+    n = 0
+    per: dict[str, tuple[float, float]] = {}
+    for z in state.zones.values():
+        if not _is_cooling_leader(z) or not z.enabled or z.paused or free:
+            continue
+        if z.bedroom and state.night_active:
+            continue
+        a = z.model_a if z.model_a is not None else default_a
+        b = z.model_b if z.model_b is not None else default_b
+        c = z.model_c if z.model_c is not None else default_c
+        g = max(0.0, cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c))
+        converged = (
+            z.model_k_confidence is not None
+            and z.model_k_confidence >= k_conf_min
+            and z.model_k is not None and z.model_k > 0
+        )
+        k = z.model_k if converged else default_capacity
+        per[z.zone_id] = (round(g, 3), round(k, 3))
+        if converged:
+            g_sum += g
+            k_sum += k
+            n += 1
+    ratio = (g_sum / k_sum) if k_sum > 0 else 0.0
+    return HouseLoad(
+        g_house=round(g_sum, 3), k_house=round(k_sum, 3),
+        load_ratio=round(ratio, 3), n_eligible=n, per_zone=per,
+    )
+
+
+def select_regime(
+    load: HouseLoad, *,
+    at_peak: bool, free_cool: bool, peak_ratio: float, medium_ratio: float,
+) -> str:
+    """Classify the house regime. free-cool → LOW; at_peak forces PEAK even on
+    priors (outdoor-sensor based, always safe). The ratio path (MEDIUM/PEAK) only
+    engages once k has converged (n_eligible > 0)."""
+    if free_cool:
+        return REGIME_LOW
+    if at_peak:
+        return REGIME_PEAK
+    if load.n_eligible == 0 or load.g_house <= 0:
+        return REGIME_LOW
+    if load.load_ratio >= peak_ratio:
+        return REGIME_PEAK
+    if load.load_ratio >= medium_ratio:
+        return REGIME_MEDIUM
+    return REGIME_LOW
 
 
 def _plan_summary(
