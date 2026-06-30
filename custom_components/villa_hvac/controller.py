@@ -99,9 +99,42 @@ def _switch_state(
     return state.state if state else None
 
 
+def _number_value(
+    hass: HomeAssistant, entry: ConfigEntry, unique_suffix: str
+) -> float | None:
+    """Value of one of our number entities, resolved by unique_id (None if absent
+    or non-numeric)."""
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id(
+        "number", DOMAIN, f"{entry.entry_id}_{unique_suffix}"
+    )
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in ("unavailable", "unknown"):
+        return None
+    try:
+        return float(state.state)
+    except (TypeError, ValueError):
+        return None
+
+
 def auto_setback_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """True unless the global Auto setback switch is explicitly off."""
     return _switch_state(hass, entry, "auto_setback") != STATE_OFF
+
+
+def shade_blocked(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
+    """True when a room's manual shade-block override switch (#6) is on."""
+    return _switch_state(hass, entry, f"shade_block_{zone}") == STATE_ON
+
+
+def shade_position(
+    hass: HomeAssistant, entry: ConfigEntry, zone: str
+) -> int | None:
+    """Per-room shade target position (#6), or None to use the house default."""
+    value = _number_value(hass, entry, f"shade_position_{zone}")
+    return int(value) if value is not None else None
 
 
 def supervisor_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:

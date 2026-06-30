@@ -431,8 +431,19 @@ DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
 # from the registries (device label = orientation), not hardcoded.
 OPT_SHADING_ENABLED = "shading_enabled"
 OPT_SHADING_SOLAR = "shading_solar_threshold"
+OPT_SHADING_DEFAULT_POSITION = "shading_default_position"
 DEFAULT_SHADING_ENABLED = True
 DEFAULT_SHADING_SOLAR = 200.0   # W/m²: close sun-facing covers above this
+# Per-room shade target uses the native HA cover position (0 = fully closed/down,
+# 100 = fully open). Shading drives each sun-facing room's blind to this position
+# instead of slamming it fully shut. The global default is the gentler fallback
+# for rooms whose per-room number isn't tuned; each room exposes a
+# `number.*_shade_position` (override) + a `switch.*_shade_block` (skip) entity.
+DEFAULT_SHADING_POSITION = 50   # HA position: half-down by default (gentle)
+SHADE_POSITION_MIN = 0
+SHADE_POSITION_MAX = 100
+SHADE_POSITION_STEP = 5
+SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't land exact)
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")
 # Compass azimuth band per facade (deg); north wraps through 0/360.

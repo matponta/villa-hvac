@@ -25,6 +25,7 @@ from . import VillaHvacConfigEntry
 from .const import ZONES
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
+from .engine import shadeable_zones
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -50,6 +51,10 @@ async def async_setup_entry(
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
+    ]
+    entities += [
+        ShadeBlockSwitch(entry, zone, name)
+        for zone, name in shadeable_zones(hass).items()
     ]
     async_add_entities(entities)
 
@@ -202,6 +207,46 @@ class FanPacingSwitch(SwitchEntity, RestoreEntity):
         engine = getattr(self._entry.runtime_data, "engine", None)
         if engine is not None:
             await engine.request_run()
+
+
+class ShadeBlockSwitch(SwitchEntity, RestoreEntity):
+    """Per-room manual override to block solar shading (#6, default OFF).
+
+    When on, the room's sun-facing blind is skipped by `shading_policy` — it is
+    neither closed nor reopened, leaving it under manual/other control. Use it
+    when you're in the room and don't want the blind to come down. Read by the
+    engine via the cover enrichment; toggling nudges the engine to re-plan.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:window-shutter-cog"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry, zone: str, name: str) -> None:
+        self._entry = entry
+        self._attr_name = f"{name} shade block"
+        self._attr_unique_id = f"{entry.entry_id}_shade_block_{zone}"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _request_run(self) -> None:
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        await self._request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        await self._request_run()
 
 
 class ZoneEnableSwitch(

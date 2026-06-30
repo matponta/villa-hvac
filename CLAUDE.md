@@ -62,8 +62,10 @@ From `../knx/GroupAddressesReport_2026-03-12` (group 4 VALVOLE):
   (exposed as `binary_sensor.fancoil_*_valvola` via `knx/knx_fancoil_valves.yaml`).
 - `consenso_freddo` (2/1/213) ≈ **OR of the EV FAN valves** → PdC chilled water.
 - **Central lever: Consenso Freddo BLOCCO `2/2/213`** — force-stop the villa
-  cooling call (exposed as `switch.ct_blocco_freddo_villa`). ⚠️ verify polarity
-  (block vs enable) live before actuating. This is #9's real actuator.
+  cooling call (exposed as `switch.ct_blocco_freddo_villa`). **Polarity VERIFIED
+  live 2026-06-30: `on` = BLOCK (consenso dropped to off within ~1 min), `off` =
+  ALLOW (consenso recovered) — matches the code (`BLOCCO_BLOCK="on"`).** This is
+  #9's real actuator.
 - EV HEAT valves (4/0/4/1) are the **winter radiant** testine — not cooling.
 - Season changeover per thermostat `7/6/x` (cooling/heating) + global `0/0/5`
   ESTATE / `0/0/6` INVERNO.
@@ -199,8 +201,8 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        `OPT_DUTY_COMFORT_MAX` aborts/prevents the cooloff (comfort wins). Opt-in
        via `switch.duty_cycle` (on top of the master). DUTY-ADAPTIVE (v0.13.0):
        at/above `OPT_DUTY_PEAK_OUTDOOR` (30) `duty_decision` releases — don't
-       coalesce at peak, let the PdC run + lean on #6/#7. BLOCCO polarity still to
-       verify live before first real actuation. FORECAST PLANNER (v0.14.0,
+       coalesce at peak, let the PdC run + lean on #6/#7. BLOCCO polarity VERIFIED
+       live 2026-06-30 (`on`=block, `off`=allow). FORECAST PLANNER (v0.14.0,
        v0.14.1): engine re-fetches the hourly forecast every 30 min
        (`weather.forecast_home`, option override) and `plan_run` builds a plan
        over a LONG `OPT_PRECOOL_LOOKAHEAD_HOURS` (default 12 — thermal mass needs
@@ -221,11 +223,22 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to
        building_protection (priority disabled>window>free_cool>house_mode).
-       #6 DONE (v0.11.0): `shading_policy` closes a sun-facing cover when summer +
+       #6 DONE (v0.11.0): `shading_policy` shades a sun-facing cover when summer +
        sun above horizon + azimuth in the facade's band + `gw3000a_solar_radiation`
        > `OPT_SHADING_SOLAR` (200). Covers resolved at runtime (`shadeable_covers`:
-       device label=orientation, area→floor, skip orphan/unassigned). New `cover`
-       lever (close_cover); releases (no force-reopen) otherwise. Options knob.
+       device label=orientation, area→floor, skip orphan/unassigned). Releases (no
+       force-reopen) otherwise. Options knob.
+       PER-ROOM SHADING (v0.16.0): instead of slamming covers fully shut, the
+       policy drives each room's blind to a target HA **position** (0=down,
+       100=open) via `cover.set_cover_position`. Per room (keyed by the cover's
+       area_id): a `number.*_shade_position` override + a `switch.*_shade_block`
+       manual override (blocked room = skipped, not reopened); both auto-created
+       per shadeable room (`shadeable_zones`). Fallback = `OPT_SHADING_DEFAULT_
+       POSITION` (50, gentle). Engine cover lever now does set_position (numeric)
+       / close (legacy "closed"), reads `current_position`, uses a wider
+       `SHADE_POSITION_TOLERANCE`. Verified live 2026-06-30: rooms = main_bedroom
+       (grande west + piccola south), office (piccola_studio west), studio_v
+       (south); all support set_position (supported_features 15/127).
        #6 cover map is RUNTIME (not hardcoded). Resolver per `cover.*`: zone =
        `entity.area_id` else `device.area_id`; orientation =
        `(entity.labels ∪ device.labels) ∩ {north,east,south,west}`; floor =
@@ -284,7 +297,8 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   re-assert (fan is continuous, `percentage_step:1`). No ETS change needed. STILL
   TO VERIFY LIVE (controlled daytime test): does a held LOW % give smooth cooling
   and stop the valve bang-banging? (All manual history so far is nighttime 0/33.)
-- BLOCCO polarity (block vs enable) — verify with one supervised toggle at deploy.
+- ~~BLOCCO polarity (block vs enable)~~ — VERIFIED live 2026-06-30: `on` = block,
+  `off` = allow (one supervised toggle; consenso dropped then recovered).
 - Heating (`caldo`) consenso mechanism — radiant zone valves, not fan>0. Verify in
   heating season (#7 winter path stays behind a flag until then).
 - ~~Per-zone EP temperature offset calibration values~~ — measured 2026-06-23,

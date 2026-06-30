@@ -160,13 +160,17 @@ def _azimuth_in_band(azimuth: float, orientation: str) -> bool:
 
 
 def shading_policy(state: HouseState) -> Desired:
-    """#6: close a sun-facing cover when the sun is on its facade and it's bright.
+    """#6: drive a sun-facing cover to its per-room shade position when the sun is
+    on its facade and it's bright.
 
     Summer only; requires the sun above the horizon, its azimuth in the cover's
-    orientation band, and solar radiation over the threshold. Acts on the cover
-    lever (independent of the preset levers). Releases (no opinion) otherwise —
-    we don't force-reopen, so existing morning/dusk cover automations and the
-    user keep control.
+    orientation band, and solar radiation over the threshold. Each cover is moved
+    to its per-room `target_position` (HA cover position: 0 = fully down,
+    100 = open), falling back to the house default — instead of slamming it fully
+    shut. A room with its manual block override on is skipped. Acts on the cover
+    lever (independent of the preset levers). Releases (no opinion) otherwise — we
+    don't force-reopen, so existing morning/dusk cover automations and the user
+    keep control.
     """
     if not state.shading_enabled or state.season != SEASON_SUMMER:
         return {}
@@ -178,11 +182,19 @@ def shading_policy(state: HouseState) -> Desired:
         return {}
     if state.solar < state.shading_solar_threshold:
         return {}
-    return {
-        cover_lever(cover.entity_id): "closed"
-        for cover in state.covers
-        if _azimuth_in_band(state.sun_azimuth, cover.orientation)
-    }
+    out: Desired = {}
+    for cover in state.covers:
+        if cover.blocked or not _azimuth_in_band(state.sun_azimuth, cover.orientation):
+            continue
+        position = (
+            cover.target_position
+            if cover.target_position is not None
+            else state.shading_default_position
+        )
+        if position is None:
+            continue
+        out[cover_lever(cover.entity_id)] = int(position)
+    return out
 
 
 # Ordered HIGH→LOW priority for the engine's merge_desired:

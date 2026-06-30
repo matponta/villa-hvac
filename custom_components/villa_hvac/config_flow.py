@@ -27,6 +27,7 @@ from .const import (
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
     DOMAIN,
     HOUSE_MODE_AWAY,
@@ -44,6 +45,7 @@ from .const import (
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_OFFSET,
     OPT_SEASON,
+    OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
     OPT_WEATHER_ENTITY,
@@ -156,6 +158,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_SHADING_SOLAR,
                     default=options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR),
                 ): vol.All(vol.Coerce(float), vol.Range(min=50, max=1000)),
+                vol.Optional(
+                    OPT_SHADING_DEFAULT_POSITION,
+                    default=options.get(
+                        OPT_SHADING_DEFAULT_POSITION, DEFAULT_SHADING_POSITION
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
                 vol.Optional(
                     OPT_DUTY_MAX_STINT,
                     default=options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT),

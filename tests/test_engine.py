@@ -147,10 +147,10 @@ async def test_free_cool_suppresses_fancoil_via_engine(hass):
     assert salotto and salotto[-1].data["preset_mode"] == "building_protection"
 
 
-async def test_shading_resolver_and_close_via_engine(hass):
+async def test_shading_resolver_and_position_via_engine(hass):
     """#6: a west-labeled cover device is resolved from the registries; with the
-    sun in the west and bright, the engine closes it. An orphan (no area) is
-    excluded."""
+    sun in the west and bright, the engine drives it to the default shade
+    position (not a full close). An orphan (no area) is excluded."""
     from homeassistant.helpers import (
         area_registry as ar,
         device_registry as dr,
@@ -176,17 +176,19 @@ async def test_shading_resolver_and_close_via_engine(hass):
     assert resolved.get(cover.entity_id) == "west"
     assert orphan.entity_id not in resolved  # unassigned area -> skipped
 
-    hass.states.async_set(cover.entity_id, "open")
+    # fully open now (position 100); shading should drive it to the default 50.
+    hass.states.async_set(cover.entity_id, "open", {"current_position": 100})
     hass.states.async_set(
         "sun.sun", "above_horizon", {"azimuth": 260.0, "elevation": 30.0}
     )
     hass.states.async_set("sensor.gw3000a_solar_radiation", "500")
-    closes = async_mock_service(hass, "cover", "close_cover")
+    positions = async_mock_service(hass, "cover", "set_cover_position")
 
     engine = SupervisorEngine(hass, entry, coordinator, policies=POLICIES)
     await engine._run()
 
-    assert any(c.data["entity_id"] == cover.entity_id for c in closes)
+    sets = [c for c in positions if c.data["entity_id"] == cover.entity_id]
+    assert sets and sets[-1].data["position"] == 50  # DEFAULT_SHADING_POSITION
 
 
 async def test_duty_switch_defaults_off(hass):
@@ -276,6 +278,40 @@ async def test_forecast_precool_nudges_setpoint_via_engine(hass):
 
     salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
     assert salotto and salotto[-1].data["temperature"] == 22.5  # 24 - 1.5 precool
+
+
+async def test_shade_controls_enrich_cover_state(hass):
+    """#6: the per-room shade-position number + shade-block switch are read back
+    into each cover's snapshot (keyed by the cover's area_id)."""
+    from homeassistant.helpers import (
+        area_registry as ar,
+        device_registry as dr,
+        entity_registry as er,
+    )
+
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    area_reg, dev_reg, ent_reg = ar.async_get(hass), dr.async_get(hass), er.async_get(hass)
+
+    area = area_reg.async_get_or_create("South Room")
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("knx", "shade2")}
+    )
+    dev_reg.async_update_device(device.id, area_id=area.id, labels={"south"})
+    cover = ent_reg.async_get_or_create("cover", "knx", "shade2-uid", device_id=device.id)
+    num = ent_reg.async_get_or_create(
+        "number", DOMAIN, f"{entry.entry_id}_shade_position_{area.id}"
+    )
+    sw = ent_reg.async_get_or_create(
+        "switch", DOMAIN, f"{entry.entry_id}_shade_block_{area.id}"
+    )
+    hass.states.async_set(num.entity_id, "30")
+    hass.states.async_set(sw.entity_id, "on")
+
+    state = build_house_state(hass, entry, coordinator)
+
+    ci = next(c for c in state.covers if c.entity_id == cover.entity_id)
+    assert ci.target_position == 30 and ci.blocked is True
 
 
 async def test_build_house_state_snapshot(hass):

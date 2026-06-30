@@ -12,6 +12,7 @@ empty policy list (no actuation) behind a master switch that defaults OFF
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 import logging
 
@@ -22,8 +23,11 @@ from homeassistant.components.climate import (
     SERVICE_SET_TEMPERATURE,
 )
 from homeassistant.components.cover import (
+    ATTR_CURRENT_POSITION,
+    ATTR_POSITION,
     DOMAIN as COVER_DOMAIN,
     SERVICE_CLOSE_COVER,
+    SERVICE_SET_COVER_POSITION,
 )
 from homeassistant.components.fan import (
     ATTR_PERCENTAGE,
@@ -61,6 +65,7 @@ from .const import (
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_OFFSET,
     DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
     FORECAST_REFRESH,
     OPT_DUTY_COMFORT_MAX,
@@ -72,11 +77,13 @@ from .const import (
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_OFFSET,
+    OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_SOLAR,
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
+    SHADE_POSITION_TOLERANCE,
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
     SOLAR_RADIATION,
@@ -92,12 +99,15 @@ from .controller import (
     fan_pacing_enabled,
     is_zone_disabled,
     mode_offset,
+    shade_blocked,
+    shade_position,
     supervisor_enabled,
 )
 from .policies import DutyController
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
+    DEFAULT_SETPOINT_TOLERANCE,
     DutyState,
     HouseState,
     LeverState,
@@ -199,6 +209,22 @@ def shadeable_covers(hass: HomeAssistant) -> tuple[CoverInfo, ...]:
     return tuple(covers)
 
 
+def shadeable_zones(hass: HomeAssistant) -> dict[str, str]:
+    """Distinct rooms (area_id -> friendly name) that own a shadeable cover (#6).
+
+    The per-room shade-position number + shade-block switch entities are created
+    one per zone returned here; the engine keys their lookups by the same zone.
+    """
+    area_reg = ar.async_get(hass)
+    zones: dict[str, str] = {}
+    for cover in shadeable_covers(hass):
+        if not cover.zone or cover.zone in zones:
+            continue
+        area = area_reg.async_get_area(cover.zone)
+        zones[cover.zone] = area.name if area else cover.zone
+    return zones
+
+
 def build_house_state(
     hass: HomeAssistant, entry: ConfigEntry, coordinator, forecast=()
 ) -> HouseState:
@@ -240,6 +266,19 @@ def build_house_state(
             manuale=manuale,
         )
 
+    # #6: enrich each shadeable cover with its room's shade target + block flag.
+    shading_default = int(
+        entry.options.get(OPT_SHADING_DEFAULT_POSITION, DEFAULT_SHADING_POSITION)
+    )
+    covers = tuple(
+        replace(
+            c,
+            target_position=shade_position(hass, entry, c.zone) if c.zone else None,
+            blocked=shade_blocked(hass, entry, c.zone) if c.zone else False,
+        )
+        for c in shadeable_covers(hass)
+    )
+
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     mode = current_house_mode(hass, entry)
     sun = hass.states.get("sun.sun")
@@ -250,7 +289,7 @@ def build_house_state(
     return HouseState(
         now=now,
         zones=zones,
-        covers=shadeable_covers(hass),
+        covers=covers,
         sun_azimuth=sun.attributes.get("azimuth") if sun else None,
         sun_elevation=sun.attributes.get("elevation") if sun else None,
         shading_enabled=bool(
@@ -259,6 +298,7 @@ def build_house_state(
         shading_solar_threshold=float(
             entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
         ),
+        shading_default_position=shading_default,
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=timedelta(
             minutes=float(entry.options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT))
@@ -419,8 +459,16 @@ class SupervisorEngine:
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)
+        # Cover position is numeric and never lands exactly on the commanded value,
+        # so it gets a wider tolerance than a setpoint.
+        tolerance = (
+            SHADE_POSITION_TOLERANCE
+            if lever.startswith("cover:")
+            else DEFAULT_SETPOINT_TOLERANCE
+        )
         result = reconcile(
-            target, current, self._lever_states.get(lever, LeverState()), state.now
+            target, current, self._lever_states.get(lever, LeverState()), state.now,
+            tolerance=tolerance,
         )
         self._lever_states[lever] = result.state
         if result.write is not None:
@@ -442,7 +490,8 @@ class SupervisorEngine:
         if kind == "fan":
             return s.attributes.get(ATTR_PERCENTAGE)
         if kind == "cover":
-            return s.state  # open / closed / opening / closing
+            # position-controlled shading: compare on current_position (0-100).
+            return s.attributes.get(ATTR_CURRENT_POSITION)
         if kind == "switch":
             return s.state  # on / off (e.g. a fancoil manuale switch)
         return None
@@ -467,10 +516,17 @@ class SupervisorEngine:
                 FAN_DOMAIN, SERVICE_SET_PERCENTAGE,
                 {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: int(float(value))},
             )
-        elif kind == "cover" and str(value) == STATE_CLOSED:
-            await self._call(
-                COVER_DOMAIN, SERVICE_CLOSE_COVER, {ATTR_ENTITY_ID: entity}
-            )
+        elif kind == "cover":
+            # Numeric target -> drive to that position; legacy "closed" -> close.
+            if str(value) == STATE_CLOSED:
+                await self._call(
+                    COVER_DOMAIN, SERVICE_CLOSE_COVER, {ATTR_ENTITY_ID: entity}
+                )
+            else:
+                await self._call(
+                    COVER_DOMAIN, SERVICE_SET_COVER_POSITION,
+                    {ATTR_ENTITY_ID: entity, ATTR_POSITION: int(float(value))},
+                )
         elif kind == "switch":
             await self._call_switch(entity, on=str(value) == STATE_ON)
 

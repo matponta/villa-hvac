@@ -323,12 +323,20 @@ class ZoneSnapshot:
 
 @dataclass(frozen=True)
 class CoverInfo:
-    """A shadeable cover, resolved from the registries (#6)."""
+    """A shadeable cover, resolved from the registries (#6).
+
+    `target_position` is the per-room shade target (HA cover position: 0 = fully
+    closed/down, 100 = open) the blind is driven to when shading triggers; None
+    means "use the house default". `blocked` is the per-room manual override —
+    when True the cover is skipped entirely (not closed, not reopened).
+    """
 
     entity_id: str
     orientation: str            # north / east / south / west (device label)
     zone: str | None = None     # area_id
     floor: str | None = None    # area.floor_id
+    target_position: int | None = None  # per-room shade target (HA position)
+    blocked: bool = False       # per-room manual override -> skip shading
 
 
 @dataclass(frozen=True)
@@ -342,6 +350,7 @@ class HouseState:
     sun_elevation: float | None = None
     shading_enabled: bool = False
     shading_solar_threshold: float | None = None
+    shading_default_position: int | None = None  # #6 fallback shade position
     duty_enabled: bool = False          # #9 duty-cycle switch
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None
@@ -401,11 +410,9 @@ def switch_lever(switch_entity: str) -> str:
 # actuation. `desired` is the merged output of the PURE policy stack only (no
 # stateful controllers), so computing it never advances duty/pacing timers.
 
-# Season string + the cover "closed" lever value: mirrors of
-# const.SEASON_SUMMER / homeassistant.const.STATE_CLOSED, kept local so this
-# module stays import-pure (const.py imports homeassistant).
+# Season string (mirror of const.SEASON_SUMMER), kept local so this module
+# stays import-pure (const.py imports homeassistant).
 _SEASON_SUMMER = "summer"
-STATE_CLOSED_PLAN = "closed"
 
 
 @dataclass(frozen=True)
@@ -553,7 +560,7 @@ def build_plan(
     covers_closing = tuple(
         cover.entity_id
         for cover in state.covers
-        if desired.get(cover_lever(cover.entity_id)) == STATE_CLOSED_PLAN
+        if cover_lever(cover.entity_id) in desired
     )
     window = tuple(
         (when, t)

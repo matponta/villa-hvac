@@ -44,7 +44,7 @@ def _state(
     zones, *, mode="Casa", auto=True, setpoint=24.0, offset=0.0,
     season=None, outdoor=None, free_cool=False, free_cool_threshold=None,
     covers=(), azimuth=None, elevation=None, solar=None,
-    shading=False, shading_solar=None,
+    shading=False, shading_solar=None, shading_default=None,
     consenso=None, night=False, fan_pacing=False,
     duty=False, precool=False, precool_offset=None,
 ):
@@ -68,6 +68,7 @@ def _state(
         solar=solar,
         shading_enabled=shading,
         shading_solar_threshold=shading_solar,
+        shading_default_position=shading_default,
         consenso_freddo=consenso,
         night_active=night,
         fan_pacing_enabled=fan_pacing,
@@ -219,13 +220,34 @@ _SOUTH = CoverInfo(entity_id="cover.s", orientation="south")
 _WEST = CoverInfo(entity_id="cover.w", orientation="west")
 _SHADE = dict(
     season=SEASON_SUMMER, azimuth=180.0, elevation=30.0, solar=500.0,
-    shading=True, shading_solar=200.0,
+    shading=True, shading_solar=200.0, shading_default=50,
 )
 
 
-def test_shading_closes_only_the_sunlit_facade():
+def test_shading_drives_sunlit_facade_to_default_position():
     out = shading_policy(_state([], covers=[_SOUTH, _WEST], **_SHADE))
-    assert out == {cover_lever("cover.s"): "closed"}  # sun at 180 -> south only
+    assert out == {cover_lever("cover.s"): 50}  # sun at 180 -> south to default
+
+
+def test_shading_uses_per_room_target_position():
+    south = CoverInfo(entity_id="cover.s", orientation="south", target_position=30)
+    out = shading_policy(_state([], covers=[south], **_SHADE))
+    assert out == {cover_lever("cover.s"): 30}  # per-room override beats default
+
+
+def test_shading_skips_blocked_room():
+    south = CoverInfo(
+        entity_id="cover.s", orientation="south", target_position=30, blocked=True
+    )
+    assert shading_policy(_state([], covers=[south], **_SHADE)) == {}
+
+
+def test_shading_skips_when_no_position_resolved():
+    # no per-room target and no house default -> nothing to command.
+    out = shading_policy(
+        _state([], covers=[_SOUTH], **{**_SHADE, "shading_default": None})
+    )
+    assert out == {}
 
 
 def test_shading_noop_low_sun_low_solar_winter_or_disabled():
