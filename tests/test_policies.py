@@ -364,3 +364,82 @@ def test_band_skips_followers():
         temp=26.0, follows="lr", fancoil_units=(("fan.cucina", "switch.cucina_man"),),
     )
     assert FanBandController()(_state([follower], **_BAND)) == {}
+
+
+# --- F2: ThermalEstimator (online observer) ----------------------------------
+
+from datetime import timedelta  # noqa: E402
+
+from custom_components.villa_hvac.policies import ThermalEstimator  # noqa: E402
+
+
+def _leader(zid="lr", **kw):
+    base = dict(
+        zone_id=zid, name=zid, climate=f"climate.{zid}", emitter="fancoil",
+        fancoil_units=((f"fan.{zid}", f"switch.{zid}_man"),),
+    )
+    base.update(kw)
+    return ZoneSnapshot(**base)
+
+
+def _obs_state(z, *, now, outdoor=30.0, solar=0.0, consenso="off", enabled=True):
+    return HouseState(
+        now=now, zones={z.zone_id: z}, outdoor_temp=outdoor, solar=solar,
+        consenso_freddo=consenso, model_learning_enabled=enabled,
+    )
+
+
+def test_estimator_learns_passive_over_a_window():
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 2, 0, 0)  # night, no cooling -> w=False
+    for m in range(0, 17, 2):  # 16 min of samples, temp drifting
+        z = _leader(temp=24.0 + 0.4 * (m / 60.0), demand=False)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m)))
+    assert est.params["lr"].n >= 1  # a passive update fired after >=15 min
+
+
+def test_estimator_is_disabled_by_flag():
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 2, 0, 0)
+    for m in range(0, 17, 2):
+        z = _leader(temp=24.0, demand=False)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m), enabled=False))
+    assert "lr" not in est.params  # learning off -> nothing observed
+
+
+def test_estimator_skips_capacity_window_in_f2a():
+    # w=True (valve open + consenso on) -> F2a does NOT learn (k is F2b).
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    for m in range(0, 17, 2):
+        z = _leader(temp=25.0, demand=True)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
+    p = est.params.get("lr")
+    assert p is None or (p.n == 0 and p.n_k == 0)  # no passive, no capacity yet
+
+
+def test_estimator_load_rejects_corrupt_and_keeps_valid():
+    est = ThermalEstimator()
+    est.load({
+        "bad": {"a": -1.0, "b": 0.0, "c": 0.0, "k": 1.0, "p": [0.0] * 9, "p_k": 0.0},
+        "neg_k": {"a": 0.0, "b": 0.0, "c": 0.0, "k": -0.5, "p": [0.0] * 9, "p_k": 0.0},
+        "ok": {"a": 0.1, "b": 0.001, "c": 0.0, "k": 0.9, "p": [0.0] * 9, "p_k": 0.0, "n": 5},
+    })
+    assert "bad" not in est.params and "neg_k" not in est.params
+    assert est.params["ok"].a == 0.1 and est.params["ok"].n == 5
+
+
+def test_estimator_dump_roundtrips():
+    est = ThermalEstimator()
+    est.load({"ok": {"a": 0.1, "b": 0.001, "c": 0.2, "k": 0.9, "p": [0.0] * 9,
+                     "p_k": 1.0, "n": 5, "n_k": 3}})
+    est2 = ThermalEstimator()
+    est2.load(est.dump())
+    assert est2.params["ok"].a == 0.1 and est2.params["ok"].n_k == 3
+
+
+def test_estimator_model_for_blends_prior_when_unconverged():
+    est = ThermalEstimator()
+    # no learning yet -> model_for returns the prior (control behaves like F1).
+    m = est.model_for("lr")
+    assert m.a > 0 and m.k > 0  # the COOL_* prior

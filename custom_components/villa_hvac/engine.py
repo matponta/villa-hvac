@@ -50,6 +50,7 @@ from homeassistant.helpers import (
     device_registry as dr,
     entity_registry as er,
 )
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -63,6 +64,7 @@ from .const import (
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
+    DEFAULT_MODEL_ENABLED,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_OFFSET,
@@ -78,6 +80,7 @@ from .const import (
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_MODEL_ENABLED,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_OFFSET,
@@ -108,7 +111,7 @@ from .controller import (
     shade_position,
     supervisor_enabled,
 )
-from .policies import DutyController
+from .policies import DutyController, ThermalEstimator
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -148,6 +151,25 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
 def _manuale_switch(fan_entity: str) -> str:
     """Manuale switch for a fancoil fan (verified: fan.fancoil_X -> switch.fancoil_X_manuale)."""
     return "switch." + fan_entity.removeprefix("fan.") + "_manuale"
+
+
+class RoomModelStore:
+    """Durable per-room learned thermal models (F2). The first Store the
+    integration owns. Best-effort: load/save swallow errors so a corrupt or
+    unwritable file can never block setup or the fail-safe."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store = Store(hass, 1, "villa_hvac_room_models")
+
+    async def async_load(self) -> dict:
+        try:
+            return (await self._store.async_load()) or {}
+        except Exception:  # noqa: BLE001 - corrupt store must fall back to priors
+            _LOGGER.warning("Could not load room-model store; seeding priors", exc_info=True)
+            return {}
+
+    async def async_save(self, data: dict) -> None:
+        await self._store.async_save(data)
 
 
 def _lookahead(entry: ConfigEntry) -> timedelta:
@@ -247,6 +269,8 @@ def build_house_state(
     zone_temps = data.get("zone_temps") or {}
     window = getattr(coordinator, "window", None)
     paused = window.paused if window is not None else set()
+    # F2: the learned thermal model (blended prior->learned) for each leader.
+    thermal = getattr(getattr(coordinator, "engine", None), "thermal", None)
 
     zones: dict[str, ZoneSnapshot] = {}
     for zone_id, zone in ZONES.items():
@@ -263,6 +287,17 @@ def build_house_state(
             _manuale_switch(fancoil) if fancoil else None
         )
         emitter = zone.get("emitter")
+        # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
+        m_a = m_b = m_c = m_k = m_conf = m_kconf = None
+        is_leader = bool(
+            zone.get("climate") and emitter == "fancoil"
+            and fancoils and not zone.get("follows")
+        )
+        if thermal is not None and is_leader:
+            m = thermal.model_for(zone_id)
+            abc_conf, k_conf = thermal.confidence(zone_id)
+            m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
+            m_conf, m_kconf = min(abc_conf, k_conf), k_conf
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
@@ -280,6 +315,8 @@ def build_house_state(
             # every fancoil this leader drives, paired with its manuale switch
             # (living_room owns Salotto + Cucina) — #3 v2 capacity control.
             fancoil_units=tuple((f, _manuale_switch(f)) for f in fancoils),
+            model_a=m_a, model_b=m_b, model_c=m_c, model_k=m_k,
+            model_confidence=m_conf, model_k_confidence=m_kconf,
         )
 
     # #6: enrich each shadeable cover with its room's shade target + block flag.
@@ -317,6 +354,9 @@ def build_house_state(
         shading_default_position=shading_default,
         band_width=float(entry.options.get(OPT_BAND_WIDTH, DEFAULT_BAND_WIDTH)),
         band_slam=float(entry.options.get(OPT_BAND_SLAM, DEFAULT_BAND_SLAM)),
+        model_learning_enabled=bool(
+            entry.options.get(OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED)
+        ),
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=timedelta(
             minutes=float(entry.options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT))
@@ -370,6 +410,7 @@ class SupervisorEngine:
         coordinator,
         policies=None,
         controllers=None,
+        model_store: "RoomModelStore | None" = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
@@ -383,6 +424,12 @@ class SupervisorEngine:
         self._duty_controller = next(
             (c for c in self.controllers if isinstance(c, DutyController)), None
         )
+        # F2: the online thermal-model OBSERVER. NOT a merge controller — it never
+        # actuates; the engine ticks it every cycle (even deploy-dark) so passive
+        # params converge before actuation lights up.
+        self.thermal = ThermalEstimator()
+        self._model_store = model_store
+        self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         self._unsub = None
         self._busy = False
@@ -444,6 +491,10 @@ class SupervisorEngine:
             state = build_house_state(
                 self.hass, self.entry, self.coordinator, forecast=self._forecast
             )
+            # F2: learn the per-room model EVERY cycle, even deploy-dark (the
+            # observer never actuates; passive params converge before go-live).
+            self.thermal.observe(state)
+            await self._maybe_persist_model()
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
@@ -459,6 +510,19 @@ class SupervisorEngine:
                     await self._reconcile_lever(lever, target, state)
         finally:
             self._busy = False
+
+    async def _maybe_persist_model(self) -> None:
+        """Persist the learned models at most once per FORECAST_REFRESH; best-effort."""
+        if self._model_store is None:
+            return
+        now = dt_util.utcnow()
+        if self._model_saved_ts is not None and now - self._model_saved_ts < FORECAST_REFRESH:
+            return
+        self._model_saved_ts = now
+        try:
+            await self._model_store.async_save(self.thermal.dump())
+        except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
+            _LOGGER.debug("Room-model persist failed", exc_info=True)
 
     def _build_plan_view(self, state: HouseState, pure_outputs) -> PlanView:
         """Project the current state into the #11 plan view (read-only).
@@ -626,3 +690,10 @@ class SupervisorEngine:
                         await self._call_switch(manuale, on=False)
                     except Exception:  # noqa: BLE001 - fail-safe must not raise
                         _LOGGER.exception("Fail-safe: could not release %s", manuale)
+        # F2: persist the learned models LAST (after lever release), best-effort —
+        # a corrupt/half-written file must never block the BLOCCO/manuale release.
+        if self._model_store is not None:
+            try:
+                await self._model_store.async_save(self.thermal.dump())
+            except Exception:  # noqa: BLE001 - persistence must not break fail-safe
+                _LOGGER.debug("Fail-safe: room-model persist failed", exc_info=True)

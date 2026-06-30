@@ -314,6 +314,29 @@ async def test_shade_controls_enrich_cover_state(hass):
     assert ci.target_position == 30 and ci.blocked is True
 
 
+async def test_estimator_observes_even_deploy_dark(hass):
+    """F2: the thermal observer learns every cycle even with the master OFF, so
+    passive params converge before actuation lights up."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    assert engine.enabled is False  # deploy-dark
+    await engine._cycle(actuate=False)
+    # the observer seeded the cooling-fancoil leaders' models read-only.
+    assert "living_room" in engine.thermal.params
+    assert "main_bedroom" in engine.thermal.params
+
+
+async def test_model_injected_into_snapshot(hass):
+    """F2: build_house_state surfaces the blended model on leader ZoneSnapshots
+    (prior values until a room converges)."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    state = build_house_state(hass, entry, coordinator)
+    lr = state.zones["living_room"]
+    assert lr.model_a is not None and lr.model_k is not None  # prior, blended in
+    assert lr.model_k_confidence == 0.0  # nothing learned yet
+
+
 async def test_build_house_state_snapshot(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data

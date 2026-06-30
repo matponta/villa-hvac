@@ -9,7 +9,7 @@ from .away import AwayController
 from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
-from .engine import SupervisorEngine
+from .engine import RoomModelStore, SupervisorEngine
 from .night import NightController
 from .policies import POLICIES, DutyController, FanBandController
 from .window import WindowController
@@ -53,11 +53,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # The pure policy stack + the stateful controllers (#9 duty, #3 fan band).
     # They are passed separately so the engine can run the pure policies alone
     # for the read-only #11 plan view without advancing the controllers' timers.
+    # F2: load the persisted per-room thermal models and seed the estimator.
+    model_store = RoomModelStore(hass)
+    model_data = await model_store.async_load()
     engine = SupervisorEngine(
         hass, entry, coordinator,
         policies=POLICIES,
         controllers=(DutyController(), FanBandController()),
+        model_store=model_store,
     )
+    engine.thermal.load(model_data)
     coordinator.engine = engine
     engine.start()
     entry.async_on_unload(engine.stop)

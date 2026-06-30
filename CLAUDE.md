@@ -233,9 +233,25 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        emit, no fight); releases manuale on disable/season-flip + in `async_fail_safe`
        (fans→AUTO). Settable: `OPT_BAND_WIDTH` (B, 1.5), `OPT_BAND_SLAM` (A, B/2),
        `OPT_FAN_MIN` (global) + per-zone `number.*_fan_min` override (0=off in REST).
-       Opt-in `switch.fan_pacing`. TODO F2: online RLS per-room {a,b,c,k}; F3:
-       regime selector (peak/medium/low) + coalescing (sync band phase, BLOCCO as
-       safety) + 12h per-room plan.
+       Opt-in `switch.fan_pacing`.
+       F2 (online self-refining model) — design+adversarially-reviewed via a
+       workflow → 8 small releases v0.18–v0.25 (spec in this session). Model
+       `dT/dt = a(T_out−T)+b·S+c − k·u_eff`. F2a DONE (v0.18.0): pure RLS estimator
+       (`supervisor.py`: ThermalParams/ParamBounds, `rls_passive_update`,
+       `rls_capacity_update`, `estimate_rate` over ≥15min vs 0.1°C/30s noise,
+       `blend_params` prior→learned by confidence) + `ThermalEstimator` OBSERVER
+       (`policies.py`, ticked by the engine EVERY cycle incl. deploy-dark, returns
+       nothing/never actuates; learns {a,b,c} on w=False windows; k decoupled for
+       F2b) + `RoomModelStore` (HA Store, best-effort, persist AFTER lever release
+       in fail-safe) + `ZoneSnapshot.model_*` (blended, fed to control only in F2b)
+       + diagnostic `sensor.hvac_model_<zone>` (G + a,b,c,k + confidence). Opt-in
+       `OPT_MODEL_ENABLED` (default on; observer is read-only).
+       TODO: F2b learn k (w=True+fan-held, actual %); F3a regime classify; F3b 12h
+       per-room sim; F3c coalescing (gated on k-convergence); F4a solar forecast;
+       F4b comfort windows; F4c MPC-lite (optional). Cross-cutting (from review):
+       identifiability gating, hard-room trajectories ADVISORY until k learned
+       (4-param model predicts ~0.6°C/h cooling at the verified ~0-net 34°C peak),
+       controllers-first merge, recorder-exclude the 12h trajectory.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to

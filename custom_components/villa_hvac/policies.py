@@ -15,6 +15,9 @@ separate, deliberate step.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+import math
+
 from .const import (
     COOL_CAPACITY,
     COOL_GAIN_BASE,
@@ -25,6 +28,18 @@ from .const import (
     DEFAULT_BAND_WIDTH,
     FAN_LEVEL_STEP,
     MODE_PRESET,
+    MODEL_ABC_CONF_MIN,
+    MODEL_FORGETTING,
+    MODEL_K_CONF_MIN,
+    MODEL_MAX_A,
+    MODEL_MAX_B,
+    MODEL_MAX_C,
+    MODEL_MAX_K,
+    MODEL_MIN_K,
+    MODEL_P0_K,
+    MODEL_P0_PASSIVE,
+    MODEL_RATE_MAX_MIN,
+    MODEL_RATE_WINDOW_MIN,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_SUMMER,
@@ -32,23 +47,42 @@ from .const import (
     SHADING_MIN_ELEVATION,
 )
 from .supervisor import (
+    BLOCCO_BLOCK,
     BLOCCO_LEVER,
     BandState,
     DutyState,
     HouseState,
+    ParamBounds,
+    ThermalParams,
     ZoneSnapshot,
+    abc_confidence,
     band_step,
+    blend_params,
     capacity_fan,
     cooling_load,
     cover_lever,
     duty_decision,
+    estimate_rate,
     fan_lever,
+    k_confidence,
     preset_lever,
+    rls_passive_update,
+    seed_params,
     switch_lever,
     temperature_lever,
 )
 
 Desired = dict[str, str | float | None]
+
+
+def _is_cooling_leader(z: ZoneSnapshot) -> bool:
+    """A cooling fancoil LEADER: owns a thermostat + its fancoil units, and is not
+    a follower (open-space followers like Cucina are driven by their leader).
+    Shared by FanBandController, ThermalEstimator and (F3) the planner so the set
+    never drifts between them."""
+    return bool(
+        z.climate and z.emitter == "fancoil" and z.fancoil_units and not z.follows
+    )
 
 
 def _controllable(zone: ZoneSnapshot) -> bool:
@@ -318,7 +352,7 @@ class FanBandController:
         slam = state.band_slam if state.band_slam is not None else DEFAULT_BAND_SLAM
         out: Desired = {}
         for z in state.zones.values():
-            if z.follows or z.emitter != "fancoil" or not z.climate or not z.fancoil_units:
+            if not _is_cooling_leader(z):
                 continue  # followers + non-fancoil are not leaders
             if z.bedroom and state.night_active:
                 self._states.pop(z.zone_id, None)  # #2b camere silenziose owns it
@@ -361,3 +395,136 @@ class FanBandController:
                 out[switch_lever(manuale)] = "on"
                 out[fan_lever(fan)] = pct
         return out
+
+
+class ThermalEstimator:
+    """F2 OBSERVER: learns the per-room grey-box model online from live data.
+
+    It is NOT a merge controller — it never actuates and writes nothing to HA.
+    The engine ticks `observe(state)` every cycle EVEN deploy-dark, so the passive
+    params {a,b,c} converge before actuation is ever lit. {a,b,c} are identified on
+    w=False windows (no chilled water to the coil -> the -k*u term vanishes); k is
+    identified on w=True + fan-held windows (F2b). Estimating dT/dt over a long
+    window (not a 30 s diff) is essential given 0.1 C / 30 s quantization noise.
+    """
+
+    def __init__(self) -> None:
+        self.params: dict[str, ThermalParams] = {}
+        self._buf: dict[str, list[tuple]] = {}
+        self._last_w: dict[str, bool] = {}
+        self._bounds = ParamBounds(
+            MODEL_MAX_A, MODEL_MAX_B, MODEL_MAX_C, MODEL_MIN_K, MODEL_MAX_K
+        )
+        self._window_h = MODEL_RATE_WINDOW_MIN / 60.0
+        self._max_window = timedelta(minutes=MODEL_RATE_MAX_MIN)
+
+    @staticmethod
+    def _prior() -> ThermalParams:
+        return seed_params(
+            COOL_GAIN_OUTDOOR, COOL_GAIN_SOLAR, COOL_GAIN_BASE, COOL_CAPACITY,
+            p0_passive=MODEL_P0_PASSIVE, p0_k=MODEL_P0_K,
+        )
+
+    def model_for(self, zone_id: str) -> ThermalParams:
+        """Blended (prior->learned) params for control + diagnostics. Below
+        confidence the prior dominates, so control behaves exactly like F1."""
+        learned = self.params.get(zone_id)
+        if learned is None:
+            return self._prior()
+        return blend_params(
+            learned, self._prior(),
+            abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
+        )
+
+    def confidence(self, zone_id: str) -> tuple[float, float]:
+        """(abc_confidence, k_confidence) in [0,1] for this zone."""
+        learned = self.params.get(zone_id)
+        if learned is None:
+            return 0.0, 0.0
+        return (
+            abc_confidence(learned, conf_min=MODEL_ABC_CONF_MIN),
+            k_confidence(learned, conf_min=MODEL_K_CONF_MIN),
+        )
+
+    def observe(self, state: HouseState) -> None:
+        """One read-only learning tick over all cooling leaders. Mutates params
+        only; returns nothing. Safe to call deploy-dark."""
+        if not state.model_learning_enabled:
+            return
+        for z in state.zones.values():
+            if _is_cooling_leader(z):
+                self._observe_zone(z, state)
+
+    def _observe_zone(self, z: ZoneSnapshot, state: HouseState) -> None:
+        zid = z.zone_id
+        self.params.setdefault(zid, self._prior())
+        temp, t_out, solar = z.temp, state.outdoor_temp, state.solar
+        if temp is None or t_out is None or solar is None:
+            return
+        # demand for the whole open-space unit (leader + its followers).
+        demand_any = z.demand
+        for f in state.zones.values():
+            if f.follows == zid and f.demand:
+                demand_any = True
+        if demand_any is None:
+            return  # no valve signal -> can't classify the window
+        w = (
+            bool(demand_any)
+            and state.consenso_freddo == "on"
+            and state.blocco != BLOCCO_BLOCK
+        )
+        buf = self._buf.setdefault(zid, [])
+        prev_w = self._last_w.get(zid)
+        if prev_w is not None and w != prev_w:
+            buf.clear()  # a chilled-water edge -> start a fresh homogeneous window
+        self._last_w[zid] = w
+        now = state.now
+        buf.append((now, float(temp), float(t_out), float(solar)))
+        while buf and (now - buf[0][0]) > self._max_window:
+            buf.pop(0)
+        if not buf or (now - buf[0][0]).total_seconds() / 3600.0 < self._window_h:
+            return
+        rate = estimate_rate([(t, v) for (t, v, _, _) in buf], min_span_h=self._window_h)
+        if rate is None:
+            return
+        n = len(buf)
+        mt_out = sum(s[2] for s in buf) / n
+        mtemp = sum(s[1] for s in buf) / n
+        msolar = sum(s[3] for s in buf) / n
+        if not w:  # F2a: passive {a,b,c} on a no-chilled-water window
+            self.params[zid] = rls_passive_update(
+                self.params[zid], dt_dt=rate, t_out=mt_out, temp=mtemp, solar=msolar,
+                forgetting=MODEL_FORGETTING, bounds=self._bounds,
+            )
+        # F2b adds the capacity (k) branch here (w=True + fan held).
+        buf.clear()
+        buf.append((now, float(temp), float(t_out), float(solar)))  # fresh window
+
+    # -- persistence (engine drives the Store) --------------------------------
+    def load(self, data: dict | None) -> None:
+        """Seed params from the persisted store; reject corrupt/unphysical rows
+        (a negative k must never reach capacity_fan)."""
+        for zid, d in (data or {}).items():
+            try:
+                p = ThermalParams(
+                    a=float(d["a"]), b=float(d["b"]), c=float(d["c"]), k=float(d["k"]),
+                    p=tuple(float(x) for x in d["p"]), p_k=float(d["p_k"]),
+                    n=int(d.get("n", 0)), n_k=int(d.get("n_k", 0)),
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if (
+                len(p.p) == 9
+                and all(math.isfinite(x) for x in (p.a, p.b, p.c, p.k, p.p_k, *p.p))
+                and p.a >= 0 and p.b >= 0 and p.c >= 0 and p.k > 0
+            ):
+                self.params[zid] = p
+
+    def dump(self) -> dict:
+        return {
+            zid: {
+                "a": p.a, "b": p.b, "c": p.c, "k": p.k,
+                "p": list(p.p), "p_k": p.p_k, "n": p.n, "n_k": p.n_k,
+            }
+            for zid, p in self.params.items()
+        }

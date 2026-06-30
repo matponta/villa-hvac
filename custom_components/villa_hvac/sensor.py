@@ -15,9 +15,9 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
-from .const import ZONES
+from .const import OUTDOOR_TEMP, OUTDOOR_TEMP_FALLBACK, SOLAR_RADIATION, ZONES
 from .coordinator import VillaHvacCoordinator
-from .supervisor import PlanView
+from .supervisor import PlanView, cooling_load
 
 
 async def async_setup_entry(
@@ -35,7 +35,23 @@ async def async_setup_entry(
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
     ]
+    # F2: one learned-thermal-model diagnostic per cooling fancoil leader zone.
+    entities += [
+        HvacModelSensor(coordinator, entry, zone_id, zone)
+        for zone_id, zone in ZONES.items()
+        if zone.get("climate") and zone.get("emitter") == "fancoil"
+    ]
     async_add_entities(entities)
+
+
+def _num_state(hass: HomeAssistant, entity_id: str) -> float | None:
+    s = hass.states.get(entity_id)
+    if s is None or s.state in ("unavailable", "unknown"):
+        return None
+    try:
+        return float(s.state)
+    except (TypeError, ValueError):
+        return None
 
 
 class CoolingDemandZonesSensor(
@@ -224,4 +240,73 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
                 }
                 for z in plan.zones
             ],
+        }
+
+
+class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """F2 diagnostic: the learned per-room thermal model.
+
+    State = the current heat-gain rate G (°C/h) from the blended model; attributes
+    expose the learned {a,b,c,k} and the confidences so you can watch each room's
+    model converge before it ever feeds control.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:chart-bell-curve-cumulative"
+    _attr_native_unit_of_measurement = "°C/h"
+    _attr_suggested_display_precision = 2
+
+    def __init__(
+        self,
+        coordinator: VillaHvacCoordinator,
+        entry: VillaHvacConfigEntry,
+        zone_id: str,
+        zone: dict,
+    ) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone_id
+        self._attr_name = f"{zone['name']} model"
+        self._attr_unique_id = f"{entry.entry_id}_hvac_model_{zone_id}"
+
+    @property
+    def _model(self):
+        engine = getattr(self.coordinator, "engine", None)
+        thermal = getattr(engine, "thermal", None)
+        return thermal.model_for(self._zone_id) if thermal is not None else None
+
+    @property
+    def _temp(self) -> float | None:
+        return (self.coordinator.data.get("zone_temps") or {}).get(self._zone_id, {}).get("value")
+
+    @property
+    def native_value(self) -> float | None:
+        m = self._model
+        if m is None:
+            return None
+        outdoor = _num_state(self.hass, OUTDOOR_TEMP)
+        if outdoor is None:
+            outdoor = _num_state(self.hass, OUTDOOR_TEMP_FALLBACK)
+        return round(
+            cooling_load(self._temp, outdoor, _num_state(self.hass, SOLAR_RADIATION),
+                         a=m.a, b=m.b, c=m.c),
+            3,
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        m = self._model
+        if m is None:
+            return {}
+        engine = getattr(self.coordinator, "engine", None)
+        thermal = getattr(engine, "thermal", None)
+        abc_conf, k_conf = thermal.confidence(self._zone_id) if thermal else (0.0, 0.0)
+        return {
+            "a_outdoor": round(m.a, 5),
+            "b_solar": round(m.b, 6),
+            "c_base": round(m.c, 4),
+            "k_capacity": round(m.k, 4),
+            "abc_confidence": round(abc_conf, 3),
+            "k_confidence": round(k_conf, 3),
+            "passive_updates": m.n,
+            "capacity_updates": m.n_k,
         }

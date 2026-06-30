@@ -496,6 +496,35 @@ COOL_GAIN_SOLAR = 0.0008     # b: °C/h per W/m² of solar radiation
 COOL_GAIN_BASE = 0.0         # c: baseline internal-gain °C/h
 COOL_PULLDOWN = 0.3          # r: target pull-down rate during a RUN (°C/h)
 
+# --- F2: online self-refining per-room thermal model (RLS) --------------------
+# Learn dT/dt = a(T_out-T) + b*S + c - k*u_eff per room from live data.
+# {a,b,c} are learned on w=False windows (no chilled water -> the -k*u term is 0);
+# k is learned on w=True + fan-held-by-pacing windows (F2b). The estimator is an
+# OBSERVER (never actuates) and runs even deploy-dark, so passive params converge
+# before actuation lights up. Learned params reach control via blend_params
+# (prior -> learned by confidence), so behaviour == F1 until a room converges.
+OPT_MODEL_ENABLED = "model_learning_enabled"
+DEFAULT_MODEL_ENABLED = True       # the observer is read-only; safe on by default
+MODEL_FORGETTING = 0.995           # RLS forgetting (slow, below control bandwidth)
+MODEL_RATE_WINDOW_MIN = 15.0       # min span (min) to estimate dT/dt (vs 0.1°C/30s noise)
+MODEL_RATE_MAX_MIN = 45.0          # cap the rate window (track slowly-varying conditions)
+MODEL_W_EDGE_SKIP = 3              # cycles to skip after a chilled-water edge (KNX off-delay)
+# Physical bounds (project every update; reject NaN/inf; clamp k>0 so capacity_fan
+# never sees a sign-flipping negative k):
+MODEL_MAX_A = 0.5
+MODEL_MAX_B = 0.01
+MODEL_MAX_C = 3.0
+MODEL_MIN_K = 0.1
+MODEL_MAX_K = 5.0
+# Initial RLS covariance (weak prior: lets data move the params, bounded so a bad
+# first sample can't explode them). Passive diag for (a, b, c); scalar for k.
+MODEL_P0_PASSIVE = (0.5, 1e-5, 4.0)
+MODEL_P0_K = 4.0
+# Confidence handover: updates before a learned coefficient is fully trusted by
+# control (smooth blend weight = n / (n + conf_min)).
+MODEL_ABC_CONF_MIN = 40
+MODEL_K_CONF_MIN = 20
+
 # --- #9 forecast run-window planner (pre-cool) -------------------------------
 # Feed-forward on the hourly weather forecast: if a hot peak is coming within the
 # lead window, "pre-cool" — don't let the duty cycle rest (bank coolth) and nudge

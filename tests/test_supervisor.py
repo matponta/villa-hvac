@@ -6,6 +6,7 @@ priority merge and the tolerance compare.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 from custom_components.villa_hvac.supervisor import (
@@ -16,18 +17,26 @@ from custom_components.villa_hvac.supervisor import (
     DutyState,
     HouseState,
     LeverState,
+    ParamBounds,
     RunPlan,
     ZoneSnapshot,
+    abc_confidence,
     band_step,
+    blend_params,
     build_plan,
     capacity_fan,
     cooling_load,
     cover_lever,
     duty_decision,
+    estimate_rate,
     fan_level,
+    k_confidence,
     merge_desired,
     plan_run,
     reconcile,
+    rls_capacity_update,
+    rls_passive_update,
+    seed_params,
     temperature_lever,
     values_match,
 )
@@ -476,3 +485,107 @@ def test_build_plan_winter_reflects_heating_call():
         RunPlan(), {}, DutyState(), [], LOOK,
     )
     assert plan.summary == "heating"
+
+
+# --- F2: online thermal-model estimator (pure RLS) ---------------------------
+
+_BOUNDS = ParamBounds(max_a=0.5, max_b=0.01, max_c=3.0, min_k=0.1, max_k=5.0)
+
+
+def _seed():
+    return seed_params(0.0, 0.0, 0.0, 1.2, p0_passive=(1.0, 1e-4, 4.0), p0_k=4.0)
+
+
+def test_rls_passive_converges_to_truth():
+    truth_a, truth_b, truth_c = 0.04, 0.0012, 0.2
+    p = _seed()
+    deltas = [2.0, 5.0, 8.0, 3.0, 6.0, 1.0, 7.0, 4.0]
+    solars = [100.0, 400.0, 700.0, 200.0, 900.0, 0.0, 600.0, 300.0]
+    for i in range(300):
+        d = deltas[i % len(deltas)]
+        s = solars[(i * 3) % len(solars)]
+        temp, t_out = 24.0, 24.0 + d
+        y = truth_a * d + truth_b * s + truth_c  # noise-free dT/dt
+        p = rls_passive_update(
+            p, dt_dt=y, t_out=t_out, temp=temp, solar=s,
+            forgetting=0.995, bounds=_BOUNDS,
+        )
+    assert abs(p.a - truth_a) < 0.01
+    assert abs(p.b - truth_b) < 5e-4
+    assert abs(p.c - truth_c) < 0.1
+    assert p.n == 300 and p.n_k == 0  # passive only; k untouched
+
+
+def test_rls_capacity_converges_holding_abc():
+    p = _seed()  # a=b=c=0 -> G=0 -> dT/dt = -k*u
+    truth_k = 1.0
+    us = [0.3, 0.5, 1.0, 0.7, 0.4]
+    for i in range(200):
+        u = us[i % len(us)]
+        p = rls_capacity_update(
+            p, dt_dt=-truth_k * u, t_out=30.0, temp=24.0, solar=0.0, u=u,
+            forgetting=0.995, bounds=_BOUNDS,
+        )
+    assert abs(p.k - truth_k) < 0.05
+    assert p.a == 0.0 and p.b == 0.0 and p.c == 0.0  # passive untouched
+
+
+def test_rls_passive_clamps_to_physical_bounds():
+    p = seed_params(0.04, 0.001, 0.2, 1.2, p0_passive=(1.0, 1e-4, 4.0), p0_k=4.0)
+    # a wildly negative rate with positive (T_out-T) would push a < 0 -> clamp.
+    p2 = rls_passive_update(
+        p, dt_dt=-50.0, t_out=34.0, temp=24.0, solar=0.0,
+        forgetting=0.995, bounds=_BOUNDS,
+    )
+    assert p2.a >= 0.0 and p2.b >= 0.0 and p2.c >= 0.0
+
+
+def test_rls_capacity_clamps_k_positive():
+    p = _seed()
+    # huge positive dT/dt while cooling would push k negative -> clamp to min_k.
+    p2 = rls_capacity_update(
+        p, dt_dt=10.0, t_out=30.0, temp=24.0, solar=0.0, u=1.0,
+        forgetting=0.995, bounds=_BOUNDS,
+    )
+    assert p2.k >= _BOUNDS.min_k
+
+
+def test_rls_rejects_non_finite():
+    p = _seed()
+    assert rls_passive_update(
+        p, dt_dt=float("nan"), t_out=30.0, temp=24.0, solar=0.0,
+        forgetting=0.995, bounds=_BOUNDS,
+    ) is p
+    assert rls_capacity_update(
+        p, dt_dt=-0.5, t_out=30.0, temp=24.0, solar=0.0, u=0.0,  # u<=0 -> no info
+        forgetting=0.995, bounds=_BOUNDS,
+    ) is p
+
+
+def test_estimate_rate_slope_and_min_span():
+    base = datetime(2026, 6, 30, 12, 0, 0)
+    samples = [
+        (base + timedelta(minutes=m), 24.0 + 1.2 * (m / 60.0)) for m in range(0, 21, 2)
+    ]
+    assert abs(estimate_rate(samples, min_span_h=0.25) - 1.2) < 0.01
+    # a 4-minute span (< 15 min) is rejected — never trust a quantization-noisy diff.
+    short = [(base + timedelta(minutes=m), 24.0) for m in (0, 2, 4)]
+    assert estimate_rate(short, min_span_h=0.25) is None
+    # fewer than 3 points -> None.
+    assert estimate_rate([(base, 24.0)], min_span_h=0.25) is None
+
+
+def test_blend_uses_prior_below_confidence_learned_above():
+    prior = seed_params(0.03, 0.0008, 0.0, 1.2, p0_passive=(1.0, 1e-4, 4.0), p0_k=4.0)
+    fresh = replace(prior, a=0.1, k=0.5, n=0, n_k=0)
+    below = blend_params(fresh, prior, abc_conf_min=40, k_conf_min=20)
+    assert abs(below.a - prior.a) < 1e-9 and abs(below.k - prior.k) < 1e-9
+    converged = replace(prior, a=0.1, k=0.5, n=400, n_k=200)
+    above = blend_params(converged, prior, abc_conf_min=40, k_conf_min=20)
+    assert above.a > 0.08 and above.k < 0.7  # mostly the learned values
+
+
+def test_confidence_monotone():
+    p = replace(_seed(), n=40, n_k=20)
+    assert abs(abc_confidence(p, conf_min=40) - 0.5) < 1e-9
+    assert abs(k_confidence(p, conf_min=20) - 0.5) < 1e-9

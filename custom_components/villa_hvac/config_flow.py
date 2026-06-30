@@ -19,6 +19,7 @@ from .const import (
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
     DEFAULT_FAN_MIN,
+    DEFAULT_MODEL_ENABLED,
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
@@ -46,6 +47,7 @@ from .const import (
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_MODEL_ENABLED,
     OPT_NIGHT_THRESHOLD,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
@@ -218,6 +220,10 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_FAN_MIN,
                     default=options.get(OPT_FAN_MIN, DEFAULT_FAN_MIN),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+                vol.Optional(
+                    OPT_MODEL_ENABLED,
+                    default=options.get(OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
