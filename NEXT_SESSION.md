@@ -20,7 +20,7 @@ and writes each lever ONCE via a pure manual-override-robust arbiter
 Strict deploy-dark: nothing actuates until switch.supervisor is on.
 
 DONE this build (repo github.com/matponta/villa-hvac; gh authed via macOS keyring,
-tokenless push/release; released through v0.14.1; CI green; 114 tests):
+tokenless push/release; released through v0.15.0; CI green; 127 tests):
 - Phase 0: tests pinned to the DEPLOY TARGET — HA 2026.4.3 / Python 3.14
   (the 2026.4.x line dropped 3.13). venv is python@3.14 (brew).
 - A (v0.9.0): supervisor backbone + write-arbiter (write-confirm/re-assert
@@ -37,6 +37,13 @@ tokenless push/release; released through v0.14.1; CI green; 114 tests):
   OUTDOOR); #3 fan pacing (FanPacingController two-phase, switch.fan_pacing);
   12h FORECAST PLANNER (plan_run on weather.forecast_home, re-fetched every 30min,
   margin gate -> precool: suppress cooloff + nudge setpoints colder).
+- F2 (v0.15.0): #11 PLAN VISUALIZATION — `sensor.hvac_plan` (state=regime
+  pre_cool/peak_run/duty_rest/cooling/free_cool/heating/idle; attrs=forecast
+  curve+peak, duty run/rest windows, per-zone target setpoints, shading covers).
+  Pure `build_plan` + `engine.plan_view`; computed EVERY cycle even deploy-dark
+  (engine `_cycle` runs the PURE policies read-only; only `_actuate` is
+  master-gated). Engine now takes pure `policies` + stateful `controllers`
+  separately so building the plan never advances the duty/pacing timers.
 
 NOT DEPLOYED to the real HA yet (it still runs the legacy clima_*/notte_*
 automations on the old v0.1.0). Deploy-dark: copy custom_components/villa_hvac to
@@ -61,8 +68,6 @@ NEXT — remaining roadmap (all still deploy-dark / code+tests):
 - #7 winter radiant pre-heat (caldo mechanism unverified -> behind a flag;
   summer pre-cool already covered by the #9 planner).
 - #8 interactive weekend scenes (actionable notify).
-- #11 next-12h heating/cooling PLAN visualization (expose RunPlan/DutyState/
-  precool as a sensor + dashboard timeline card).
 - DEPLOY (Phase G) + LIVE-VERIFY GATES (supervised, never headless):
   (1) BLOCCO polarity (one toggle, watch consenso drop ~1-2min);
   (2) held-low-fan cooling test (does a held low fan cool smoothly / stop the

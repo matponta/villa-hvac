@@ -236,12 +236,20 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
 9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
        consenso mechanism TBD (behind a flag, verify in heating season)
 10. [ ] #8 Interactive weekend scenes (actionable notification)
-11. [ ] #11 Plan visualization — show the next-12h heating/cooling PLAN: forecast
-        temp curve + peak (`RunPlan.peak_eta`/`forecast_peak`) + pre-cool window +
-        duty run/rest (stint/cooloff) windows + per-zone setpoints/shading. Expose
-        the plan as a sensor (state + attributes) so a dashboard timeline card can
-        render it; makes the organism's 12h intent visible. Builds on #9's
-        RunPlan + DutyState + precool.
+11. [x] #11 Plan visualization — DONE (v0.15.0): `sensor.hvac_plan` exposes the
+        next-12h PLAN. State = the regime (`pre_cool`/`peak_run`/`duty_rest`/
+        `cooling`/`free_cool`/`heating`/`idle`); attributes carry the forecast
+        curve + peak (`forecast_peak`/`peak_eta_minutes`/`peak_at`), the duty
+        run/rest windows (`stint_start`/`stint_elapsed_minutes`/`cooloff_until`/
+        `rest_starts`), per-zone planned setpoints (`zones[].target`), and the
+        shading covers (`covers_closing`) — so a dashboard timeline card can
+        render the 12h intent. Pure `build_plan` (supervisor.py) + the
+        `engine.plan_view` property. CRUCIAL: the plan is computed every cycle
+        EVEN WHILE DEPLOY-DARK (engine `_tick`/`_cycle` runs the PURE policies
+        read-only; only `_actuate` is master-gated), so the intent is visible
+        before actuation lights up. Builds on #9's RunPlan/DutyState/precool. The
+        engine now takes pure `policies` + stateful `controllers` separately so
+        building the plan never advances the duty/pacing timers.
 
 ## Guardrails / domain rules
 

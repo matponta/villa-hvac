@@ -94,12 +94,17 @@ from .controller import (
     mode_offset,
     supervisor_enabled,
 )
+from .policies import DutyController
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
+    DutyState,
     HouseState,
     LeverState,
+    PlanView,
+    RunPlan,
     ZoneSnapshot,
+    build_plan,
     merge_desired,
     plan_run,
     reconcile,
@@ -123,6 +128,37 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
     """Ecowitt outdoor temp, falling back to the PdC's own probe."""
     val = _num(hass, OUTDOOR_TEMP)
     return val if val is not None else _num(hass, OUTDOOR_TEMP_FALLBACK)
+
+
+def _lookahead(entry: ConfigEntry) -> timedelta:
+    """The #9 planner lookahead horizon (default 12 h)."""
+    return timedelta(
+        hours=float(
+            entry.options.get(
+                OPT_PRECOOL_LOOKAHEAD_HOURS, DEFAULT_PRECOOL_LOOKAHEAD_HOURS
+            )
+        )
+    )
+
+
+def _make_run_plan(
+    entry: ConfigEntry, forecast, now, outdoor: float | None
+) -> RunPlan:
+    """Build the #9 forecast run-plan from the cached forecast + options.
+
+    Shared by `build_house_state` (which keeps only `.precool`) and the #11 plan
+    view (which surfaces the full plan), so both reason over the same horizon.
+    """
+    return plan_run(
+        list(forecast),
+        now,
+        outdoor,
+        peak_threshold=float(
+            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
+        ),
+        lookahead=_lookahead(entry),
+        margin=float(entry.options.get(OPT_PRECOOL_MARGIN, DEFAULT_PRECOOL_MARGIN)),
+    )
 
 
 def shadeable_covers(hass: HomeAssistant) -> tuple[CoverInfo, ...]:
@@ -210,22 +246,7 @@ def build_house_state(
     night = getattr(coordinator, "night", None)
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
-    plan = plan_run(
-        list(forecast),
-        now,
-        outdoor,
-        peak_threshold=float(
-            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
-        ),
-        lookahead=timedelta(
-            hours=float(
-                entry.options.get(
-                    OPT_PRECOOL_LOOKAHEAD_HOURS, DEFAULT_PRECOOL_LOOKAHEAD_HOURS
-                )
-            )
-        ),
-        margin=float(entry.options.get(OPT_PRECOOL_MARGIN, DEFAULT_PRECOOL_MARGIN)),
-    )
+    plan = _make_run_plan(entry, forecast, now, outdoor)
     return HouseState(
         now=now,
         zones=zones,
@@ -290,16 +311,26 @@ class SupervisorEngine:
         entry: ConfigEntry,
         coordinator,
         policies=None,
+        controllers=None,
     ) -> None:
         self.hass = hass
         self.entry = entry
         self.coordinator = coordinator
+        # `policies` are PURE (functions of HouseState); `controllers` are the
+        # stateful ones (#9 duty, #3 pacing) whose internal timers advance only
+        # when we actuate. The plan view (#11) runs the pure policies only, so
+        # building it never advances those timers — safe to compute while dark.
         self.policies = list(policies or [])
+        self.controllers = list(controllers or [])
+        self._duty_controller = next(
+            (c for c in self.controllers if isinstance(c, DutyController)), None
+        )
         self._lever_states: dict[str, LeverState] = {}
         self._unsub = None
         self._busy = False
         self._forecast: list[tuple] = []
         self._forecast_ts = None
+        self._plan_view: PlanView | None = None
 
     def start(self) -> None:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
@@ -315,12 +346,20 @@ class SupervisorEngine:
         """True only when the master switch is explicitly on (deploy-dark)."""
         return supervisor_enabled(self.hass, self.entry)
 
+    @property
+    def plan_view(self) -> PlanView | None:
+        """The latest #11 plan projection (refreshed each cycle, even dark)."""
+        return self._plan_view
+
     # -- main loop ------------------------------------------------------------
     @callback
     def _on_update(self) -> None:
-        if not self.enabled or self._busy:
+        # Always tick: the plan view (#11) is computed every cycle, even while
+        # deploy-dark, so the dashboard can show the organism's intent before we
+        # light up actuation. Actuation itself stays gated on the master switch.
+        if self._busy:
             return
-        self.hass.async_create_task(self._run())
+        self.hass.async_create_task(self._tick())
 
     async def request_run(self) -> None:
         """Run a supervisor pass immediately (event-driven responsiveness).
@@ -332,19 +371,51 @@ class SupervisorEngine:
         if self.enabled and not self._busy:
             await self._run()
 
+    async def _tick(self) -> None:
+        """Periodic pass: refresh the plan always, actuate only when enabled."""
+        await self._cycle(actuate=self.enabled)
+
     async def _run(self) -> None:
+        """Force an actuating pass (event-driven + tests). Also refreshes plan."""
+        await self._cycle(actuate=True)
+
+    async def _cycle(self, *, actuate: bool) -> None:
         self._busy = True
         try:
             await self._maybe_refresh_forecast()
             state = build_house_state(
                 self.hass, self.entry, self.coordinator, forecast=self._forecast
             )
-            outputs = [policy(state) for policy in self.policies]
-            desired = merge_desired(outputs)
-            for lever, target in desired.items():
-                await self._reconcile_lever(lever, target, state)
+            # Pure policies first — used both for the plan view and (merged with
+            # the stateful controllers) for actuation.
+            pure_outputs = [policy(state) for policy in self.policies]
+            self._plan_view = self._build_plan_view(state, pure_outputs)
+            if actuate:
+                ctrl_outputs = [c(state) for c in self.controllers]
+                desired = merge_desired([*pure_outputs, *ctrl_outputs])
+                for lever, target in desired.items():
+                    await self._reconcile_lever(lever, target, state)
         finally:
             self._busy = False
+
+    def _build_plan_view(self, state: HouseState, pure_outputs) -> PlanView:
+        """Project the current state into the #11 plan view (read-only).
+
+        Reuses the already-computed pure-policy outputs (preset/setpoint/cover
+        opinions) and the live DutyState; never runs the stateful controllers,
+        so it has no side effects and is safe to compute while deploy-dark.
+        """
+        desired = merge_desired(pure_outputs)
+        run_plan = _make_run_plan(
+            self.entry, self._forecast, state.now, state.outdoor_temp
+        )
+        duty_state = (
+            self._duty_controller.duty if self._duty_controller else DutyState()
+        )
+        return build_plan(
+            state, run_plan, desired, duty_state,
+            list(self._forecast), _lookahead(self.entry),
+        )
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)

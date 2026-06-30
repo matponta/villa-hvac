@@ -12,14 +12,20 @@ from custom_components.villa_hvac.supervisor import (
     BLOCCO_BLOCK,
     BLOCCO_RELEASE,
     DEFAULT_OVERRIDE_BACKOFF,
+    CoverInfo,
     DutyState,
+    HouseState,
     LeverState,
     RunPlan,
+    ZoneSnapshot,
+    build_plan,
+    cover_lever,
     duty_decision,
     merge_desired,
     pacing_decision,
     plan_run,
     reconcile,
+    temperature_lever,
     values_match,
 )
 
@@ -311,3 +317,116 @@ def test_pacing_holds_maintain_within_hysteresis_gap():
 
 def test_pacing_reenters_approach_when_drifts_up():
     assert pacing_decision("maintain", 1.5, **PB) == ("approach", 100)
+
+
+# --- build_plan (#11 plan view) ----------------------------------------------
+
+
+def _zone(zone_id, climate, **kw):
+    base = dict(name=zone_id, emitter="fancoil", temp=25.0, enabled=True, paused=False)
+    base.update(kw)
+    return ZoneSnapshot(zone_id=zone_id, climate=climate, **base)
+
+
+def _house(zones=(), **kw):
+    opts = dict(
+        season="summer",
+        house_mode="Casa",
+        house_setpoint=24.0,
+        mode_offset=0.0,
+        precool_offset=1.5,
+        duty_enabled=True,
+        duty_max_stint=timedelta(hours=2),
+        duty_peak_outdoor=30.0,
+        outdoor_temp=26.0,
+        consenso_freddo="off",
+    )
+    opts.update(kw)
+    return HouseState(now=T0, zones={z.zone_id: z for z in zones}, **opts)
+
+
+def test_build_plan_summary_idle_when_nothing_active():
+    plan = build_plan(_house(), RunPlan(), {}, DutyState(), [], LOOK)
+    assert plan.summary == "idle"
+    assert plan.cooling is False and plan.precool is False
+
+
+def test_build_plan_summary_cooling():
+    plan = build_plan(
+        _house(consenso_freddo="on"), RunPlan(), {}, DutyState(), [], LOOK
+    )
+    assert plan.summary == "cooling" and plan.cooling is True
+
+
+def test_build_plan_summary_precool_and_setpoint():
+    rp = RunPlan(precool=True, forecast_peak=34.0, peak_eta=timedelta(hours=6))
+    plan = build_plan(_house(), rp, {}, DutyState(), [], LOOK)
+    assert plan.summary == "pre_cool"
+    assert plan.effective_setpoint == 24.0
+    assert plan.precool_setpoint == 22.5  # 24 - 1.5
+    assert plan.forecast_peak == 34.0 and plan.peak_eta == timedelta(hours=6)
+
+
+def test_build_plan_summary_peak_run_when_hot_outside():
+    plan = build_plan(_house(outdoor_temp=33.0), RunPlan(), {}, DutyState(), [], LOOK)
+    assert plan.at_peak is True and plan.summary == "peak_run"
+
+
+def test_build_plan_summary_duty_rest_in_cooloff():
+    duty = DutyState(cooloff_until=T0 + timedelta(minutes=20))
+    plan = build_plan(
+        _house(consenso_freddo="on"), RunPlan(), {}, duty, [], LOOK
+    )
+    assert plan.in_cooloff is True and plan.summary == "duty_rest"
+    assert plan.cooloff_until == T0 + timedelta(minutes=20)
+    assert plan.blocco_desired == BLOCCO_BLOCK
+
+
+def test_build_plan_summary_free_cool_wins():
+    plan = build_plan(
+        _house(free_cool_enabled=True, free_cool_threshold=22.0, outdoor_temp=20.0),
+        RunPlan(), {}, DutyState(), [], LOOK,
+    )
+    assert plan.free_cool is True and plan.summary == "free_cool"
+
+
+def test_build_plan_zone_targets_from_desired():
+    z = _zone("living_room", "climate.salotto")
+    desired = {temperature_lever("climate.salotto"): 23.0}
+    plan = build_plan(_house([z]), RunPlan(), desired, DutyState(), [], LOOK)
+    (zp,) = plan.zones
+    assert zp.zone_id == "living_room" and zp.target == 23.0 and zp.temp == 25.0
+
+
+def test_build_plan_covers_closing_from_desired():
+    cover = CoverInfo(entity_id="cover.salotto", orientation="west", zone="lr")
+    desired = {cover_lever("cover.salotto"): "closed"}
+    plan = build_plan(
+        _house(covers=(cover,)), RunPlan(), desired, DutyState(), [], LOOK
+    )
+    assert plan.covers_closing == ("cover.salotto",)
+
+
+def test_build_plan_windows_the_forecast_curve():
+    fc = [
+        (T0 + timedelta(hours=2), 30.0),
+        (T0 + timedelta(hours=15), 35.0),  # beyond the 12 h lookahead
+        (T0 - timedelta(hours=1), 24.0),   # in the past
+    ]
+    plan = build_plan(_house(), RunPlan(), {}, DutyState(), fc, LOOK)
+    assert plan.forecast == ((T0 + timedelta(hours=2), 30.0),)
+
+
+def test_build_plan_stint_elapsed_tracks_duty():
+    duty = DutyState(stint_start=T0 - timedelta(minutes=45))
+    plan = build_plan(_house(consenso_freddo="on"), RunPlan(), {}, duty, [], LOOK)
+    assert plan.stint_elapsed == timedelta(minutes=45)
+    assert plan.stint_cap == timedelta(hours=2)
+
+
+def test_build_plan_winter_reflects_heating_call():
+    plan = build_plan(
+        _house(season="winter", consenso_caldo="on", consenso_freddo="off"),
+        RunPlan(), {}, DutyState(), [], LOOK,
+    )
+    assert plan.summary == "heating"

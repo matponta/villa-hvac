@@ -221,6 +221,11 @@ class DutyController:
     def __init__(self) -> None:
         self._duty = DutyState()
 
+    @property
+    def duty(self) -> DutyState:
+        """The live cross-cycle duty state (read by the #11 plan view)."""
+        return self._duty
+
     def __call__(self, state: HouseState) -> Desired:
         if (
             not state.duty_enabled

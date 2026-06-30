@@ -50,11 +50,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # but writes nothing until the master switch.villa_hvac_supervisor is turned
     # on (deploy-dark). On unload it releases the central cooling block so the
     # villa is never left globally blocked without the supervisor alive.
-    # DutyController is stateful (per entry), so instantiate it here and append
-    # it to the pure policy stack.
+    # The pure policy stack + the stateful controllers (#9 duty, #3 pacing).
+    # They are passed separately so the engine can run the pure policies alone
+    # for the read-only #11 plan view without advancing the controllers' timers.
     engine = SupervisorEngine(
         hass, entry, coordinator,
-        policies=(*POLICIES, DutyController(), FanPacingController()),
+        policies=POLICIES,
+        controllers=(DutyController(), FanPacingController()),
     )
     coordinator.engine = engine
     engine.start()

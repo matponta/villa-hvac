@@ -65,7 +65,7 @@ helps in *mild* weather → duty-adaptive, tune on post-deploy mild data.
 | D | #9 sync + BLOCCO + fan pacing (#3 fused; BLOCCO behind verified-polarity flag) | v0.12.0 |
 | E | #7 anticipatory (summer pre-cool live, winter heat behind flag) | v0.13.0 |
 | F | #8 scenes | v0.14.0 |
-| F2 | #11 plan visualization — next-12h heating/cooling plan (forecast peak + pre-cool + duty run/rest + per-zone setpoints/shading) as a sensor + dashboard timeline card; builds on #9 RunPlan/DutyState/precool | — |
+| F2 | #11 plan visualization — `sensor.hvac_plan` (state=regime; attrs=forecast curve+peak, duty run/rest windows, per-zone setpoints, shading). Pure `build_plan` + `engine.plan_view`; computed every cycle even deploy-dark (pure policies run read-only). ✅ | v0.15.0 |
 | G | Deploy + retire legacy + verify BLOCCO polarity + tune #9 on mild data | v1.0.0 |
 
 Cadence: build A→D back-to-back, then check in before #3-rest/#7/#8 + deploy.

@@ -1,6 +1,8 @@
 """Diagnostic sensors for Villa HVAC (Phase 0, read-only)."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -10,10 +12,12 @@ from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
 from .const import ZONES
 from .coordinator import VillaHvacCoordinator
+from .supervisor import PlanView
 
 
 async def async_setup_entry(
@@ -23,7 +27,10 @@ async def async_setup_entry(
 ) -> None:
     """Set up the diagnostic sensor and the per-zone fused temperature sensors."""
     coordinator = entry.runtime_data
-    entities: list[SensorEntity] = [CoolingDemandZonesSensor(coordinator, entry)]
+    entities: list[SensorEntity] = [
+        CoolingDemandZonesSensor(coordinator, entry),
+        HvacPlanSensor(coordinator, entry),
+    ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
@@ -108,4 +115,113 @@ class ZoneTemperatureSensor(
             "source": data.get("source"),
             "sensor_raw": data.get("sensor_raw"),
             "climate_raw": data.get("climate_raw"),
+        }
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _minutes(value: timedelta | None) -> float | None:
+    return round(value.total_seconds() / 60, 1) if value is not None else None
+
+
+# Icon per plan regime (the sensor state) — keeps the dashboard chip legible.
+_PLAN_ICONS = {
+    "pre_cool": "mdi:snowflake-alert",
+    "peak_run": "mdi:weather-sunny-alert",
+    "duty_rest": "mdi:pause-circle-outline",
+    "cooling": "mdi:snowflake",
+    "free_cool": "mdi:weather-windy",
+    "heating": "mdi:fire",
+    "idle": "mdi:hvac",
+}
+
+
+class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """The organism's next-12h PLAN (#11), projected from the engine each cycle.
+
+    State = the current regime (pre_cool / peak_run / duty_rest / cooling /
+    free_cool / heating / idle). Attributes carry the forecast curve + peak, the
+    duty run/rest windows, per-zone planned setpoints, and the shading covers, so
+    a dashboard timeline card can render the 12h intent. Computed even while the
+    supervisor is deploy-dark, so the plan is visible before actuation lights up.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "HVAC plan"
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_hvac_plan"
+
+    @property
+    def _plan(self) -> PlanView | None:
+        engine = getattr(self.coordinator, "engine", None)
+        return engine.plan_view if engine is not None else None
+
+    @property
+    def native_value(self) -> str | None:
+        plan = self._plan
+        return plan.summary if plan is not None else None
+
+    @property
+    def icon(self) -> str:
+        plan = self._plan
+        return _PLAN_ICONS.get(plan.summary if plan else "", "mdi:calendar-clock")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        plan = self._plan
+        if plan is None:
+            return {}
+        engine = getattr(self.coordinator, "engine", None)
+        peak_at = None
+        if plan.peak_eta is not None:
+            peak_at = _iso(dt_util.utcnow() + plan.peak_eta)
+        rest_starts = None
+        if plan.stint_start is not None and plan.stint_cap is not None:
+            rest_starts = _iso(plan.stint_start + plan.stint_cap)
+        return {
+            "supervisor_on": bool(getattr(engine, "enabled", False)),
+            "season": plan.season,
+            "house_mode": plan.house_mode,
+            "cooling": plan.cooling,
+            "free_cool": plan.free_cool,
+            "precool": plan.precool,
+            "at_peak": plan.at_peak,
+            "forecast_peak": plan.forecast_peak,
+            "peak_eta_minutes": _minutes(plan.peak_eta),
+            "peak_at": peak_at,
+            "house_setpoint": plan.house_setpoint,
+            "effective_setpoint": plan.effective_setpoint,
+            "precool_setpoint": plan.precool_setpoint,
+            "duty_enabled": plan.duty_enabled,
+            "in_cooloff": plan.in_cooloff,
+            "cooloff_until": _iso(plan.cooloff_until),
+            "stint_start": _iso(plan.stint_start),
+            "stint_elapsed_minutes": _minutes(plan.stint_elapsed),
+            "stint_cap_minutes": _minutes(plan.stint_cap),
+            "rest_starts": rest_starts,
+            "blocco": plan.blocco,
+            "blocco_desired": plan.blocco_desired,
+            "covers_closing": list(plan.covers_closing),
+            "forecast": [
+                {"datetime": _iso(when), "temperature": temp}
+                for when, temp in plan.forecast
+            ],
+            "zones": [
+                {
+                    "zone": z.zone_id,
+                    "name": z.name,
+                    "temperature": z.temp,
+                    "target": z.target,
+                    "demand": z.demand,
+                    "enabled": z.enabled,
+                    "paused": z.paused,
+                }
+                for z in plan.zones
+            ],
         }

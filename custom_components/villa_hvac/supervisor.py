@@ -390,3 +390,207 @@ def cover_lever(cover_entity: str) -> str:
 
 def switch_lever(switch_entity: str) -> str:
     return f"switch:{switch_entity}"
+
+
+# --- #11 plan view (pure) ----------------------------------------------------
+# Project the organism's next-12h INTENT into a single structured view a
+# dashboard can render: the forecast curve + peak, the pre-cool / peak-skip /
+# duty run-rest regime, and each zone's planned setpoint. Pure so it is fully
+# unit-testable and so it can be computed every cycle (read-only) even while the
+# supervisor is deploy-dark — letting us watch the plan before lighting up the
+# actuation. `desired` is the merged output of the PURE policy stack only (no
+# stateful controllers), so computing it never advances duty/pacing timers.
+
+# Season string + the cover "closed" lever value: mirrors of
+# const.SEASON_SUMMER / homeassistant.const.STATE_CLOSED, kept local so this
+# module stays import-pure (const.py imports homeassistant).
+_SEASON_SUMMER = "summer"
+STATE_CLOSED_PLAN = "closed"
+
+
+@dataclass(frozen=True)
+class ZonePlan:
+    """Per-zone slice of the plan: where it is and where the plan wants it."""
+
+    zone_id: str
+    name: str
+    temp: float | None
+    target: float | None        # planned setpoint (from the policy stack), if any
+    demand: bool | None         # EV FAN valve open = actually cooling now
+    enabled: bool
+    paused: bool
+
+
+@dataclass(frozen=True)
+class PlanView:
+    """The next-12h plan, projected from one HouseState + RunPlan + DutyState."""
+
+    summary: str                # one-word regime (the sensor state)
+    season: str | None
+    house_mode: str | None
+    cooling: bool               # consenso_freddo on right now
+    free_cool: bool             # #5 coasting (cool enough outside)
+    precool: bool               # #9 banking coolth ahead of a peak
+    at_peak: bool               # hot now -> peak-skip (let the PdC run)
+    forecast_peak: float | None
+    peak_eta: timedelta | None
+    house_setpoint: float | None
+    effective_setpoint: float | None   # base + mode offset
+    precool_setpoint: float | None     # effective - precool offset (while pre-cooling)
+    in_cooloff: bool            # #9 duty currently resting (BLOCCO block)
+    cooloff_until: datetime | None
+    stint_start: datetime | None
+    stint_elapsed: timedelta | None
+    stint_cap: timedelta | None
+    blocco: str | None          # current central-block state
+    blocco_desired: str | None  # what the duty regime wants the block to be
+    duty_enabled: bool
+    zones: tuple[ZonePlan, ...]
+    covers_closing: tuple[str, ...]   # covers the shading policy is closing now
+    forecast: tuple[tuple[datetime, float], ...]  # windowed curve for the timeline
+
+
+def _is_free_cooling(state: HouseState) -> bool:
+    return (
+        state.free_cool_enabled
+        and state.season == _SEASON_SUMMER
+        and state.outdoor_temp is not None
+        and state.free_cool_threshold is not None
+        and state.outdoor_temp < state.free_cool_threshold
+    )
+
+
+def _plan_summary(
+    *,
+    season: str | None,
+    cooling: bool,
+    heating: bool,
+    free_cool: bool,
+    precool: bool,
+    at_peak: bool,
+    in_cooloff: bool,
+) -> str:
+    """Collapse the regime to a single word (the sensor's state).
+
+    Summer precedence: free_cool > pre_cool > peak_run > duty_rest > cooling >
+    idle. (free-cool, pre-cool and peak are effectively mutually exclusive, but
+    the order makes the dominant intent unambiguous.) Winter only reflects the
+    heating call for now — the anticipatory pre-heat (#7) is not built yet.
+    """
+    if season != _SEASON_SUMMER:
+        return "heating" if heating else "idle"
+    if free_cool:
+        return "free_cool"
+    if precool:
+        return "pre_cool"
+    if at_peak:
+        return "peak_run"
+    if in_cooloff:
+        return "duty_rest"
+    if cooling:
+        return "cooling"
+    return "idle"
+
+
+def build_plan(
+    state: HouseState,
+    run_plan: RunPlan,
+    desired: dict[str, str | float | None],
+    duty: DutyState,
+    forecast: list[tuple[datetime, float]],
+    lookahead: timedelta,
+) -> PlanView:
+    """Project one cycle's state into the dashboard PlanView (pure).
+
+    `desired` must be the PURE policy stack's merged output (presets/setpoints/
+    covers) — NOT including the stateful Duty/Fan controllers — so building the
+    plan has no side effects. Duty run/rest windows come from `duty`, the live
+    DutyState (only meaningful while #9 is actually running).
+    """
+    free_cool = _is_free_cooling(state)
+    cooling = state.consenso_freddo == "on"
+    heating = state.consenso_caldo == "on"
+    at_peak = (
+        state.outdoor_temp is not None
+        and state.duty_peak_outdoor is not None
+        and state.outdoor_temp >= state.duty_peak_outdoor
+    )
+
+    effective = None
+    if state.house_setpoint is not None and state.mode_offset is not None:
+        effective = round(state.house_setpoint + state.mode_offset, 1)
+    precool_setpoint = None
+    if run_plan.precool and effective is not None and state.precool_offset is not None:
+        precool_setpoint = round(effective - state.precool_offset, 1)
+
+    in_cooloff = duty.cooloff_until is not None
+    stint_elapsed = (
+        state.now - duty.stint_start if duty.stint_start is not None else None
+    )
+    if not state.duty_enabled:
+        blocco_desired = None
+    elif at_peak or run_plan.precool:
+        blocco_desired = BLOCCO_RELEASE
+    elif in_cooloff:
+        blocco_desired = BLOCCO_BLOCK
+    else:
+        blocco_desired = BLOCCO_RELEASE
+
+    zones = tuple(
+        ZonePlan(
+            zone_id=z.zone_id,
+            name=z.name,
+            temp=z.temp,
+            target=(
+                desired.get(temperature_lever(z.climate)) if z.climate else None
+            ),
+            demand=z.demand,
+            enabled=z.enabled,
+            paused=z.paused,
+        )
+        for z in state.zones.values()
+    )
+    covers_closing = tuple(
+        cover.entity_id
+        for cover in state.covers
+        if desired.get(cover_lever(cover.entity_id)) == STATE_CLOSED_PLAN
+    )
+    window = tuple(
+        (when, t)
+        for (when, t) in forecast
+        if state.now <= when <= state.now + lookahead and t is not None
+    )
+
+    return PlanView(
+        summary=_plan_summary(
+            season=state.season,
+            cooling=cooling,
+            heating=heating,
+            free_cool=free_cool,
+            precool=run_plan.precool,
+            at_peak=at_peak,
+            in_cooloff=in_cooloff,
+        ),
+        season=state.season,
+        house_mode=state.house_mode,
+        cooling=cooling,
+        free_cool=free_cool,
+        precool=run_plan.precool,
+        at_peak=at_peak,
+        forecast_peak=run_plan.forecast_peak,
+        peak_eta=run_plan.peak_eta,
+        house_setpoint=state.house_setpoint,
+        effective_setpoint=effective,
+        precool_setpoint=precool_setpoint,
+        in_cooloff=in_cooloff,
+        cooloff_until=duty.cooloff_until,
+        stint_start=duty.stint_start,
+        stint_elapsed=stint_elapsed,
+        stint_cap=state.duty_max_stint,
+        blocco=state.blocco,
+        blocco_desired=blocco_desired,
+        duty_enabled=state.duty_enabled,
+        zones=zones,
+        covers_closing=covers_closing,
+        forecast=window,
+    )
