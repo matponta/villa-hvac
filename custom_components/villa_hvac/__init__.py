@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import Event, HomeAssistant
 
 from .away import AwayController
@@ -69,6 +69,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     entry.async_on_unload(engine.stop)
     entry.async_on_unload(engine.async_fail_safe)
 
+    # Safety hooks that config-entry *unload* does not cover:
+    #  - HA shutdown/reboot fires EVENT_HOMEASSISTANT_STOP but does NOT run the
+    #    async_on_unload callbacks, so without this a live BLOCCO block would be
+    #    orphaned across the outage with no supervisor alive to release it.
+    async def _on_stop(_event: Event) -> None:
+        await engine.async_fail_safe()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)
+    )
+    #  - Boot-time safe baseline: release the central cooling block regardless of
+    #    the master switch. Deploy-dark means "don't optimise", not "leave the
+    #    villa unable to cool" — a block stranded across a crash/restart (with the
+    #    master off) would otherwise persist until a human noticed.
+    await engine.async_release_blocco()
+
     # #8 return-home: ask "when are you back?" on the Via transition and map the
     # answer onto the entities. Started after the platforms so the house-mode
     # select entity is registered. The actuation (deep setback -> pre-cond ramp)
@@ -96,4 +112,13 @@ async def _async_reload_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    engine = getattr(entry.runtime_data, "engine", None)
+    try:
+        return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    finally:
+        # Belt-and-suspenders: guarantee the safety release even on a partial
+        # unload. If a platform fails to unload, async_unload_platforms returns
+        # False and HA does NOT run the async_on_unload fail-safe — so run it
+        # here too. Idempotent with that callback on the success path.
+        if engine is not None:
+            await engine.async_fail_safe()

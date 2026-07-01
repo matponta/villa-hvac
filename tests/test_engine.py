@@ -83,14 +83,63 @@ async def test_fail_safe_releases_blocco_when_blocking(hass):
     assert off_calls[0].data["entity_id"] == CONSENSO_BLOCCO
 
 
-async def test_fail_safe_noop_when_already_released(hass):
+async def test_fail_safe_releases_blocco_even_when_read_off(hass):
+    """Fail-open: the block is released UNCONDITIONALLY, never gated on the read.
+    A transient unavailable/off read must not skip the release (idempotent)."""
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
     hass.states.async_set(CONSENSO_BLOCCO, "off")
     off_calls = async_mock_service(hass, "switch", "turn_off")
 
     await engine.async_fail_safe()
-    assert len(off_calls) == 0
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+
+
+async def test_release_blocco_is_unconditional(hass):
+    """async_release_blocco always sends turn_off (safe baseline), even when the
+    switch reads unavailable — the read is never trusted for the safety lever."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    hass.states.async_set(CONSENSO_BLOCCO, "unavailable")
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    await engine.async_release_blocco()
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+
+
+async def test_shutdown_event_triggers_failsafe(hass):
+    """HA shutdown (EVENT_HOMEASSISTANT_STOP) releases a live block — unload
+    callbacks do not run on shutdown, so this hook is the guarantee."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STOP
+
+    await _setup(hass)
+    hass.states.async_set(CONSENSO_BLOCCO, "on")
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+
+
+async def test_master_off_triggers_failsafe(hass):
+    """Turning the master Supervisor switch off hands the villa back (fail-safe),
+    so a live block is never stranded with the engine idle."""
+    from unittest.mock import AsyncMock
+
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    engine.async_fail_safe = AsyncMock()
+
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.supervisor"}, blocking=True
+    )
+    await hass.services.async_call(
+        "switch", "turn_off", {"entity_id": "switch.supervisor"}, blocking=True
+    )
+    await hass.async_block_till_done()
+
+    engine.async_fail_safe.assert_awaited()
 
 
 async def test_blocco_lever_round_trips_through_engine(hass):

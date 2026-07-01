@@ -1126,6 +1126,21 @@ class SupervisorEngine:
         self._cloud = clouds
 
     # -- fail-safe ------------------------------------------------------------
+    async def async_release_blocco(self) -> None:
+        """Release the central cooling block UNCONDITIONALLY (idempotent).
+
+        The one baseline that must hold regardless of the master switch: the
+        villa must always be *able* to cool. We never gate this on reading the
+        BLOCCO state — a transient `unavailable`/`unknown` KNX read (the same
+        lossy-bus ambiguity `reconcile` is built to distrust) must not cause the
+        release to be skipped while the object is physically blocked. Turning an
+        already-off switch off is a harmless no-op.
+        """
+        try:
+            await self._call_switch(CONSENSO_BLOCCO, on=False)
+        except Exception:  # noqa: BLE001 - the safety release must never raise
+            _LOGGER.exception("Could not release %s", CONSENSO_BLOCCO)
+
     async def async_fail_safe(self) -> None:
         """Hand the villa back to native KNX: release the central cooling block
         AND release every fancoil from MANUAL (fans → AUTO).
@@ -1133,12 +1148,8 @@ class SupervisorEngine:
         Invariant: the villa must never stay globally blocked, nor with a fan
         pinned in manual, without the supervisor alive.
         """
-        state = self.hass.states.get(CONSENSO_BLOCCO)
-        if state is not None and state.state == STATE_ON:
-            try:
-                await self._call_switch(CONSENSO_BLOCCO, on=False)
-            except Exception:  # noqa: BLE001 - fail-safe must not raise on unload
-                _LOGGER.exception("Fail-safe: could not release %s", CONSENSO_BLOCCO)
+        # Release the block unconditionally — never trust a possibly-stale read.
+        await self.async_release_blocco()
         # Release any fancoil manuale switch we may be holding (#3 v2) -> AUTO.
         for zone in ZONES.values():
             for fan in zone.get("fancoils") or []:

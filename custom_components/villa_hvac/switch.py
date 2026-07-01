@@ -133,6 +133,12 @@ class SupervisorEnableSwitch(SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False
         self.async_write_ha_state()
+        # Hand the villa back to native KNX: turning the master off must never
+        # leave the villa globally blocked (or a fancoil pinned in manual) with
+        # the engine idle — the same invariant the unload fail-safe enforces.
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.async_fail_safe()
 
 
 class DutyCycleSwitch(SwitchEntity, RestoreEntity):
