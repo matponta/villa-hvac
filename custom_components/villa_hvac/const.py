@@ -448,6 +448,16 @@ DEFAULT_SHADING_SOLAR = 200.0   # W/m²: close sun-facing covers above this
 # for rooms whose per-room number isn't tuned; each room exposes a
 # `number.*_shade_position` (override) + a `switch.*_shade_block` (skip) entity.
 DEFAULT_SHADING_POSITION = 50   # HA position: half-down by default (gentle)
+# Proportional shading (#6 enhancement): scale the shade DEPTH by how bright it is
+# (+ a hot-outdoor boost) instead of a flat position — gentle at the trigger
+# threshold, ramping to the configured default (the deepest shade) as irradiance
+# approaches SHADING_PROP_SOLAR_FULL. Opt-in; a per-room number still hard-overrides.
+OPT_SHADING_PROPORTIONAL = "shading_proportional"
+DEFAULT_SHADING_PROPORTIONAL = False
+SHADING_PROP_SOLAR_FULL = 700.0   # W/m² at/above -> deepest shade (the default pos)
+SHADING_PROP_TEMP_REF = 28.0      # °C where the outdoor-heat boost starts
+SHADING_PROP_TEMP_FULL = 38.0     # °C where the outdoor-heat boost saturates
+SHADING_PROP_TEMP_WEIGHT = 0.35   # how much a hot day can deepen the shade
 SHADE_POSITION_MIN = 0
 SHADE_POSITION_MAX = 100
 SHADE_POSITION_STEP = 5

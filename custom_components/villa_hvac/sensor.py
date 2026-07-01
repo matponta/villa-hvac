@@ -48,6 +48,7 @@ async def async_setup_entry(
         HvacPlanSensor(coordinator, entry),
         ReturnPlanSensor(coordinator, entry),
         EnergyBiasSensor(coordinator, entry),
+        HvacLeversSensor(coordinator, entry),
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
@@ -450,4 +451,70 @@ class EnergyBiasSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "battery_soc": _num_state(self.hass, CONDOMINIO_BATTERY_SOC),
             "battery_power_w": _num_state(self.hass, CONDOMINIO_BATTERY_POWER),
             "grid_power_w": _num_state(self.hass, CONDOMINIO_GRID_POWER),
+        }
+
+
+# Reconcile notes that mean the engine has stepped OFF a lever it wants to drive —
+# a human (or a lossy bus) is holding it. The sensor state counts these so a
+# dashboard/alert can flag "the supervisor isn't in control of N levers".
+_HELD_NOTES = frozenset({"override", "manual-hold"})
+
+
+class HvacLeversSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """B2 diagnostic: the reconcile decision log (per-lever write arbiter state).
+
+    State = how many levers are currently conceded to a manual override this cycle
+    (0 = the supervisor is fully in control). Attributes expose, per lever, the
+    reconcile note (write / reassert / reassert-hold / satisfied / transient /
+    manual-hold / override / released), what we wanted vs what we read, the
+    re-assert count, and any override-backoff expiry — the #1 documented robustness
+    risk (manual override on a lossy KNX bus) made observable. Empty while the
+    master switch is off (nothing actuates, so there are no decisions).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "HVAC levers"
+    _attr_icon = "mdi:tune-vertical"
+    _attr_native_unit_of_measurement = "levers"
+    _unrecorded_attributes = frozenset({"levers"})
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_hvac_levers"
+
+    @property
+    def _decisions(self) -> dict[str, dict]:
+        engine = getattr(self.coordinator, "engine", None)
+        return dict(getattr(engine, "lever_decisions", {}) or {})
+
+    @property
+    def native_value(self) -> int:
+        return sum(
+            1 for d in self._decisions.values() if d.get("note") in _HELD_NOTES
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        decisions = self._decisions
+        levers = {
+            lever: {
+                "note": d.get("note"),
+                "desired": d.get("desired"),
+                "current": d.get("current"),
+                "written": d.get("written"),
+                "attempts": d.get("attempts"),
+                "override_until": _iso(d.get("override_until")),
+                "wrote": d.get("wrote"),
+            }
+            for lever, d in decisions.items()
+        }
+        return {
+            "active_levers": len(decisions),
+            "held": sorted(
+                lever for lever, d in decisions.items()
+                if d.get("note") in _HELD_NOTES
+            ),
+            "levers": levers,
         }

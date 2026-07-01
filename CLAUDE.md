@@ -130,7 +130,9 @@ do local bang-bang regulation.
   the engine is the single writer. (#2b night fan/manuale still direct, master-gated.)
 - `__init__.py` — wires coordinator + engine (policies=PRESET_POLICIES) + the
   legacy controllers; `async_unload_entry`.
-- `sensor.py` — diagnostic `Cooling demand zones`. `config_flow.py` — single-instance.
+- `sensor.py` — diagnostics: `Cooling demand zones`, `hvac_plan` (#11), per-zone
+  temp/model, `Energy bias`, and `hvac_levers` (B2: per-lever reconcile decision log
+  — state = # levers conceded to manual). `config_flow.py` — single-instance.
 
 Control WRITES through the engine's arbiter (idempotent, manual-override-robust),
 never by fighting KNX. **Strict deploy-dark (v0.9.0):** nothing actuates until
@@ -308,7 +310,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        area_id): a `number.*_shade_position` override + a `switch.*_shade_block`
        manual override (blocked room = skipped, not reopened); both auto-created
        per shadeable room (`shadeable_zones`). Fallback = `OPT_SHADING_DEFAULT_
-       POSITION` (50, gentle). Engine cover lever now does set_position (numeric)
+       POSITION` (50, gentle). PROPORTIONAL SHADING (v0.30.0, opt-in
+       `OPT_SHADING_PROPORTIONAL`, default off): when on, the fallback becomes a
+       solar-scaled depth (pure `proportional_shade_position`: open at the solar
+       threshold → deepest = the default position at `SHADING_PROP_SOLAR_FULL`
+       700 W/m², + a hot-outdoor boost); a per-room number still hard-overrides.
+       Engine cover lever now does set_position (numeric)
        / close (legacy "closed"), reads `current_position`, uses a wider
        `SHADE_POSITION_TOLERANCE`. Verified live 2026-06-30: rooms = main_bedroom
        (grande west + piccola south), office (piccola_studio west), studio_v

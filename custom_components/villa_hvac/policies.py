@@ -47,8 +47,15 @@ from .const import (
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_SUMMER,
+    SHADE_POSITION_MAX,
+    SHADE_POSITION_MIN,
+    SHADE_POSITION_STEP,
     SHADING_AZIMUTH_BANDS,
     SHADING_MIN_ELEVATION,
+    SHADING_PROP_SOLAR_FULL,
+    SHADING_PROP_TEMP_FULL,
+    SHADING_PROP_TEMP_REF,
+    SHADING_PROP_TEMP_WEIGHT,
 )
 from .supervisor import (
     BLOCCO_BLOCK,
@@ -203,6 +210,38 @@ def _azimuth_in_band(azimuth: float, orientation: str) -> bool:
     return azimuth >= lo or azimuth < hi  # wraps through 0/360 (north)
 
 
+def proportional_shade_position(
+    solar: float | None,
+    outdoor_temp: float | None,
+    *,
+    solar_threshold: float,
+    full_position: int,
+    solar_full: float = SHADING_PROP_SOLAR_FULL,
+    temp_ref: float = SHADING_PROP_TEMP_REF,
+    temp_full: float = SHADING_PROP_TEMP_FULL,
+    temp_weight: float = SHADING_PROP_TEMP_WEIGHT,
+    step: int = SHADE_POSITION_STEP,
+) -> int:
+    """Shade DEPTH scaled by solar intensity (+ a hot-outdoor boost). Returns an HA
+    cover position (0 = fully shaded/down, 100 = open): fully open at the trigger
+    threshold, ramping to `full_position` (the house's deepest shade) as solar
+    approaches `solar_full`; a hot outdoor temp deepens it further. Pure — quantized
+    to `step` and clamped to the valid position range.
+    """
+    s = solar if solar is not None else solar_threshold
+    span = max(1.0, solar_full - solar_threshold)
+    solar_frac = max(0.0, min(1.0, (s - solar_threshold) / span))
+    temp_frac = 0.0
+    if outdoor_temp is not None and temp_full > temp_ref:
+        temp_frac = max(0.0, min(1.0, (outdoor_temp - temp_ref) / (temp_full - temp_ref)))
+    # solar drives the depth; a hot day can only DEEPEN it (weighted), never lighten.
+    frac = max(0.0, min(1.0, solar_frac + temp_weight * temp_frac))
+    # frac 0 -> 100 (open) ; frac 1 -> full_position (deepest configured shade).
+    raw = 100 + frac * (full_position - 100)
+    pos = int(round(raw / step) * step)
+    return max(SHADE_POSITION_MIN, min(SHADE_POSITION_MAX, pos))
+
+
 def shading_policy(state: HouseState) -> Desired:
     """#6: drive a sun-facing cover to its per-room shade position when the sun is
     on its facade and it's bright.
@@ -230,11 +269,17 @@ def shading_policy(state: HouseState) -> Desired:
     for cover in state.covers:
         if cover.blocked or not _azimuth_in_band(state.sun_azimuth, cover.orientation):
             continue
-        position = (
-            cover.target_position
-            if cover.target_position is not None
-            else state.shading_default_position
-        )
+        if cover.target_position is not None:
+            position = cover.target_position          # per-room override wins, fixed
+        elif state.shading_proportional and state.shading_default_position is not None:
+            # scale the shade depth by how bright/hot it is (default = deepest shade)
+            position = proportional_shade_position(
+                state.solar, state.outdoor_temp,
+                solar_threshold=state.shading_solar_threshold,
+                full_position=state.shading_default_position,
+            )
+        else:
+            position = state.shading_default_position
         if position is None:
             continue
         out[cover_lever(cover.entity_id)] = int(position)

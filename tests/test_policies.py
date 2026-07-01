@@ -15,6 +15,7 @@ from custom_components.villa_hvac.policies import (
     free_cool_policy,
     house_mode_policy,
     precool_policy,
+    proportional_shade_position,
     shading_policy,
     window_pause_policy,
 )
@@ -43,6 +44,7 @@ def _state(
     season=None, outdoor=None, free_cool=False, free_cool_threshold=None,
     covers=(), azimuth=None, elevation=None, solar=None,
     shading=False, shading_solar=None, shading_default=None,
+    shading_proportional=False,
     consenso=None, night=False, fan_pacing=False,
     duty=False, precool=False, precool_offset=None,
 ):
@@ -67,6 +69,7 @@ def _state(
         shading_enabled=shading,
         shading_solar_threshold=shading_solar,
         shading_default_position=shading_default,
+        shading_proportional=shading_proportional,
         consenso_freddo=consenso,
         night_active=night,
         fan_pacing_enabled=fan_pacing,
@@ -259,6 +262,44 @@ def test_shading_noop_low_sun_low_solar_winter_or_disabled():
                                  **{**_SHADE, "shading": False})) == {}
     assert shading_policy(_state([], covers=[_SOUTH],
                                  **{**_SHADE, "azimuth": None})) == {}
+
+
+# --- proportional shading (#6 enhancement) -----------------------------------
+
+def test_proportional_shade_position_scales_with_solar():
+    # threshold=200, full=700, default(full)=50: open at threshold, deepest at full,
+    # linear between (midpoint 450 -> 75).
+    at = lambda s: proportional_shade_position(  # noqa: E731
+        s, None, solar_threshold=200.0, full_position=50
+    )
+    assert at(200) == 100    # just triggering -> barely shaded (open)
+    assert at(450) == 75     # halfway -> half of the 100->50 travel
+    assert at(700) == 50     # full sun -> the configured deepest shade
+    assert at(2000) == 50    # clamped at the deepest (frac capped at 1)
+
+
+def test_proportional_shade_position_hot_outdoor_deepens():
+    cool = proportional_shade_position(450, 20.0, solar_threshold=200.0, full_position=50)
+    hot = proportional_shade_position(450, 38.0, solar_threshold=200.0, full_position=50)
+    assert hot < cool  # a hot day drives the blind deeper (lower position)
+    assert 0 <= hot <= 100
+
+
+def test_shading_proportional_uses_scaled_position():
+    # proportional ON + no per-room target -> scaled position (500 W/m² -> 70), not
+    # the flat default (50).
+    out = shading_policy(
+        _state([], covers=[_SOUTH], **{**_SHADE, "shading_proportional": True})
+    )
+    assert out == {cover_lever("cover.s"): 70}  # (500-200)/500=0.6 -> 100-30
+
+
+def test_shading_proportional_per_room_override_still_wins():
+    south = CoverInfo(entity_id="cover.s", orientation="south", target_position=30)
+    out = shading_policy(
+        _state([], covers=[south], **{**_SHADE, "shading_proportional": True})
+    )
+    assert out == {cover_lever("cover.s"): 30}  # explicit override beats proportional
 
 
 # --- pre-cool planner (#9) ---------------------------------------------------

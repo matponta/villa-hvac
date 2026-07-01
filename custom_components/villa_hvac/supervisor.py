@@ -644,6 +644,7 @@ class HouseState:
     shading_enabled: bool = False
     shading_solar_threshold: float | None = None
     shading_default_position: int | None = None  # #6 fallback shade position
+    shading_proportional: bool = False  # #6: scale shade depth by solar (+ heat)
     band_width: float | None = None    # #3 v2 comfort band B (°C)
     band_slam: float | None = None     # #3 v2 setpoint slam A (°C)
     model_learning_enabled: bool = True  # F2 online estimator observer

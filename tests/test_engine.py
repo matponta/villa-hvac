@@ -329,6 +329,124 @@ async def test_forecast_precool_nudges_setpoint_via_engine(hass):
     assert salotto and salotto[-1].data["temperature"] == 22.5  # 24 - 1.5 precool
 
 
+# --- B3: full policies + controllers stack through _cycle (merge-order seam) --
+
+async def test_band_setpoint_beats_house_mode_via_engine(hass):
+    """B3 seam: controllers merge BEFORE the pure policies, so the #3 band setpoint
+    wins over house_mode on a leader it actively manages (locks [*ctrl, *pure])."""
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )  # summer; house_setpoint default 24 + Casa summer offset 0 -> center 24
+    hass.states.async_set("sensor.clima_salotto", "26.0")            # warm -> RUN
+    hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
+    hass.states.async_set("switch.fancoil_salotto_manuale", "off")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.fan_pacing", "on")
+    temps = async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "switch", "turn_on")
+
+    await entry.runtime_data.engine.request_run()
+
+    salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
+    # band RUN slam = center(24) - A(0.75) = 23.25; house_mode wanted 24 (== current
+    # -> no write). A 23.25 write can only be the band winning the controllers-first
+    # merge over house_mode.
+    assert salotto and salotto[-1].data["temperature"] == 23.25
+
+
+async def test_free_cool_forces_bp_and_band_yields_via_engine(hass):
+    """B3 seam: with #5 free-cool active the band YIELDS on that leader and
+    free_cool forces building_protection — no setpoint is pushed onto the BP zone."""
+    from custom_components.villa_hvac.const import PRESET_BUILDING_PROTECTION
+
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )
+    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22 -> free
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.fan_pacing", "on")  # band enabled, but must yield
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
+    temps = async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "switch", "turn_off")
+
+    await entry.runtime_data.engine.request_run()
+
+    assert any(
+        c.data["entity_id"] == CLIMATE
+        and c.data["preset_mode"] == PRESET_BUILDING_PROTECTION
+        for c in presets
+    )  # #5 forced BP
+    assert not [c for c in temps if c.data["entity_id"] == CLIMATE]  # band yielded
+
+
+async def test_regime_release_beats_duty_block_via_engine(hass):
+    """B3 seam: the regime coordinator's BLOCCO opinion is merged BEFORE the
+    DutyController, so a coalescing RELEASE overrides a duty BLOCK. (The regime
+    derivation itself is covered by the pure select_regime tests; here we lock only
+    the _cycle wiring — regime opinion prepended ahead of duty.)"""
+    from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
+    from custom_components.villa_hvac.supervisor import BLOCCO_RELEASE
+
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # cooling
+    hass.states.async_set(CONSENSO_BLOCCO, "on")  # currently BLOCKED
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={},
+        options={OPT_DUTY_MAX_STINT: 0, OPT_DUTY_COOLOFF: 30},  # duty wants to BLOCK
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.duty_cycle", "on")
+    engine = entry.runtime_data.engine
+    engine._regime_step = lambda state: ({}, BLOCCO_RELEASE)  # force coalescing RELEASE
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+    on_calls = async_mock_service(hass, "switch", "turn_on")
+
+    await engine.request_run()
+
+    # regime RELEASE beat duty BLOCK -> the standing block is cleared, never re-set.
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+    assert not any(c.data["entity_id"] == CONSENSO_BLOCCO for c in on_calls)
+
+
+async def test_lever_decisions_recorded_via_engine(hass):
+    """B2: the engine records each lever's reconcile decision (sensor.hvac_levers),
+    and reports no manual-held levers on a clean run."""
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "standby", "temperature": 25.0}
+    )  # summer; house_mode Casa wants comfort -> a real preset write to record
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+    engine = entry.runtime_data.engine
+
+    await engine.request_run()
+
+    decisions = engine.lever_decisions
+    assert decisions[preset_lever(CLIMATE)]["note"] == "write"  # standby -> comfort
+    assert decisions[preset_lever(CLIMATE)]["desired"] == "comfort"
+    held = [k for k, d in decisions.items() if d["note"] in ("override", "manual-hold")]
+    assert held == []  # supervisor fully in control
+
+
 async def test_shade_controls_enrich_cover_state(hass):
     """#6: the per-room shade-position number + shade-block switch are read back
     into each cover's snapshot (keyed by the cover's area_id)."""

@@ -111,6 +111,7 @@ from .const import (
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
     DEFAULT_SHADING_ENABLED,
+    DEFAULT_SHADING_PROPORTIONAL,
     DEFAULT_SOLAR_FORECAST,
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
@@ -140,6 +141,7 @@ from .const import (
     SEASON_SUMMER,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
+    OPT_SHADING_PROPORTIONAL,
     OPT_SHADING_SOLAR,
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
@@ -522,6 +524,9 @@ def build_house_state(
             entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
         ),
         shading_default_position=shading_default,
+        shading_proportional=bool(
+            entry.options.get(OPT_SHADING_PROPORTIONAL, DEFAULT_SHADING_PROPORTIONAL)
+        ),
         band_width=float(entry.options.get(OPT_BAND_WIDTH, DEFAULT_BAND_WIDTH)),
         band_slam=float(entry.options.get(OPT_BAND_SLAM, DEFAULT_BAND_SLAM)),
         model_learning_enabled=bool(
@@ -612,6 +617,10 @@ class SupervisorEngine:
         self._model_store = model_store
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
+        # B2: last reconcile decision per lever this cycle (diagnostic only, surfaced
+        # by sensor.hvac_levers) — the reconcile `note` + desired/current/attempts,
+        # computed then discarded before this. Rebuilt each actuating cycle.
+        self._lever_decisions: dict[str, dict] = {}
         self._unsub = None
         # One lock serialises every cycle (a scheduled tick + an awaited
         # request_run can otherwise interleave over the shared lever/forecast/
@@ -647,6 +656,12 @@ class SupervisorEngine:
     def plan_view(self) -> PlanView | None:
         """The latest #11 plan projection (refreshed each cycle, even dark)."""
         return self._plan_view
+
+    @property
+    def lever_decisions(self) -> dict[str, dict]:
+        """B2: the last reconcile decision per lever this actuating cycle (empty
+        while deploy-dark, since nothing actuates). Surfaced by sensor.hvac_levers."""
+        return self._lever_decisions
 
     # -- main loop ------------------------------------------------------------
     @callback
@@ -742,6 +757,11 @@ class SupervisorEngine:
                     if self._stopped:
                         break
                     await self._reconcile_lever(lever, target, state)
+                # B2: drop decisions for levers no longer opined on (so the
+                # diagnostic reflects only this cycle's active levers).
+                self._lever_decisions = {
+                    k: v for k, v in self._lever_decisions.items() if k in desired
+                }
         finally:
             self._lock.release()
 
@@ -1051,6 +1071,25 @@ class SupervisorEngine:
             allow_override=lever != BLOCCO_LEVER,
         )
         self._lever_states[lever] = result.state
+        # B2: record the decision + warn on the transition INTO a manual-override
+        # concession (the #1 documented robustness risk on this lossy KNX bus —
+        # a lever we've handed back to a human until the backoff expires).
+        prev = self._lever_decisions.get(lever)
+        if result.note == "override" and (prev is None or prev.get("note") != "override"):
+            _LOGGER.warning(
+                "Lever %s conceded to a manual override until %s "
+                "(wanted %s, read %s) — not re-asserting until the backoff expires",
+                lever, result.state.override_until, target, current,
+            )
+        self._lever_decisions[lever] = {
+            "note": result.note,
+            "desired": target,
+            "current": current,
+            "written": result.state.written,
+            "attempts": result.state.attempts,
+            "override_until": result.state.override_until,
+            "wrote": result.write,
+        }
         if result.write is not None:
             await self._dispatch_write(lever, result.write)
 
