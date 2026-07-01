@@ -97,6 +97,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # camere silenziose after a reboot in Notte). Mirrors the legacy
     # clima_risincronizza; no-op if HA is already running (e.g. options reload).
     async def _startup_resync(_event: Event) -> None:
+        # Re-attempt the safe baseline now that HA (and the KNX integration that
+        # owns the block entity) is fully up — the setup-time release is skipped
+        # when that entity isn't loaded yet on a cold boot.
+        await engine.async_release_blocco()
         await apply_house_mode(hass, entry, current_house_mode(hass, entry))
 
     entry.async_on_unload(

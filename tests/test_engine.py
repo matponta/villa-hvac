@@ -79,8 +79,8 @@ async def test_fail_safe_releases_blocco_when_blocking(hass):
 
     await engine.async_fail_safe()
 
-    assert len(off_calls) == 1
-    assert off_calls[0].data["entity_id"] == CONSENSO_BLOCCO
+    # BLOCCO released; fancoil manuale switches are also released unconditionally.
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
 
 
 async def test_fail_safe_releases_blocco_even_when_read_off(hass):
@@ -454,3 +454,98 @@ async def test_request_run_queues_behind_running_cycle(hass):
     engine._lock.release()
     await task
     assert ran == [True]  # ran after the lock freed
+
+
+async def test_blocco_release_reasserts_forever_through_engine(hass):
+    """The BLOCCO lever is wired with allow_override=False: a stuck 'on' read is
+    re-asserted 'off' EVERY cycle, never conceded to a phantom manual change."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    hass.states.async_set(CONSENSO_BLOCCO, "on")  # physically stuck (mock won't move it)
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    def policy(_state):
+        return {BLOCCO_LEVER: "off"}
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[policy])
+    for _ in range(6):  # well past max_reasserts (3)
+        await engine._run()
+
+    blocco = [c for c in off_calls if c.data["entity_id"] == CONSENSO_BLOCCO]
+    assert len(blocco) == 6  # re-asserted every cycle, never gave up
+    assert engine._lever_states[BLOCCO_LEVER].override_until is None
+
+
+async def test_duty_off_releases_a_blocked_villa_via_engine(hass):
+    """Duty disabled + a live block -> the engine actively clears it in one pass
+    (DutyController emits an explicit BLOCCO_RELEASE, not a silent {})."""
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
+    hass.states.async_set(CONSENSO_BLOCCO, "on")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")  # master on, duty OFF (default)
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    await entry.runtime_data.engine.request_run()
+
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+
+
+async def test_startup_resync_releases_stranded_blocco(hass):
+    """On HA start (KNX up), the boot safe-baseline releases a block stranded
+    across a crash/restart, regardless of the (off) master switch."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+    await _setup(hass)
+    hass.states.async_set(CONSENSO_BLOCCO, "on")
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+
+    assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
+
+
+async def test_queued_cycle_aborts_if_stopped_while_waiting(hass):
+    """A cycle queued behind the lock must NOT actuate if the engine is stopped
+    while it waits — the post-acquire _stopped re-check (teardown ordering)."""
+    import asyncio
+
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    hass.states.async_set("switch.supervisor", "on")
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+
+    def policy(_state):
+        return {preset_lever(CLIMATE): "economy"}
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[policy])
+    await engine._lock.acquire()  # a cycle is "in flight"
+    ran = []
+
+    async def _fire():
+        await engine.request_run()  # queues on the lock (not yet stopped)
+        ran.append(True)
+
+    task = asyncio.create_task(_fire())
+    await asyncio.sleep(0.05)
+    engine.stop()             # teardown while the pass is queued behind the lock
+    engine._lock.release()
+    await task
+
+    assert calls == []        # queued cycle saw _stopped after acquiring -> no write
+    assert ran == [True]
+
+
+async def test_coordinator_rejects_nan_fused_temp(hass):
+    """A 'nan' from the primary temp sensor must not surface as a fused zone temp
+    (the coordinator isfinite guard); it falls back to None here."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    hass.states.async_set("sensor.clima_salotto", "nan")
+    await coordinator.async_refresh()
+
+    state = build_house_state(hass, entry, coordinator)
+    assert state.zones["living_room"].temp is None

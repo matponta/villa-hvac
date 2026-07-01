@@ -11,6 +11,7 @@ and never pulled back into a cooling preset.
 from __future__ import annotations
 
 import logging
+import math
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
@@ -255,16 +256,21 @@ def current_house_mode(hass: HomeAssistant, entry: ConfigEntry) -> str:
 
 
 def current_house_setpoint(hass: HomeAssistant, entry: ConfigEntry) -> float | None:
-    """House comfort setpoint from the number entity (None if unavailable)."""
+    """House comfort setpoint from the number entity (None if unavailable).
+
+    Rejects NaN/inf: this value flows straight into the band center and out to a
+    KNX set_temperature, so a non-finite helper value must never propagate (the
+    write-side counterpart to the _num/coordinator isfinite guards)."""
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
         "number", DOMAIN, f"{entry.entry_id}_house_setpoint"
     )
     if entity_id and (state := hass.states.get(entity_id)) is not None:
         try:
-            return float(state.state)
+            value = float(state.state)
         except (TypeError, ValueError):
             return None
+        return value if math.isfinite(value) else None
     return None
 
 

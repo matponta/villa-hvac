@@ -200,6 +200,11 @@ from .supervisor import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Fail-safe waits at most this long for an in-flight cycle to finish before
+# releasing anyway — a redundant write beats a block stranded behind a wedged
+# cycle (the hand-back must never hang on the cooling-block release).
+_FAILSAFE_LOCK_TIMEOUT = 5.0
+
 
 def _num(hass: HomeAssistant, entity_id: str) -> float | None:
     """Read a sensor whose state is a number (None if missing/non-numeric).
@@ -732,6 +737,10 @@ class SupervisorEngine:
                 # so the higher-priority preset policies still own those.
                 desired = merge_desired([*ctrl_outputs, *pure_outputs])
                 for lever, target in desired.items():
+                    # Bail the moment teardown begins (stop()) so a fail-safe
+                    # hand-back is never chased by more lever writes mid-loop.
+                    if self._stopped:
+                        break
                     await self._reconcile_lever(lever, target, state)
         finally:
             self._lock.release()
@@ -1157,40 +1166,63 @@ class SupervisorEngine:
         self._cloud = clouds
 
     # -- fail-safe ------------------------------------------------------------
-    async def async_release_blocco(self) -> None:
-        """Release the central cooling block UNCONDITIONALLY (idempotent).
-
-        The one baseline that must hold regardless of the master switch: the
-        villa must always be *able* to cool. We never gate this on reading the
-        BLOCCO state — a transient `unavailable`/`unknown` KNX read (the same
-        lossy-bus ambiguity `reconcile` is built to distrust) must not cause the
-        release to be skipped while the object is physically blocked. Turning an
-        already-off switch off is a harmless no-op.
+    async def _release_blocco(self) -> None:
+        """Raw UNCONDITIONAL release of the central cooling block. The caller
+        holds self._lock. Never gates on the read — a transient
+        `unavailable`/`unknown` KNX value (the lossy-bus ambiguity `reconcile`
+        distrusts) must not skip the release while the object is physically
+        blocked. Turning an already-off switch off is a harmless no-op.
         """
         try:
             await self._call_switch(CONSENSO_BLOCCO, on=False)
         except Exception:  # noqa: BLE001 - the safety release must never raise
             _LOGGER.exception("Could not release %s", CONSENSO_BLOCCO)
 
+    async def async_release_blocco(self) -> None:
+        """Boot / external safe baseline: release the block, SERIALIZED against
+        cycles (so an in-flight cycle can't re-block after us). Skips only when
+        the KNX entity isn't present yet — a cold boot before its integration
+        loaded; nothing to target, and _startup_resync re-runs this once it is.
+        """
+        if self.hass.states.get(CONSENSO_BLOCCO) is None:
+            return
+        async with self._lock:
+            await self._release_blocco()
+
     async def async_fail_safe(self) -> None:
         """Hand the villa back to native KNX: release the central cooling block
-        AND release every fancoil from MANUAL (fans → AUTO).
+        AND release every fancoil from MANUAL (fans → AUTO), unconditionally.
 
         Invariant: the villa must never stay globally blocked, nor with a fan
         pinned in manual, without the supervisor alive.
+
+        Serialized against an in-flight cycle so its lever writes can never land
+        AFTER our release — but bounded, so a wedged cycle can never make the
+        hand-back hang: after `_FAILSAFE_LOCK_TIMEOUT` we release regardless.
         """
-        # Release the block unconditionally — never trust a possibly-stale read.
-        await self.async_release_blocco()
-        # Release any fancoil manuale switch we may be holding (#3 v2) -> AUTO.
-        for zone in ZONES.values():
-            for fan in zone.get("fancoils") or []:
-                manuale = _manuale_switch(fan)
-                s = self.hass.states.get(manuale)
-                if s is not None and s.state == STATE_ON:
+        locked = False
+        try:
+            await asyncio.wait_for(
+                self._lock.acquire(), timeout=_FAILSAFE_LOCK_TIMEOUT
+            )
+            locked = True
+        except TimeoutError:
+            _LOGGER.warning("Fail-safe: cycle lock busy; releasing without it")
+        try:
+            await self._release_blocco()
+            # Release every fancoil manuale UNCONDITIONALLY too (fans -> AUTO):
+            # same fail-open rationale as the block — a stale read must not leave
+            # a fan pinned in manual with the supervisor gone.
+            for zone in ZONES.values():
+                for fan in zone.get("fancoils") or []:
+                    manuale = _manuale_switch(fan)
                     try:
                         await self._call_switch(manuale, on=False)
                     except Exception:  # noqa: BLE001 - fail-safe must not raise
                         _LOGGER.exception("Fail-safe: could not release %s", manuale)
+        finally:
+            if locked:
+                self._lock.release()
         # F2: persist the learned models LAST (after lever release), best-effort —
         # a corrupt/half-written file must never block the BLOCCO/manuale release.
         if self._model_store is not None:
