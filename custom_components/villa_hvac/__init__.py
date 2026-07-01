@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
-from homeassistant.core import Event, HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 
 from .away import AwayController
 from .const import PLATFORMS
@@ -96,16 +96,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # Re-apply the restored house mode once HA has fully started (re-enters
     # camere silenziose after a reboot in Notte). Mirrors the legacy
     # clima_risincronizza; no-op if HA is already running (e.g. options reload).
+    _started_unsub: CALLBACK_TYPE | None = None
+
     async def _startup_resync(_event: Event) -> None:
         # Re-attempt the safe baseline now that HA (and the KNX integration that
         # owns the block entity) is fully up — the setup-time release is skipped
         # when that entity isn't loaded yet on a cold boot.
+        nonlocal _started_unsub
+        # The once-listener auto-removes as it fires; drop our handle so the
+        # unload cleanup below can't unsubscribe it a second time (HA logs an
+        # ERROR — "unknown job listener" — for removing an already-gone one).
+        _started_unsub = None
         await engine.async_release_blocco()
         await apply_house_mode(hass, entry, current_house_mode(hass, entry))
 
-    entry.async_on_unload(
-        hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, _startup_resync)
+    _started_unsub = hass.bus.async_listen_once(
+        EVENT_HOMEASSISTANT_STARTED, _startup_resync
     )
+
+    @callback
+    def _cancel_startup_resync() -> None:
+        if _started_unsub is not None:
+            _started_unsub()
+
+    entry.async_on_unload(_cancel_startup_resync)
     return True
 
 

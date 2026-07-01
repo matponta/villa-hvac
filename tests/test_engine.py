@@ -508,6 +508,24 @@ async def test_startup_resync_releases_stranded_blocco(hass):
     assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
 
 
+async def test_startup_resync_unsub_idempotent_on_unload(hass, caplog):
+    """Once the HOMEASSISTANT_STARTED listener fires it auto-removes itself, so
+    unloading afterwards must NOT unsubscribe it a second time — HA logs an
+    ERROR ('unknown job listener') for that, seen live after a reload."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+    entry = await _setup(hass)
+    async_mock_service(hass, "switch", "turn_off")  # absorb the fail-safe release
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)  # listener fires + self-removes
+    await hass.async_block_till_done()
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert "unknown job listener" not in caplog.text
+
+
 async def test_queued_cycle_aborts_if_stopped_while_waiting(hass):
     """A cycle queued behind the lock must NOT actuate if the engine is stopped
     while it waits — the post-acquire _stopped re-check (teardown ordering)."""
