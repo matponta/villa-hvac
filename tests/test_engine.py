@@ -447,6 +447,74 @@ async def test_lever_decisions_recorded_via_engine(hass):
     assert held == []  # supervisor fully in control
 
 
+# --- B1: fail-safe restores per-zone presets (un-stick lingering BP) ----------
+
+async def test_failsafe_restores_bp_zone_to_auto(hass):
+    """B1: a zone the supervisor slammed to building_protection is handed back to
+    the neutral `auto` preset on fail-safe (never left unable to condition)."""
+    from custom_components.villa_hvac.const import PRESET_BUILDING_PROTECTION
+
+    entry = await _setup(hass)  # living_room (salotto) = fancoil leader, enabled
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": PRESET_BUILDING_PROTECTION})
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "switch", "turn_off")  # absorb BLOCCO/manuale release
+
+    await entry.runtime_data.engine.async_fail_safe()
+
+    restored = [c for c in presets if c.data["entity_id"] == CLIMATE]
+    assert restored and restored[-1].data["preset_mode"] == "auto"
+
+
+async def test_failsafe_leaves_non_bp_preset_untouched(hass):
+    """B1: only a LINGERING building_protection is un-stuck; a zone in comfort is
+    left alone (no gratuitous preset churn)."""
+    entry = await _setup(hass)
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "switch", "turn_off")
+
+    await entry.runtime_data.engine.async_fail_safe()
+
+    assert not [c for c in presets if c.data["entity_id"] == CLIMATE]
+
+
+async def test_failsafe_skips_disabled_zone(hass):
+    """B1: a #10-disabled zone SHOULD stay in building_protection — the fail-safe
+    must not re-enable it."""
+    from homeassistant.helpers import entity_registry as er
+
+    from custom_components.villa_hvac.const import PRESET_BUILDING_PROTECTION
+
+    entry = await _setup(hass)
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": PRESET_BUILDING_PROTECTION})
+    enable = er.async_get(hass).async_get_entity_id(
+        "switch", DOMAIN, f"{entry.entry_id}_living_room_enabled"
+    )
+    assert enable is not None  # living_room owns a #10 enable switch
+    hass.states.async_set(enable, "off")  # zone disabled -> keep BP
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "switch", "turn_off")
+
+    await entry.runtime_data.engine.async_fail_safe()
+
+    assert not [c for c in presets if c.data["entity_id"] == CLIMATE]
+
+
+async def test_failsafe_skips_window_paused_zone(hass):
+    """B1: a window-paused zone SHOULD stay in building_protection too."""
+    from custom_components.villa_hvac.const import PRESET_BUILDING_PROTECTION
+
+    entry = await _setup(hass)
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": PRESET_BUILDING_PROTECTION})
+    entry.runtime_data.window.paused.add("living_room")  # #4 pause
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "switch", "turn_off")
+
+    await entry.runtime_data.engine.async_fail_safe()
+
+    assert not [c for c in presets if c.data["entity_id"] == CLIMATE]
+
+
 async def test_shade_controls_enrich_cover_state(hass):
     """#6: the per-room shade-position number + shade-block switch are read back
     into each cover's snapshot (keyed by the cover's area_id)."""
@@ -572,6 +640,43 @@ async def test_request_run_queues_behind_running_cycle(hass):
     engine._lock.release()
     await task
     assert ran == [True]  # ran after the lock freed
+
+
+async def test_queued_cycle_aborts_after_failsafe_handback(hass):
+    """A cycle queued behind an in-flight fail-safe must NOT actuate after the
+    hand-back — even with the master ON (where `_stopped` is never set). The epoch
+    bump invalidates the stale queued pass, so it can't re-block BLOCCO with the
+    master off and nothing left to clear it (DEFECT-1 / master-off strand)."""
+    import asyncio
+
+    from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
+
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # cooling
+    hass.states.async_set(CONSENSO_BLOCCO, "off")
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={},
+        options={OPT_DUTY_MAX_STINT: 0, OPT_DUTY_COOLOFF: 30},  # a live cycle WOULD block
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")   # master ON
+    hass.states.async_set("switch.duty_cycle", "on")
+    engine = entry.runtime_data.engine
+    on_calls = async_mock_service(hass, "switch", "turn_on")   # a re-block = turn_on
+    async_mock_service(hass, "switch", "turn_off")             # absorb fail-safe release
+
+    await engine._lock.acquire()            # simulate an in-flight cycle holding the lock
+    queued = asyncio.create_task(engine._cycle(actuate=True))  # captures the old epoch
+    await asyncio.sleep(0.05)               # let it block on lock.acquire
+    fs = asyncio.create_task(engine.async_fail_safe())  # bumps epoch, then wants the lock
+    await asyncio.sleep(0.05)
+    engine._lock.release()                  # in-flight cycle "finishes"
+    await asyncio.gather(queued, fs)
+
+    # the queued cycle saw the epoch change -> aborted -> never re-blocked BLOCCO.
+    assert not any(c.data["entity_id"] == CONSENSO_BLOCCO for c in on_calls)
 
 
 async def test_blocco_release_reasserts_forever_through_engine(hass):

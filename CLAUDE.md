@@ -376,6 +376,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   AUTO, thermostats local KNX, no lingering building_protection. `async_unload_entry`
   MUST release BLOCCO + hand zones back. Watchdog fails open. Startup re-syncs to the
   safe baseline first. NEVER leave the villa globally blocked without the supervisor alive.
+  IMPLEMENTED: `async_fail_safe` releases BLOCCO (unconditional) + fancoil manuale +
+  **restores per-zone presets** (B1, v0.31.0: any lingering `building_protection` →
+  `auto`, skipping #10-disabled + window-paused). An **epoch counter** invalidates any
+  cycle queued behind an in-flight hand-back so it can't re-block/re-slam afterwards
+  (esp. the master-OFF path, where nothing else would clear a re-asserted block).
 - **Test on the deploy target**: pin `pytest-homeassistant-custom-component` to HA
   2026.4.3 (the venv was stale at 2025.1.4 — ~1yr API drift). CI on target; supervised
   smoke-test on live 2026.4.3 before lighting up any policy.

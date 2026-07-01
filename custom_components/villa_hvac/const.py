@@ -28,6 +28,10 @@ PLATFORMS: list[Platform] = [
 PRESET_BUILDING_PROTECTION = "building_protection"
 # Preset to restore when a zone is re-enabled and we have no captured prior one.
 PRESET_DEFAULT_ENABLED = "comfort"
+# Neutral preset the fail-safe (B1) hands zones back to on unload/removal — the
+# thermostat resumes its own native KNX schedule (local autonomy), so no zone is
+# ever left stuck in building_protection with no supervisor alive.
+PRESET_AUTO = "auto"
 
 # --- House mode (#2a) --------------------------------------------------------
 # Integration-owned house-mode select; drives a KNX preset on every thermostat

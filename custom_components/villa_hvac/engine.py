@@ -146,6 +146,9 @@ from .const import (
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
+    PRESET_AUTO,
+    PRESET_BUILDING_PROTECTION,
+    PRESET_CONTROLLABLE_EMITTERS,
     SHADE_POSITION_TOLERANCE,
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
@@ -629,6 +632,13 @@ class SupervisorEngine:
         # fail-safe has handed the villa back.
         self._lock = asyncio.Lock()
         self._stopped = False
+        # A hand-back (`async_fail_safe`) bumps `_epoch`; a cycle captures the epoch
+        # before it queues on the lock and aborts if it changed while waiting. This
+        # closes the re-slam window that `_stopped` alone misses on the master-OFF
+        # path (engine stays alive, so `_stopped` is never set — but a cycle queued
+        # with actuate=True could still re-block/re-slam AFTER the release, and with
+        # the master now off nothing would ever clear it → a stranded block).
+        self._epoch = 0
         self._forecast: list[tuple] = []
         self._cloud: list[tuple] = []
         self._forecast_ts = None
@@ -702,11 +712,14 @@ class SupervisorEngine:
     async def _cycle(self, *, actuate: bool) -> None:
         if self._stopped:
             return
+        epoch = self._epoch  # captured before we queue on the lock
         await self._lock.acquire()
         try:
-            # Re-check after acquiring: the engine may have stopped while we were
-            # queued behind another pass — a post-teardown cycle must not actuate.
-            if self._stopped:
+            # Re-check after acquiring: the engine may have stopped, OR a fail-safe
+            # hand-back may have run, while we were queued behind another pass — a
+            # post-teardown / post-hand-back cycle must not actuate (else it could
+            # re-block BLOCCO after the release; on master-OFF nothing would clear it).
+            if self._stopped or epoch != self._epoch:
                 return
             await self._maybe_refresh_forecast()
             state = build_house_state(
@@ -1217,6 +1230,43 @@ class SupervisorEngine:
         except Exception:  # noqa: BLE001 - the safety release must never raise
             _LOGGER.exception("Could not release %s", CONSENSO_BLOCCO)
 
+    async def _restore_presets(self) -> None:
+        """Fail-safe (B1): hand every zone the supervisor slammed into
+        building_protection back to the neutral `auto` preset, so no zone is ever
+        left unable to condition with no supervisor alive (the `_startup_resync`
+        self-heals a normal restart, but NOT integration removal/disable).
+
+        Only touches zones currently in building_protection — the specific harm the
+        invariant names ("no lingering building_protection"). SKIPS zones that
+        SHOULD stay in it: #10-disabled and window-paused. The caller holds
+        self._lock; each write is guarded (the fail-safe must never raise).
+
+        NB: a KNX setpoint the #3 band may have slammed is NOT restored here — there
+        is no recorded native baseline to restore it to; preset=auto hands local
+        scheduling back. Tracked separately in the engine-hardening backlog.
+        """
+        window = getattr(self.coordinator, "window", None)
+        paused = getattr(window, "paused", None) or set()
+        for zone_id, zone in ZONES.items():
+            climate = zone.get("climate")
+            if not climate or zone.get("emitter") not in PRESET_CONTROLLABLE_EMITTERS:
+                continue
+            state = self.hass.states.get(climate)
+            if (
+                state is None
+                or state.attributes.get(ATTR_PRESET_MODE) != PRESET_BUILDING_PROTECTION
+            ):
+                continue  # only un-stick a LINGERING building_protection
+            if zone_id in paused or is_zone_disabled(self.hass, self.entry, zone_id):
+                continue  # #10-disabled / window-paused zones SHOULD stay in BP
+            try:
+                await self._call(
+                    CLIMATE_DOMAIN, SERVICE_SET_PRESET_MODE,
+                    {ATTR_ENTITY_ID: climate, ATTR_PRESET_MODE: PRESET_AUTO},
+                )
+            except Exception:  # noqa: BLE001 - fail-safe must not raise
+                _LOGGER.exception("Fail-safe: could not restore preset for %s", climate)
+
     async def async_release_blocco(self) -> None:
         """Boot / external safe baseline: release the block, SERIALIZED against
         cycles (so an in-flight cycle can't re-block after us). Skips only when
@@ -1239,6 +1289,11 @@ class SupervisorEngine:
         AFTER our release — but bounded, so a wedged cycle can never make the
         hand-back hang: after `_FAILSAFE_LOCK_TIMEOUT` we release regardless.
         """
+        # Invalidate any cycle already queued on the lock: it captured the old epoch
+        # and will abort after we release, so it can't re-block/re-slam post-hand-back
+        # (works even on master-OFF, where the engine stays alive and `_stopped` is
+        # never set). Bump BEFORE acquiring so a queued cycle sees the new value.
+        self._epoch += 1
         locked = False
         try:
             await asyncio.wait_for(
@@ -1259,6 +1314,9 @@ class SupervisorEngine:
                         await self._call_switch(manuale, on=False)
                     except Exception:  # noqa: BLE001 - fail-safe must not raise
                         _LOGGER.exception("Fail-safe: could not release %s", manuale)
+            # B1: un-stick any zone left in building_protection (skip #10-disabled +
+            # window-paused, which SHOULD stay in it) -> neutral `auto` preset.
+            await self._restore_presets()
         finally:
             if locked:
                 self._lock.release()
