@@ -265,6 +265,19 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        clear-sky × forecast cloud, W/m² matching gw3000a) -> replaces the flat-solar
        prior in build_room_plans; opt-in OPT_SOLAR_FORECAST until validated; plan
        solar_model marker.
+       F4a-v2 DONE (v0.26.0): the regional weather cloud is UNRELIABLE here
+       (validated 2026-07-01: Met.no `weather.forecast_home` said "rainy" at
+       gw3000a 1044 W/m²; Forecast.Solar `sensor.power_production_now` tracks the
+       daily shape but mis-scales day-to-day). Fix = NOWCAST-ANCHOR: pure
+       `solar_curve_v2`/`solar_nowcast_bias` pin the clear-sky×cloud curve to the
+       LIVE gw3000a at step 0 and propagate that bias (clamp [0.4,2.5]) forward, so
+       CLEAR_SKY_GHI cancels and the curve self-calibrates — the forecast only needs
+       the relative SHAPE. gw3000a is the anchor; Forecast.Solar (×FORECASTSOLAR_
+       GHI_FACTOR 0.18) is the fallback anchor when the pyranometer is missing.
+       Cloud shape still from the OPT_WEATHER_ENTITY forecast (point it at OWM once
+       added — better than Met.no). plan `solar_model` marker gains `nowcast`. Still
+       opt-in OPT_SOLAR_FORECAST + plan-only (band uses live gw3000a). See
+       [[solar-forecast-regional-mismatch]].
        F4b DONE (v0.23.0): per-room/per-fascia comfort windows -> ZoneSnapshot
        comfort_relax raises the band center OUTSIDE the window (capped at
        duty_comfort_max, never a BP slam, never suppresses a breach); bedrooms use

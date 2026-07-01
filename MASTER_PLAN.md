@@ -101,7 +101,7 @@ deployed 2026-06-30; F1 band control verified (chatter killed). Detailed #8 spec
 | Pri | Item | Kind | Notes |
 |---|---|---|---|
 | 1 | **#8 Rientro & pre-cond** (v0.25.0) | build | effective-mode override (Vacanza↔Casa) while Via+armed; date+daypart, push azionabile, dashboard module. Spec locked. |
-| 2 | **Solar forecast** (`OPT_SOLAR_FORECAST`) | validated 2026-07-01 → HOLD OFF | Validation found `weather.forecast_home` is REGIONAL and mismatches the local gw3000a (said rainy/58% cloud at 1044 W/m² full sun); model under-predicted 3×. CLEAR_SKY_GHI(950) also too low (<1044). PLAN-ONLY so safe, but low-value while cloud source is wrong. **Refinement:** derive clear-sky from gw3000a's own history + bump CLEAR_SKY_GHI~1050, THEN enable. |
+| 2 | **Solar forecast v2** (`OPT_SOLAR_FORECAST`) | **DONE v0.26.0** (F4a-v2) | Validated 2026-07-01: Met.no `weather.forecast_home` unreliable (rainy at 1044 W/m²); Forecast.Solar tracks shape, mis-scales day-to-day. Fix = **nowcast-anchor** the curve to the live gw3000a (`solar_curve_v2`), Forecast.Solar fallback anchor, CLEAR_SKY_GHI→1000. Plan-only + opt-in. TODO(owner): add the **OpenWeatherMap** integration (key via HA UI, NOT chat) + point `OPT_WEATHER_ENTITY` at it for a better cloud shape; then enable OPT_SOLAR_FORECAST. |
 | 3 | **PV/battery bias** | build | shift cooling to Condominio PV-surplus hours (Fusion Solar); pre-cond #8/#7 prefer PV. Headline energy lever. NOT in code yet. |
 | 4 | **Proportional shading** | build | shade position ∝ solar_radiation + outdoor_temp (today: on/off threshold + default). Enhance #6. |
 | 5 | **Enable comfort → regime opt-ins** | enable+tune | after k converges; one at a time, tune on data. |

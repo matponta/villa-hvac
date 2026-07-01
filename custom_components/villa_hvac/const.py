@@ -556,7 +556,17 @@ PLAN_SIM_DOWNSAMPLE_MIN = 60       # store ~hourly points on the sensor
 # (1 - cloud_fraction), from sun elevation (astral) × forecast cloud cover.
 OPT_SOLAR_FORECAST = "solar_forecast_enabled"
 DEFAULT_SOLAR_FORECAST = False      # opt-in until validated vs gw3000a on clear days
-CLEAR_SKY_GHI = 950.0              # W/m² peak clear-sky horizontal GHI (tunable)
+CLEAR_SKY_GHI = 1000.0            # W/m² peak clear-sky horizontal GHI (gw3000a hit
+#                                   1044 near noon; only matters when NOT nowcast-
+#                                   anchored, since the anchor makes it cancel out)
+# F4a-v2: nowcast-anchor the solar curve to the live gw3000a; fall back to the
+# Forecast.Solar PV forecast when the pyranometer is missing. Validated 2026-07-01:
+# Met.no cloud is unreliable here (said rainy at full sun), Forecast.Solar tracks
+# the daily shape but mis-scales day-to-day -> gw3000a is the trusted anchor.
+FORECASTSOLAR_POWER = "sensor.power_production_now"  # Forecast.Solar est. PV power (W)
+# Rough W(PV) -> W/m²(GHI) factor from 3-day history (gw3000a / forecast power),
+# only used as a fallback anchor when the pyranometer reading is unavailable.
+FORECASTSOLAR_GHI_FACTOR = 0.18
 
 # --- F4b: per-room/per-fascia comfort windows --------------------------------
 # Outside its comfort window a room may DRIFT warm (raise the band center by

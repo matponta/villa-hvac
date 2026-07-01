@@ -1243,6 +1243,52 @@ def solar_forecast_curve(
     return out
 
 
+# --- F4a-v2: nowcast-anchored solar curve (pure) -----------------------------
+# The regional weather cloud is unreliable here (Met.no said "rainy" while the
+# gw3000a pyranometer read 1044 W/m²; Forecast.Solar under-called the sunniest
+# day). Fix: pin the clear-sky×cloud curve to the LIVE gw3000a reading at step 0
+# and propagate that bias forward. Note the clear_sky_ghi constant cancels in the
+# ratio (curve[i] = actual_now · shape[i]/shape[0]), so the curve self-calibrates
+# to reality — the forecast only has to get the relative SHAPE (sun track × cloud)
+# roughly right, not the absolute level.
+
+
+def solar_nowcast_bias(
+    actual_now: float | None, model_now: float, *,
+    lo: float = 0.4, hi: float = 2.5, min_model: float = 30.0,
+) -> float:
+    """Bias factor pinning a clear-sky×cloud curve to the live pyranometer NOW.
+
+    Returns actual_now / model_now, clamped to [lo, hi]. 1.0 (no correction) when
+    the sun isn't meaningfully up (model below `min_model`) or no live reading —
+    so a dark/near-horizon step can't produce a wild ratio.
+    """
+    if actual_now is None or model_now < min_model:
+        return 1.0
+    return max(lo, min(hi, actual_now / model_now))
+
+
+def solar_curve_v2(
+    *, elevations: list[float], clouds: list[float | None], clear_sky_ghi: float,
+    actual_now: float | None = None,
+) -> tuple[list[float], bool]:
+    """Nowcast-anchored horizontal-GHI curve. Returns (curve, anchored).
+
+    The clear-sky×cloud shape from `solar_forecast_curve`, scaled by
+    `solar_nowcast_bias` so step 0 matches the live gw3000a reading. Falls back to
+    the plain curve (anchored=False) when there's no usable live reading.
+    """
+    base = solar_forecast_curve(
+        elevations=elevations, clouds=clouds, clear_sky_ghi=clear_sky_ghi
+    )
+    if not base:
+        return base, False
+    bias = solar_nowcast_bias(actual_now, base[0])
+    if bias == 1.0:
+        return base, False
+    return [round(v * bias, 1) for v in base], True
+
+
 # --- F4b: comfort windows (pure) ---------------------------------------------
 
 

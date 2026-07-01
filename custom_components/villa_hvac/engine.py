@@ -61,6 +61,8 @@ from .const import (
     COOL_GAIN_SOLAR,
     CLEAR_SKY_GHI,
     COOL_PULLDOWN,
+    FORECASTSOLAR_GHI_FACTOR,
+    FORECASTSOLAR_POWER,
     COOL_VALVES,
     DEFAULT_COMFORT_DAY_FROM,
     DEFAULT_COMFORT_DAY_TO,
@@ -173,7 +175,7 @@ from .supervisor import (
     plan_run,
     reconcile,
     select_regime,
-    solar_forecast_curve,
+    solar_curve_v2,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -812,12 +814,21 @@ class SupervisorEngine:
             )
         return out
 
+    def _nowcast_actual(self, state: HouseState) -> float | None:
+        """Live GHI anchor for the solar curve: the gw3000a pyranometer, else the
+        Forecast.Solar PV power scaled to a GHI-equivalent (fallback only)."""
+        if state.solar is not None:
+            return state.solar
+        pv = _num(self.hass, FORECASTSOLAR_POWER)
+        return pv * FORECASTSOLAR_GHI_FACTOR if pv is not None else None
+
     def _solar_forecast(self, state: HouseState) -> tuple[list[float], str]:
         """Per-step solar estimate over the lookahead + a model marker.
 
-        F4a (opt-in OPT_SOLAR_FORECAST): sun elevation (astral) × clear-sky × the
-        forecast cloud cover. Otherwise the F3b flat-current-solar prior (wrong at
-        night/noon — fine for an advisory plan)."""
+        F4a-v2 (opt-in OPT_SOLAR_FORECAST): sun elevation (astral) × clear-sky ×
+        forecast cloud, then NOWCAST-ANCHORED to the live gw3000a (the regional
+        cloud is unreliable here). Marker: `nowcast` when anchored, `forecast`
+        when only the shape was available, `flat` (current solar) when disabled."""
         n = int(_lookahead(self.entry).total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
         if not self.entry.options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST):
             cur = state.solar if state.solar is not None else 0.0
@@ -837,12 +848,11 @@ class SupervisorEngine:
                 when = state.now + timedelta(minutes=i * PLAN_SIM_STEP_MIN)
                 elevations.append(_sun_elevation(obs, when))
                 clouds.append(_forecast_cloud_at(self._cloud, when))
-            return (
-                solar_forecast_curve(
-                    elevations=elevations, clouds=clouds, clear_sky_ghi=CLEAR_SKY_GHI
-                ),
-                "forecast",
+            curve, anchored = solar_curve_v2(
+                elevations=elevations, clouds=clouds, clear_sky_ghi=CLEAR_SKY_GHI,
+                actual_now=self._nowcast_actual(state),
             )
+            return curve, ("nowcast" if anchored else "forecast")
         except Exception:  # noqa: BLE001 - solar estimate is best-effort -> fall back
             _LOGGER.debug("Solar forecast failed; using flat prior", exc_info=True)
             cur = state.solar if state.solar is not None else 0.0
