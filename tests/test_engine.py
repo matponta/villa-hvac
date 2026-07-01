@@ -412,3 +412,45 @@ async def test_num_rejects_nan_and_inf(hass):
     assert _num(hass, "sensor.x") is None
     hass.states.async_set("sensor.x", "inf")
     assert _num(hass, "sensor.x") is None
+
+
+async def test_stopped_engine_does_not_actuate(hass):
+    """After stop() (terminal teardown), a still-queued/in-flight cycle must not
+    actuate — otherwise a late tick could re-block BLOCCO after the fail-safe."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+
+    def policy(_state):
+        return {preset_lever(CLIMATE): "economy"}
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[policy])
+    engine.stop()
+    await engine._cycle(actuate=True)
+    assert calls == []  # stopped -> no writes
+
+
+async def test_request_run_queues_behind_running_cycle(hass):
+    """A request_run arriving mid-cycle queues on the lock (serialised) instead
+    of interleaving or being dropped."""
+    import asyncio
+
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    hass.states.async_set("switch.supervisor", "on")  # enabled
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[])
+
+    await engine._lock.acquire()  # simulate a cycle already in flight
+    ran = []
+
+    async def _fire():
+        await engine.request_run()
+        ran.append(True)
+
+    task = asyncio.create_task(_fire())
+    await asyncio.sleep(0.05)
+    assert ran == []  # blocked on the lock, not dropped
+
+    engine._lock.release()
+    await task
+    assert ran == [True]  # ran after the lock freed

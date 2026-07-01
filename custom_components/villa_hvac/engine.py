@@ -12,6 +12,7 @@ empty policy list (no actuation) behind a master switch that defaults OFF
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
@@ -607,7 +608,13 @@ class SupervisorEngine:
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         self._unsub = None
-        self._busy = False
+        # One lock serialises every cycle (a scheduled tick + an awaited
+        # request_run can otherwise interleave over the shared lever/forecast/
+        # controller state). `_stopped` short-circuits any pass that is scheduled
+        # or in-flight across teardown, so a late task can't re-actuate after the
+        # fail-safe has handed the villa back.
+        self._lock = asyncio.Lock()
+        self._stopped = False
         self._forecast: list[tuple] = []
         self._cloud: list[tuple] = []
         self._forecast_ts = None
@@ -620,6 +627,7 @@ class SupervisorEngine:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
 
     def stop(self) -> None:
+        self._stopped = True
         if self._unsub:
             self._unsub()
             self._unsub = None
@@ -641,18 +649,26 @@ class SupervisorEngine:
         # Always tick: the plan view (#11) is computed every cycle, even while
         # deploy-dark, so the dashboard can show the organism's intent before we
         # light up actuation. Actuation itself stays gated on the master switch.
-        if self._busy:
+        # Skip if a cycle is already running (the lock serialises anyway; this
+        # just avoids piling redundant ticks). Use a config-entry background task
+        # so HA cancels it on unload — a late tick must not re-actuate after the
+        # fail-safe.
+        if self._stopped or self._lock.locked():
             return
-        self.hass.async_create_task(self._tick())
+        self.entry.async_create_background_task(
+            self.hass, self._tick(), "villa_hvac_supervisor_tick"
+        )
 
     async def request_run(self) -> None:
         """Run a supervisor pass immediately (event-driven responsiveness).
 
         Lets event sources — a window opening, a mode change, a zone toggle —
         get an instant pass instead of waiting for the 30 s tick, while the
-        engine stays the single writer. No-op while disabled or mid-pass.
+        engine stays the single writer. No-op while disabled or stopped; if a
+        cycle is in flight this queues on the lock rather than being dropped, so
+        the event is always honoured (and never interleaves).
         """
-        if self.enabled and not self._busy:
+        if self.enabled and not self._stopped:
             await self._run()
 
     async def _tick(self) -> None:
@@ -664,8 +680,14 @@ class SupervisorEngine:
         await self._cycle(actuate=True)
 
     async def _cycle(self, *, actuate: bool) -> None:
-        self._busy = True
+        if self._stopped:
+            return
+        await self._lock.acquire()
         try:
+            # Re-check after acquiring: the engine may have stopped while we were
+            # queued behind another pass — a post-teardown cycle must not actuate.
+            if self._stopped:
+                return
             await self._maybe_refresh_forecast()
             state = build_house_state(
                 self.hass, self.entry, self.coordinator, forecast=self._forecast
@@ -712,7 +734,7 @@ class SupervisorEngine:
                 for lever, target in desired.items():
                     await self._reconcile_lever(lever, target, state)
         finally:
-            self._busy = False
+            self._lock.release()
 
     async def _maybe_persist_model(self) -> None:
         """Persist the learned models at most once per FORECAST_REFRESH; best-effort."""
