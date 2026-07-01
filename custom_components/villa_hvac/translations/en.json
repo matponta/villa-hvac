@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Villa HVAC",
+        "description": "Set up the Villa HVAC orchestration (single instance). Tunables are on the Configure screen after setup."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one Villa HVAC instance is allowed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Villa HVAC options",
+        "description": "Tunables for the supervisor. Each feature also has its own opt-in switch (Supervisor, Duty cycle, Fan pacing, Return pre-cond); these settings only take effect once the relevant switch is on.",
+        "data": {
+          "night_heat_threshold": "Bedroom night heat-guard threshold (°C)",
+          "auto_wake_time": "Bedroom auto-wake time",
+          "away_escalation_hours": "Hours away before switching to Via",
+          "season": "Season override",
+          "summer_via_offset": "Summer · Via setpoint offset (°C)",
+          "summer_notte_offset": "Summer · Notte setpoint offset (°C)",
+          "winter_via_offset": "Winter · Via setpoint offset (°C)",
+          "winter_notte_offset": "Winter · Notte setpoint offset (°C)",
+          "free_cool_enabled": "Free-cooling shutoff (summer)",
+          "free_cool_outdoor": "Free-cooling outdoor threshold (°C)",
+          "shading_enabled": "Solar shading",
+          "shading_solar_threshold": "Shading solar threshold (W/m²)",
+          "shading_default_position": "Default shade position (0 = down, 100 = open)",
+          "duty_max_stint_min": "Duty cycle · max continuous cooling (min)",
+          "duty_cooloff_min": "Duty cycle · forced rest (min)",
+          "duty_comfort_max": "Duty cycle · comfort-max abort temp (°C)",
+          "duty_peak_outdoor": "Duty cycle · peak outdoor temp, no rest above (°C)",
+          "weather_entity": "Weather entity for the forecast (temperature + cloud)",
+          "precool_lookahead_hours": "Pre-cool lookahead (hours)",
+          "precool_margin": "Pre-cool margin vs the coming peak (°C)",
+          "precool_offset": "Pre-cool setpoint offset (°C)",
+          "band_width": "Comfort band width B (°C)",
+          "band_slam": "Setpoint slam amplitude A (°C)",
+          "fan_min": "Minimum / rest fan (%)",
+          "model_learning_enabled": "Online thermal-model learning",
+          "precool_max_depth": "Max pre-cool depth (°C)",
+          "solar_forecast_enabled": "Solar forecast (nowcast-anchored plan)",
+          "comfort_windows_enabled": "Per-room comfort windows",
+          "comfort_relax": "Comfort relax outside the window (°C)",
+          "comfort_day_from": "Day comfort window — from",
+          "comfort_day_to": "Day comfort window — to",
+          "comfort_night_from": "Night comfort window — from",
+          "comfort_night_to": "Night comfort window — to",
+          "return_max_lead_hours": "Return pre-cond · max lead (hours)",
+          "return_margin_min": "Return pre-cond · safety margin (min)",
+          "notify_target": "Notify service for the “when are you back?” ask"
+        },
+        "data_description": {
+          "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
+          "auto_wake_time": "Time the bedrooms leave the silent-night state (HH:MM:SS).",
+          "away_escalation_hours": "#2c: after the adults are away this long, drop the house to Via.",
+          "season": "auto = detect from the reference thermostat; or force summer / winter.",
+          "summer_via_offset": "Cooling setback is WARMER, so this is positive (e.g. +5).",
+          "summer_notte_offset": "Cooling night setback, warmer (e.g. +3).",
+          "winter_via_offset": "Heating setback is COOLER, so this is negative (e.g. -2).",
+          "winter_notte_offset": "Heating night setback, cooler (e.g. -4).",
+          "free_cool_enabled": "#5: in summer, when it's cool enough outside, coast instead of cooling.",
+          "free_cool_outdoor": "Outdoor below this → suppress active cooling.",
+          "shading_enabled": "#6: close sun-facing blinds to cut solar gain on cooled rooms.",
+          "shading_solar_threshold": "Close a sun-facing cover above this irradiance.",
+          "shading_default_position": "Fallback position for rooms without a per-room shade number.",
+          "duty_max_stint_min": "#9: cap the villa's continuous cooling stint before a forced rest.",
+          "duty_cooloff_min": "Length of the forced rest (BLOCCO) after the stint.",
+          "duty_comfort_max": "A room above this aborts the rest — comfort always wins.",
+          "duty_peak_outdoor": "At/above this outdoor temp, don't rest (let the heat pump run).",
+          "weather_entity": "Point this at weather.openweathermap for a better cloud/temperature forecast than Met.no. Feeds the pre-cool planner (temperature) and the solar-forecast cloud shape.",
+          "precool_lookahead_hours": "How far ahead to look for a hot peak (thermal mass needs a long window).",
+          "precool_margin": "Only pre-cool while now is at least this much cooler than the peak.",
+          "precool_offset": "How far below the normal target to push setpoints while pre-cooling.",
+          "band_width": "#3 v2: total comfort band the room swings in (wider = fewer, longer cycles).",
+          "band_slam": "How far the setpoint is slammed past centre to force the valve open/closed.",
+          "fan_min": "Global rest/min-circulation fan; 0 = fan off during REST. Per-zone overrides exist.",
+          "model_learning_enabled": "F2 observer: learn each room's thermal model online (read-only; safe on).",
+          "precool_max_depth": "Deepest pre-cool the 12h planner will schedule.",
+          "solar_forecast_enabled": "Use a nowcast-anchored solar curve (astral × forecast cloud, pinned to the live gw3000a pyranometer) for the 12h plan. Plan-only — the live band always uses the real gw3000a reading.",
+          "comfort_windows_enabled": "F4b: let rooms drift warmer outside their comfort window.",
+          "comfort_relax": "How much the band centre rises outside the window (capped, never a shutoff).",
+          "comfort_day_from": "Living-area comfort window start (HH:MM).",
+          "comfort_day_to": "Living-area comfort window end (HH:MM).",
+          "comfort_night_from": "Bedroom comfort window start (HH:MM).",
+          "comfort_night_to": "Bedroom comfort window end (HH:MM).",
+          "return_max_lead_hours": "#8: cap how early pre-conditioning starts before your return ETA.",
+          "return_margin_min": "Safety margin added to the computed pre-cond lead time.",
+          "notify_target": "e.g. mobile_app_iphone (without the notify. prefix). Blank = auto-detect a mobile_app target."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Villa HVAC",
+        "description": "Configura l'orchestrazione Villa HVAC (istanza singola). I parametri sono nella schermata Configura dopo l'installazione."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "È consentita una sola istanza di Villa HVAC."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni Villa HVAC",
+        "description": "Parametri del supervisore. Ogni funzione ha anche il suo interruttore di attivazione (Supervisor, Duty cycle, Fan pacing, Return pre-cond); queste impostazioni hanno effetto solo quando il relativo interruttore è acceso.",
+        "data": {
+          "night_heat_threshold": "Soglia guardia-caldo notte camere (°C)",
+          "auto_wake_time": "Ora sveglia automatica camere",
+          "away_escalation_hours": "Ore di assenza prima di passare a Via",
+          "season": "Forzatura stagione",
+          "summer_via_offset": "Estate · offset setpoint Via (°C)",
+          "summer_notte_offset": "Estate · offset setpoint Notte (°C)",
+          "winter_via_offset": "Inverno · offset setpoint Via (°C)",
+          "winter_notte_offset": "Inverno · offset setpoint Notte (°C)",
+          "free_cool_enabled": "Spegnimento free-cooling (estate)",
+          "free_cool_outdoor": "Soglia esterna free-cooling (°C)",
+          "shading_enabled": "Ombreggiatura solare",
+          "shading_solar_threshold": "Soglia solare ombreggiatura (W/m²)",
+          "shading_default_position": "Posizione tenda predefinita (0 = giù, 100 = aperta)",
+          "duty_max_stint_min": "Duty cycle · raffrescamento continuo max (min)",
+          "duty_cooloff_min": "Duty cycle · riposo forzato (min)",
+          "duty_comfort_max": "Duty cycle · temp di abort comfort-max (°C)",
+          "duty_peak_outdoor": "Duty cycle · temp esterna di picco, nessun riposo oltre (°C)",
+          "weather_entity": "Entità meteo per le previsioni (temperatura + nuvole)",
+          "precool_lookahead_hours": "Anticipo pre-raffrescamento (ore)",
+          "precool_margin": "Margine pre-raffrescamento vs picco (°C)",
+          "precool_offset": "Offset setpoint pre-raffrescamento (°C)",
+          "band_width": "Ampiezza banda comfort B (°C)",
+          "band_slam": "Ampiezza slam setpoint A (°C)",
+          "fan_min": "Ventola minima / a riposo (%)",
+          "model_learning_enabled": "Apprendimento modello termico online",
+          "precool_max_depth": "Profondità max pre-raffrescamento (°C)",
+          "solar_forecast_enabled": "Previsione solare (piano ancorato al nowcast)",
+          "comfort_windows_enabled": "Finestre di comfort per stanza",
+          "comfort_relax": "Rilassamento comfort fuori finestra (°C)",
+          "comfort_day_from": "Finestra comfort giorno — dalle",
+          "comfort_day_to": "Finestra comfort giorno — alle",
+          "comfort_night_from": "Finestra comfort notte — dalle",
+          "comfort_night_to": "Finestra comfort notte — alle",
+          "return_max_lead_hours": "Rientro pre-cond · anticipo max (ore)",
+          "return_margin_min": "Rientro pre-cond · margine di sicurezza (min)",
+          "notify_target": "Servizio notify per la richiesta «quando torni?»"
+        },
+        "data_description": {
+          "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
+          "auto_wake_time": "Ora in cui le camere escono dallo stato notte-silenziosa (HH:MM:SS).",
+          "away_escalation_hours": "#2c: dopo che gli adulti sono via per questo tempo, la casa passa a Via.",
+          "season": "auto = rileva dal termostato di riferimento; oppure forza estate / inverno.",
+          "summer_via_offset": "Il setback in raffrescamento è più CALDO, quindi positivo (es. +5).",
+          "summer_notte_offset": "Setback notturno in raffrescamento, più caldo (es. +3).",
+          "winter_via_offset": "Il setback in riscaldamento è più FREDDO, quindi negativo (es. -2).",
+          "winter_notte_offset": "Setback notturno in riscaldamento, più freddo (es. -4).",
+          "free_cool_enabled": "#5: d'estate, quando fuori è abbastanza fresco, lascia scorrere invece di raffrescare.",
+          "free_cool_outdoor": "Esterno sotto questa soglia → sospende il raffrescamento attivo.",
+          "shading_enabled": "#6: chiude le tende esposte al sole per ridurre il carico solare sulle stanze raffrescate.",
+          "shading_solar_threshold": "Chiude una tenda esposta al sole sopra questa irradianza.",
+          "shading_default_position": "Posizione di ripiego per le stanze senza un number tenda dedicato.",
+          "duty_max_stint_min": "#9: limita il raffrescamento continuo della villa prima di un riposo forzato.",
+          "duty_cooloff_min": "Durata del riposo forzato (BLOCCO) dopo lo stint.",
+          "duty_comfort_max": "Una stanza sopra questa soglia annulla il riposo — il comfort vince sempre.",
+          "duty_peak_outdoor": "A/oltre questa temp esterna, niente riposo (lascia girare la pompa di calore).",
+          "weather_entity": "Imposta su weather.openweathermap per previsioni nuvole/temperatura migliori di Met.no. Alimenta il pianificatore pre-cool (temperatura) e la forma nuvole della previsione solare.",
+          "precool_lookahead_hours": "Quanto guardare avanti per un picco caldo (l'inerzia termica richiede una finestra lunga).",
+          "precool_margin": "Pre-raffresca solo finché ora è almeno così più fresco del picco.",
+          "precool_offset": "Di quanto abbassare i setpoint sotto il target normale durante il pre-cool.",
+          "band_width": "#3 v2: banda comfort totale in cui oscilla la stanza (più ampia = cicli meno frequenti e più lunghi).",
+          "band_slam": "Di quanto il setpoint viene forzato oltre il centro per aprire/chiudere la valvola.",
+          "fan_min": "Ventola globale a riposo/minima; 0 = ventola spenta in REST. Esistono override per zona.",
+          "model_learning_enabled": "Osservatore F2: apprende online il modello termico di ogni stanza (sola lettura; sicuro attivo).",
+          "precool_max_depth": "Massima profondità di pre-cool che il pianificatore 12h programma.",
+          "solar_forecast_enabled": "Usa una curva solare ancorata al nowcast (astrale × nuvole previste, agganciata al piranometro gw3000a live) per il piano 12h. Solo-piano — la banda live usa sempre la lettura reale del gw3000a.",
+          "comfort_windows_enabled": "F4b: lascia scaldare le stanze fuori dalla loro finestra di comfort.",
+          "comfort_relax": "Di quanto sale il centro banda fuori finestra (limitato, mai uno spegnimento).",
+          "comfort_day_from": "Inizio finestra comfort zona giorno (HH:MM).",
+          "comfort_day_to": "Fine finestra comfort zona giorno (HH:MM).",
+          "comfort_night_from": "Inizio finestra comfort camere (HH:MM).",
+          "comfort_night_to": "Fine finestra comfort camere (HH:MM).",
+          "return_max_lead_hours": "#8: limita quanto in anticipo parte il pre-condizionamento rispetto all'ora di rientro.",
+          "return_margin_min": "Margine di sicurezza aggiunto al lead time di pre-cond calcolato.",
+          "notify_target": "Es. mobile_app_iphone (senza il prefisso notify.). Vuoto = rileva automaticamente un target mobile_app."
+        }
+      }
+    }
+  }
+}
