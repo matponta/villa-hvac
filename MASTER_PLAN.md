@@ -101,7 +101,7 @@ deployed 2026-06-30; F1 band control verified (chatter killed). Detailed #8 spec
 | Pri | Item | Kind | Notes |
 |---|---|---|---|
 | 1 | **#8 Rientro & pre-cond** (v0.25.0) | build | effective-mode override (Vacanza↔Casa) while Via+armed; date+daypart, push azionabile, dashboard module. Spec locked. |
-| 2 | **Solar forecast ON** (`OPT_SOLAR_FORECAST`) | enable+validate | PLAN-ONLY today (feeds only room_trajectories in the plan view; band uses live gw3000a). Validate curve vs gw3000a on a clear day. |
+| 2 | **Solar forecast** (`OPT_SOLAR_FORECAST`) | validated 2026-07-01 → HOLD OFF | Validation found `weather.forecast_home` is REGIONAL and mismatches the local gw3000a (said rainy/58% cloud at 1044 W/m² full sun); model under-predicted 3×. CLEAR_SKY_GHI(950) also too low (<1044). PLAN-ONLY so safe, but low-value while cloud source is wrong. **Refinement:** derive clear-sky from gw3000a's own history + bump CLEAR_SKY_GHI~1050, THEN enable. |
 | 3 | **PV/battery bias** | build | shift cooling to Condominio PV-surplus hours (Fusion Solar); pre-cond #8/#7 prefer PV. Headline energy lever. NOT in code yet. |
 | 4 | **Proportional shading** | build | shade position ∝ solar_radiation + outdoor_temp (today: on/off threshold + default). Enhance #6. |
 | 5 | **Enable comfort → regime opt-ins** | enable+tune | after k converges; one at a time, tune on data. |
