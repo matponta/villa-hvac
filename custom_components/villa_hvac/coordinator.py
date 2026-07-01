@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+import math
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -66,9 +67,10 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if state is None or state.state in ("unavailable", "unknown"):
             return None, self._age_s(state)
         try:
-            return float(state.state), self._age_s(state)
+            val = float(state.state)
         except (TypeError, ValueError):
             return None, self._age_s(state)
+        return (val if math.isfinite(val) else None), self._age_s(state)
 
     def _climate_temp(self, entity_id: str | None) -> tuple[float | None, float | None]:
         """Temperature from a climate entity's `current_temperature` attribute."""
@@ -80,9 +82,10 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         raw = state.attributes.get("current_temperature")
         age = self._age_s(state)
         try:
-            return (float(raw) if raw is not None else None), age
+            val = float(raw) if raw is not None else None
         except (TypeError, ValueError):
             return None, age
+        return (val if (val is not None and math.isfinite(val)) else None), age
 
     def _zone_temperature(self, zone: dict) -> dict[str, Any]:
         """Fuse a zone's temperature: clima_* primary, climate attr fallback."""

@@ -31,6 +31,9 @@ from .const import (
     SEASON_OFFSET_DEFAULTS,
     SEASON_OFFSET_OPTS,
     SEASON_REFERENCE_CLIMATE,
+    SEASON_STAGIONE_SENSOR,
+    SEASON_STAGIONE_SUMMER,
+    SEASON_STAGIONE_WINTER,
     SEASON_SUMMER,
     SEASON_WINTER,
     ZONES,
@@ -45,13 +48,32 @@ def preset_for_mode(mode: str) -> str | None:
 
 
 def current_season(hass: HomeAssistant, entry: ConfigEntry) -> str:
-    """Season for offset selection: options override, else auto from the PdC mode."""
+    """Season for offset + cooling gating: options override, else auto-detected.
+
+    Corroborates two signals so a single unavailable KNX climate can't silently
+    flip the organism into summer mid-winter (the s5a_villa_modo failure class
+    CLAUDE.md warns about): an AFFIRMATIVE hvac mode on the reference thermostat
+    (heat/cool) wins; when that is inconclusive (unavailable/off/unknown) fall back
+    to the robust s5a stagione sensor (Estate/Inverno); only if neither is
+    conclusive default to summer (the cooling season here — and a wrong winter
+    guess merely warms a setback offset, since the cooling controllers separately
+    gate on affirmative demand).
+    """
     forced = entry.options.get(OPT_SEASON)
     if forced in (SEASON_SUMMER, SEASON_WINTER):
         return forced
     state = hass.states.get(SEASON_REFERENCE_CLIMATE)
-    if state is not None and state.state == "heat":
-        return SEASON_WINTER
+    if state is not None:
+        if state.state == "heat":
+            return SEASON_WINTER
+        if state.state == "cool":
+            return SEASON_SUMMER
+    stagione = hass.states.get(SEASON_STAGIONE_SENSOR)
+    if stagione is not None:
+        if stagione.state == SEASON_STAGIONE_WINTER:
+            return SEASON_WINTER
+        if stagione.state == SEASON_STAGIONE_SUMMER:
+            return SEASON_SUMMER
     return SEASON_SUMMER
 
 

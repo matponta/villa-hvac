@@ -399,3 +399,16 @@ async def test_build_house_state_snapshot(hass):
     assert state.zones["main_bedroom"].demand is True  # valve open
     assert state.zones["living_room"].enabled is True  # #10 default on
     assert state.zones["living_room"].climate == CLIMATE
+
+
+async def test_num_rejects_nan_and_inf(hass):
+    """_num returns None for non-finite reads so NaN/inf can't poison the
+    at-peak / free-cool comparisons downstream (ENGINE_REVIEW §5)."""
+    from custom_components.villa_hvac.engine import _num
+
+    hass.states.async_set("sensor.x", "21.5")
+    assert _num(hass, "sensor.x") == 21.5
+    hass.states.async_set("sensor.x", "nan")
+    assert _num(hass, "sensor.x") is None
+    hass.states.async_set("sensor.x", "inf")
+    assert _num(hass, "sensor.x") is None

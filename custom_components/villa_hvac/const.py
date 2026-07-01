@@ -60,6 +60,12 @@ SEASON_SUMMER = "summer"
 SEASON_WINTER = "winter"
 # Reference thermostat for auto season detection (state "heat" -> winter).
 SEASON_REFERENCE_CLIMATE = "climate.salotto_termostato_2"
+# Corroborating season signal (robust Estate/Inverno, blessed in CLAUDE.md), used
+# when the reference thermostat's hvac mode is inconclusive so a single
+# unavailable KNX climate can't flip the organism into summer mid-winter.
+SEASON_STAGIONE_SENSOR = "sensor.s5a_stagione"
+SEASON_STAGIONE_SUMMER = "Estate"
+SEASON_STAGIONE_WINTER = "Inverno"
 
 OPT_SEASON = "season"
 OPT_SUMMER_VIA_OFFSET = "summer_via_offset"

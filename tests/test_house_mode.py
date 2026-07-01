@@ -6,9 +6,16 @@ from pytest_homeassistant_custom_component.common import (
     async_mock_service,
 )
 
-from custom_components.villa_hvac.const import DOMAIN
+from custom_components.villa_hvac.const import (
+    DOMAIN,
+    SEASON_REFERENCE_CLIMATE,
+    SEASON_STAGIONE_SENSOR,
+    SEASON_SUMMER,
+    SEASON_WINTER,
+)
 from custom_components.villa_hvac.controller import (
     controllable_zones,
+    current_season,
     preset_for_mode,
 )
 
@@ -110,3 +117,27 @@ async def test_disabled_zone_forced_to_building_protection(hass):
     # #10 (priority) overrides the house mode: disabled -> building_protection.
     assert targeted["climate.sala_giochi_termostato_2"] == "building_protection"
     assert targeted["climate.salotto_termostato_2"] == "comfort"  # others driven
+
+
+# --- season detection (robust corroboration) ---------------------------------
+
+async def test_current_season_affirmative_reference(hass):
+    """An affirmative hvac mode on the reference thermostat wins directly."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool")
+    assert current_season(hass, entry) == SEASON_SUMMER
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat")
+    assert current_season(hass, entry) == SEASON_WINTER
+
+
+async def test_current_season_corroborates_stagione_when_reference_inconclusive(hass):
+    """When the reference climate is unavailable, fall back to the robust s5a
+    stagione sensor rather than blindly defaulting to summer (the s5a_villa_modo
+    failure class): a single unavailable KNX climate must not flip winter->summer."""
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "unavailable")
+    hass.states.async_set(SEASON_STAGIONE_SENSOR, "Inverno")
+    assert current_season(hass, entry) == SEASON_WINTER
+    # an affirmative reference read still wins over the corroborating sensor
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool")
+    assert current_season(hass, entry) == SEASON_SUMMER

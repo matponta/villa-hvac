@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import timedelta
 import logging
+import math
 
 from homeassistant.components.climate import (
     ATTR_PRESET_MODE,
@@ -200,14 +201,19 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _num(hass: HomeAssistant, entity_id: str) -> float | None:
-    """Read a sensor whose state is a number (None if missing/non-numeric)."""
+    """Read a sensor whose state is a number (None if missing/non-numeric).
+
+    Rejects NaN/inf: a sensor reporting 'nan' would otherwise poison every
+    comparison (NaN compares False, so at-peak / free-cool guards silently
+    disable) and 'inf' would pin at-peak on forever."""
     state = hass.states.get(entity_id)
     if state is None or state.state in ("unavailable", "unknown"):
         return None
     try:
-        return float(state.state)
+        val = float(state.state)
     except (TypeError, ValueError):
         return None
+    return val if math.isfinite(val) else None
 
 
 def _outdoor_temp(hass: HomeAssistant) -> float | None:
