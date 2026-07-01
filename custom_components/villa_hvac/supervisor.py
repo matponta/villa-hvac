@@ -102,6 +102,7 @@ def reconcile(
     tolerance: float = DEFAULT_SETPOINT_TOLERANCE,
     max_reasserts: int = DEFAULT_MAX_REASSERTS,
     backoff: timedelta = DEFAULT_OVERRIDE_BACKOFF,
+    allow_override: bool = True,
 ) -> ReconcileResult:
     """Decide what (if anything) to write for one lever this cycle.
 
@@ -109,6 +110,13 @@ def reconcile(
     `current` is the live read (may be a transient `unavailable`/`unknown`).
     Returns the next `LeverState` and an optional write. Pure: same inputs →
     same output, so the whole discipline is unit-testable.
+
+    `allow_override` gates the manual-override concession (step 7). Conceding to
+    a human is right for a comfort setpoint, but WRONG for the safety-critical
+    global cooling block: its fail direction is RELEASE, and a few dropped
+    telegrams must never latch the villa into a multi-hour no-cooling state. For
+    such a lever pass `allow_override=False` — it re-asserts the desired value
+    indefinitely instead of conceding.
     """
     # 1. Honor an active manual-override backoff: hands off the lever.
     if state.override_until is not None and now < state.override_until:
@@ -148,8 +156,16 @@ def reconcile(
             note="reassert",
         )
 
-    # 7. Divergence survived every re-assert → treat as a manual change and
-    #    concede the lever for the backoff window.
+    # 7. Divergence survived every re-assert. For a normal lever, treat it as a
+    #    manual change and concede for the backoff window. For a no-concede lever
+    #    (the global block), keep re-asserting the safe value indefinitely — a
+    #    lossy bus must never be able to latch it away from us.
+    if not allow_override:
+        return ReconcileResult(
+            state=replace(state, attempts=max_reasserts),
+            write=str(desired),
+            note="reassert-hold",
+        )
     return ReconcileResult(
         state=LeverState(override_until=now + backoff), note="override"
     )

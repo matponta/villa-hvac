@@ -597,3 +597,14 @@ def test_band_phase_override_forces_phase():
     out = FanBandController()(_state([z], **_BAND), phase_override={"a": "rest"})
     assert out[temperature_lever("climate.a")] == 24.75   # forced REST -> center+slam
     assert out["fan:fan.a"] == 0                          # rest -> fan_min
+
+
+def test_duty_controller_emits_release_when_disabled():
+    """Disabling duty must emit an explicit BLOCCO_RELEASE, not a silent {} — an
+    empty dict drops the lever from `desired`, so a block asserted just before
+    disable would never be actively cleared."""
+    from custom_components.villa_hvac.policies import DutyController
+    from custom_components.villa_hvac.supervisor import BLOCCO_LEVER, BLOCCO_RELEASE
+
+    out = DutyController()(_state([_zone("living_room")], duty=False))
+    assert out == {BLOCCO_LEVER: BLOCCO_RELEASE}

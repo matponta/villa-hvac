@@ -1009,6 +1009,9 @@ class SupervisorEngine:
         result = reconcile(
             target, current, self._lever_states.get(lever, LeverState()), state.now,
             tolerance=tolerance,
+            # The global cooling block must always be releasable/assertable by the
+            # engine: never concede it to a phantom "manual" change from bus noise.
+            allow_override=lever != BLOCCO_LEVER,
         )
         self._lever_states[lever] = result.state
         if result.write is not None:

@@ -288,7 +288,12 @@ class DutyController:
             or state.duty_cooloff is None
         ):
             self._duty = DutyState()  # forget timers while disabled
-            return {}
+            # Explicit RELEASE, not a silent {}: an empty dict drops the lever
+            # from `desired`, so a block asserted just before disable would never
+            # be actively cleared (merge only releases on a *present* None). The
+            # only writer of BLOCCO is duty/regime, and RELEASE is idempotent, so
+            # opining "off" whenever duty is off is always the safe baseline.
+            return {BLOCCO_LEVER: BLOCCO_RELEASE}
         cooling = state.consenso_freddo == "on"
         at_peak = (
             state.outdoor_temp is not None

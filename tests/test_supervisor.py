@@ -139,6 +139,22 @@ def test_persistent_divergence_concedes_to_manual_after_reasserts():
     assert r.state.override_until == T0 + DEFAULT_OVERRIDE_BACKOFF
 
 
+def test_no_concede_lever_reasserts_forever_instead_of_override():
+    """A no-concede lever (the global cooling block) must NEVER latch to manual:
+    past the re-assert limit it keeps writing the safe value, never conceding."""
+    state = LeverState()
+    r = _step("off", "on", state, allow_override=False)      # write
+    r = _step("off", "on", r.state, allow_override=False)    # reassert (2)
+    r = _step("off", "on", r.state, allow_override=False)    # reassert (3)
+    r = _step("off", "on", r.state, allow_override=False)    # exhausted...
+    assert r.write == "off"                # ...still re-asserts the safe value
+    assert r.note == "reassert-hold"
+    assert r.state.override_until is None   # never conceded
+    # and it keeps holding on the next cycle too
+    r = _step("off", "on", r.state, allow_override=False)
+    assert r.write == "off" and r.state.override_until is None
+
+
 def test_manual_hold_does_not_write_during_backoff():
     held = LeverState(override_until=T0 + timedelta(hours=1))
     r = _step("economy", "comfort", held, now=T0)
