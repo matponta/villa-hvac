@@ -77,7 +77,23 @@ abc_conf 0.59, k_conf 0.13, 57 passive + 3 capacity updates, G learned 1.11.
 NEXT WATCH: k_confidence needs daytime held-fan cooling windows to climb (was ~0.13
 after a mostly-off/away night); re-check over a few hot days before enabling opt-ins.
 
+BUILT 2026-07-01 (session 2), repo now v0.26.0, LIVE still v0.24.0:
+- CoolClima **Brain** tab (/cool-clima → Brain): regime + per-room model + 12h plan.
+- **#8 return-home pre-conditioning (v0.25.0)**: Via → actionable notification asks
+  when you're back (date + mattino/pom/sera) → house in building_protection until a
+  computed pre-cond window → ramps to comfort (hold & wait for presence). Design =
+  effective-mode override (Vacanza↔Casa), NOT new levers. Opt-in switch.return_precond
+  + date/select/switch entities + sensor.return_plan. Spec: STORY_8_RETURN_PRECOND.md.
+- **F4a-v2 nowcast-anchored solar (v0.26.0)**: Met.no cloud proved unreliable (rainy
+  at gw3000a 1044 W/m²); solar_curve_v2 pins the curve to the live gw3000a. Opt-in +
+  plan-only. OWNER TODO: add the **OpenWeatherMap** integration (key via HA UI, NOT
+  chat) + point OPT_WEATHER_ENTITY at it, THEN enable OPT_SOLAR_FORECAST.
+Deploying v0.26.0 is safe (everything new is opt-in + plan-only/deploy-dark).
+
 NEXT (recommended order):
+0) OWNER: add OpenWeatherMap integration (paste key in HA UI). Then optionally deploy
+   v0.26.0 (HACS update -> restart) — safe, nothing new actuates until you flip the
+   per-feature opt-ins (return_precond / OPT_SOLAR_FORECAST).
 1) DEPLOY v0.24.0 to the live HA (HACS update villa_hvac -> 0.24.0 -> restart). This
    REPLACES the old chattering pacing with F1 band control AND starts the F2 model
    learning. On restart fan_pacing is persisted ON -> band control activates: the
