@@ -15,7 +15,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
-from .const import OUTDOOR_TEMP, OUTDOOR_TEMP_FALLBACK, SOLAR_RADIATION, ZONES
+from .const import (
+    CONDOMINIO_BATTERY_POWER,
+    CONDOMINIO_BATTERY_SOC,
+    CONDOMINIO_GRID_POWER,
+    CONDOMINIO_PV_REMAINING,
+    OUTDOOR_TEMP,
+    OUTDOOR_TEMP_FALLBACK,
+    PDC_LOAD_POWER,
+    SOLAR_RADIATION,
+    ZONES,
+)
 from .controller import (
     return_armed,
     return_date,
@@ -37,6 +47,7 @@ async def async_setup_entry(
         CoolingDemandZonesSensor(coordinator, entry),
         HvacPlanSensor(coordinator, entry),
         ReturnPlanSensor(coordinator, entry),
+        EnergyBiasSensor(coordinator, entry),
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
@@ -392,4 +403,51 @@ class ReturnPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "eta": eta.isoformat() if eta else None,
             "lead_minutes": lead_min,
             "precond_starts": window_start.isoformat() if window_start else None,
+        }
+
+
+class EnergyBiasSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """PV/energy-aware pre-cool diagnostic (F4c-lite).
+
+    State = the current decision (bank / coast / hold / off). Attributes expose the
+    effectiveness ranking, the daily solar-vs-consumption balance, the chosen floor,
+    and the live Condominio energy signals (PdC load, battery SoC/power, grid) so a
+    dashboard can show why the organism is banking or deferring right now.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Energy bias"
+    _attr_icon = "mdi:solar-power-variant"
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_energy_bias"
+
+    @property
+    def _decision(self):
+        engine = getattr(self.coordinator, "engine", None)
+        return getattr(engine, "_pv_decision", None)
+
+    @property
+    def native_value(self) -> str:
+        d = self._decision
+        return d.mode if d is not None else "off"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        d = self._decision
+        return {
+            "solar_rich": d.solar_rich if d else None,
+            "eff_now": round(d.eff_now, 3) if d else None,
+            "eff_peak": round(d.eff_peak, 3) if d else None,
+            "floor": d.floor if d else None,
+            "reason": d.reason if d else None,
+            "pv_kwh_remaining": _num_state(self.hass, CONDOMINIO_PV_REMAINING),
+            "pdc_load_w": _num_state(self.hass, PDC_LOAD_POWER),
+            "battery_soc": _num_state(self.hass, CONDOMINIO_BATTERY_SOC),
+            "battery_power_w": _num_state(self.hass, CONDOMINIO_BATTERY_POWER),
+            "grid_power_w": _num_state(self.hass, CONDOMINIO_GRID_POWER),
         }

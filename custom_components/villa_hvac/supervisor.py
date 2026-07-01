@@ -638,8 +638,15 @@ class HouseState:
     duty_peak_outdoor: float | None = None  # at/above this outdoor temp -> no duty
     precool: bool = False               # #9 forecast: hot peak imminent
     precool_offset: float | None = None  # °C below target while pre-cooling
+    # PV/energy-aware daily pre-cool (F4c-lite). pv_mode = bank/coast/hold/None; the
+    # band controller drives center -> pv_floor on BANK, center + pv_coast_relax
+    # (capped at duty_comfort_max) on COAST. None = no PV opinion (normal band).
+    pv_mode: str | None = None
+    pv_floor: float | None = None
+    pv_coast_relax: float = 0.0
     night_active: bool = False          # #2b camere silenziose in effect
     fan_pacing_enabled: bool = False    # #3 fan pacing switch
+    comfort_enabled: bool = False       # F4b comfort windows active (for PV COAST)
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
     auto_setback: bool = True          # #2 global Auto setback switch
@@ -1331,6 +1338,95 @@ def run_rest_durations(
     run = min(cap, timedelta(hours=band / net)) if net > 0 else None
     rest = min(cap, timedelta(hours=band / g)) if g > 0 else None
     return run, rest
+
+
+# --- PV/energy-aware daily pre-cool (F4c-lite, pure) -------------------------
+# Bank coolth at the thermodynamically most effective hours (cool + low solar gain),
+# using the solar forecast + battery as a buffer, so the hot/expensive evening needs
+# minimal compressor. Comfort is a HARD bound both ways. The decision is symbolic
+# (bank / coast / hold); the engine maps it onto the existing band-center + duty
+# levers. Pure so the whole heuristic is unit-testable.
+
+PRECOOL_BANK = "bank"     # cool now toward the floor (efficient + energy-smart hour)
+PRECOOL_COAST = "coast"   # defer within comfort (actively inefficient hot hour)
+PRECOOL_HOLD = "hold"     # no opinion (normal comfort band)
+
+
+def cooling_effectiveness(
+    t_room: float | None, t_out: float | None, solar: float | None,
+    *, a: float, b: float, c: float, k: float,
+) -> float:
+    """Net cooling rate (°C/h) at full fan = k − gain, where
+    gain = a(T_out−T) + b·S + c. ≤ 0 when gains overwhelm capacity (the ~34°C peak,
+    where the fancoils were measured to net ~0). Higher in cool, low-sun hours."""
+    return k - cooling_load(t_room, t_out, solar, a=a, b=b, c=c)
+
+
+@dataclass(frozen=True)
+class EnergyPrecoolDecision:
+    """Result of the PV/energy pre-cool heuristic for the current cycle."""
+
+    mode: str                 # PRECOOL_BANK / PRECOOL_COAST / PRECOOL_HOLD
+    floor: float | None = None  # band-center floor to bank to (BANK only)
+    solar_rich: bool = False
+    eff_now: float = 0.0
+    eff_peak: float = 0.0
+    reason: str = ""
+
+
+def energy_precool_decision(
+    *, effectiveness: list[float], now_index: int = 0,
+    pv_kwh_remaining: float | None, consumption_kwh_remaining: float | None,
+    eff_fraction: float = 0.6, eff_min: float = 0.1,
+    floor_rich: float = 22.0, floor_poor: float = 23.0,
+) -> EnergyPrecoolDecision:
+    """Decide bank / coast / hold for THIS cycle from an hourly effectiveness horizon.
+
+    - `effectiveness[h]` = `cooling_effectiveness` for each forecast hour; the horizon
+      is `effectiveness[now_index:]`.
+    - Nothing effective ahead (`eff_peak ≤ eff_min`) → HOLD (leave it to the band).
+    - `solar_rich` = forecast daily solar ≥ remaining consumption → bank deeper (free);
+      solar-poor still banks in the efficient hours (grid-draw OK per the owner) but to
+      a gentler floor to limit the draw.
+    - Now among the efficient hours (`eff_now ≥ eff_fraction·eff_peak`) → BANK.
+    - Now actively inefficient (`eff_now ≤ eff_min`, e.g. the hot peak) → COAST (defer).
+    - Otherwise → HOLD.
+    """
+    horizon = effectiveness[now_index:]
+    if not horizon:
+        return EnergyPrecoolDecision(mode=PRECOOL_HOLD, reason="no-horizon")
+    eff_now = horizon[0]
+    eff_peak = max(horizon)
+    if eff_peak <= eff_min:
+        return EnergyPrecoolDecision(
+            mode=PRECOOL_HOLD, eff_now=eff_now, eff_peak=eff_peak,
+            reason="no-effective-hour",
+        )
+    # `consumption > 0` guards the end-of-day degenerate: both remaining-PV and
+    # remaining-consumption decay to ~0, and 0 >= 0 would spuriously flip solar_rich
+    # True — banking to the DEEPEST floor at night on pure grid. Require a real
+    # remaining consumption to compare against.
+    solar_rich = (
+        pv_kwh_remaining is not None and consumption_kwh_remaining is not None
+        and consumption_kwh_remaining > 0
+        and pv_kwh_remaining >= consumption_kwh_remaining
+    )
+    if eff_now >= eff_fraction * eff_peak and eff_now > eff_min:
+        return EnergyPrecoolDecision(
+            mode=PRECOOL_BANK,
+            floor=floor_rich if solar_rich else floor_poor,
+            solar_rich=solar_rich, eff_now=eff_now, eff_peak=eff_peak,
+            reason="efficient-hour" + ("-solar-rich" if solar_rich else "-grid-ok"),
+        )
+    if eff_now <= eff_min:
+        return EnergyPrecoolDecision(
+            mode=PRECOOL_COAST, solar_rich=solar_rich,
+            eff_now=eff_now, eff_peak=eff_peak, reason="inefficient-hour-defer",
+        )
+    return EnergyPrecoolDecision(
+        mode=PRECOOL_HOLD, solar_rich=solar_rich,
+        eff_now=eff_now, eff_peak=eff_peak, reason="borderline",
+    )
 
 
 # --- Story #8: return-home pre-conditioning (pure) ---------------------------

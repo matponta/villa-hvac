@@ -51,7 +51,13 @@
           "comfort_night_to": "Finestra comfort notte — alle",
           "return_max_lead_hours": "Rientro pre-cond · anticipo max (ore)",
           "return_margin_min": "Rientro pre-cond · margine di sicurezza (min)",
-          "notify_target": "Servizio notify per la richiesta «quando torni?»"
+          "notify_target": "Servizio notify per la richiesta «quando torni?»",
+          "pv_floor_rich": "Bias PV · floor banking, sole abbondante (°C)",
+          "pv_floor_poor": "Bias PV · floor banking, sole scarso (°C)",
+          "pv_coast_relax": "Bias PV · rilassamento coast (°C)",
+          "pv_eff_fraction": "Bias PV · frazione di efficacia per banking",
+          "pv_eff_min": "Bias PV · tasso minimo efficace (°C/h)",
+          "pv_daily_need_kwh": "Bias PV · consumo giornaliero stimato (kWh)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
@@ -89,7 +95,13 @@
           "comfort_night_to": "Fine finestra comfort camere (HH:MM).",
           "return_max_lead_hours": "#8: limita quanto in anticipo parte il pre-condizionamento rispetto all'ora di rientro.",
           "return_margin_min": "Margine di sicurezza aggiunto al lead time di pre-cond calcolato.",
-          "notify_target": "Es. mobile_app_iphone (senza il prefisso notify.). Vuoto = rileva automaticamente un target mobile_app."
+          "notify_target": "Es. mobile_app_iphone (senza il prefisso notify.). Vuoto = rileva automaticamente un target mobile_app.",
+          "pv_floor_rich": "Quanto raffreddare le stanze nelle ore efficienti a sole gratuito (più profondo). Valore estivo — da rivedere per il riscaldamento.",
+          "pv_floor_poor": "Floor di banking più morbido nei giorni con poco sole, per limitare il prelievo da rete. Valore estivo.",
+          "pv_coast_relax": "Di quanto alzare il centro banda per RINVIARE il raffrescamento nella sera calda e inefficiente (limitato al comfort-max del duty).",
+          "pv_eff_fraction": "Fai banking ora quando l'efficacia di raffrescamento di quest'ora è almeno questa frazione della migliore ora futura.",
+          "pv_eff_min": "Tasso di raffrescamento netto (°C/h) sotto il quale un'ora è «inefficiente» — rinvia invece di fare banking.",
+          "pv_daily_need_kwh": "Stima approssimativa del consumo elettrico giornaliero del Condominio, per capire se il sole previsto copre la giornata (sole abbondante vs scarso). Regolabile."
         }
       }
     }

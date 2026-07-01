@@ -54,6 +54,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONDOMINIO_PV_REMAINING,
     CONSENSO_BLOCCO,
     COOL_CAPACITY,
     COOL_GAIN_BASE,
@@ -61,8 +62,21 @@ from .const import (
     COOL_GAIN_SOLAR,
     CLEAR_SKY_GHI,
     COOL_PULLDOWN,
+    DEFAULT_PV_BIAS_COAST_RELAX,
+    DEFAULT_PV_BIAS_DAILY_NEED_KWH,
+    DEFAULT_PV_BIAS_EFF_FRACTION,
+    DEFAULT_PV_BIAS_EFF_MIN,
+    DEFAULT_PV_BIAS_FLOOR_POOR,
+    DEFAULT_PV_BIAS_FLOOR_RICH,
     FORECASTSOLAR_GHI_FACTOR,
     FORECASTSOLAR_POWER,
+    OPT_PV_BIAS_COAST_RELAX,
+    OPT_PV_BIAS_DAILY_NEED_KWH,
+    OPT_PV_BIAS_EFF_FRACTION,
+    OPT_PV_BIAS_EFF_MIN,
+    OPT_PV_BIAS_FLOOR_POOR,
+    OPT_PV_BIAS_FLOOR_RICH,
+    PV_BIAS_MIN_DWELL,
     COOL_VALVES,
     DEFAULT_COMFORT_DAY_FROM,
     DEFAULT_COMFORT_DAY_TO,
@@ -145,6 +159,7 @@ from .controller import (
     fan_pacing_enabled,
     is_zone_disabled,
     mode_offset,
+    pv_bias_enabled,
     shade_blocked,
     shade_position,
     supervisor_enabled,
@@ -176,6 +191,9 @@ from .supervisor import (
     reconcile,
     select_regime,
     solar_curve_v2,
+    _forecast_temp_at,
+    cooling_effectiveness,
+    energy_precool_decision,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -516,6 +534,7 @@ def build_house_state(
         ),
         night_active=bool(getattr(night, "active", False)),
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
+        comfort_enabled=comfort is not None,
         season=current_season(hass, entry),
         house_mode=mode,
         auto_setback=auto_setback_enabled(hass, entry),
@@ -587,6 +606,9 @@ class SupervisorEngine:
         self._cloud: list[tuple] = []
         self._forecast_ts = None
         self._plan_view: PlanView | None = None
+        # PV/energy-aware pre-cool: last decision (diagnostic) + min-dwell anchor.
+        self._pv_decision = None
+        self._pv_since = None
 
     def start(self) -> None:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
@@ -654,6 +676,10 @@ class SupervisorEngine:
             state = self.away_return.apply(
                 state, self.hass, self.entry, commit=actuate
             )
+            # PV/energy-aware daily pre-cool (F4c-lite): sets pv_mode/floor on the
+            # state so the band controller banks in efficient hours / defers in the
+            # evening. Stateless (decides from forecasts) — safe for the plan view too.
+            state = self._pv_bias_apply(state)
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
@@ -857,6 +883,119 @@ class SupervisorEngine:
             _LOGGER.debug("Solar forecast failed; using flat prior", exc_info=True)
             cur = state.solar if state.solar is not None else 0.0
             return [cur] * n, "flat"
+
+    def _house_cooling_model(self, state: HouseState) -> tuple[float, float, float, float]:
+        """Mean (a, b, c, k) over the cooling leader zones (blended model else priors)
+        — the aggregate the PV effectiveness ranking reasons over."""
+        params = self._room_params(state)
+        if not params:
+            return COOL_GAIN_OUTDOOR, COOL_GAIN_SOLAR, COOL_GAIN_BASE, COOL_CAPACITY
+        n = len(params)
+        return (
+            sum(p.a for p in params.values()) / n,
+            sum(p.b for p in params.values()) / n,
+            sum(p.c for p in params.values()) / n,
+            sum(p.k for p in params.values()) / n,
+        )
+
+    def _pv_bias_apply(self, state: HouseState) -> HouseState:
+        """PV/energy-aware daily pre-cool (F4c-lite). Rank the next lookahead hours by
+        cooling effectiveness (model × temp/solar forecast), overlay the daily
+        solar-vs-consumption balance, and set pv_mode/floor so the band controller
+        banks coolth in the efficient hours and defers in the hot evening. Works ONLY
+        through the band center → requires fan_pacing; summer only; no BLOCCO/duty
+        coupling. Best-effort: any failure yields no PV opinion.
+
+        NOTE: keep pv_bias and regime coalescing (OPT_REGIME_ENABLED) from being on
+        together for now — the coordinator decides RUN/REST off the BASE center while
+        the band applies the PV-shifted one, so their composition is unverified."""
+        self._pv_decision = None
+        # center = the real band center (setpoint + mode_offset); the effectiveness
+        # must be evaluated there, not at the bare setpoint. mode_offset is None in
+        # Vacanza / return-waiting -> yield (cooling is building_protection anyway).
+        if not (
+            pv_bias_enabled(self.hass, self.entry)
+            and fan_pacing_enabled(self.hass, self.entry)
+            and state.season == SEASON_SUMMER
+            and state.house_setpoint is not None
+            and state.mode_offset is not None
+        ):
+            self._pv_since = None
+            return state
+        try:
+            # The effectiveness ranking's solar dimension needs a REAL forecast curve;
+            # the flat prior (OPT_SOLAR_FORECAST off) collapses the peak-defer shape.
+            solar_curve, solar_marker = self._solar_forecast(state)
+            if not solar_curve or solar_marker == "flat":
+                self._pv_since = None
+                return state
+            a, b, c, k = self._house_cooling_model(state)
+            center = state.house_setpoint + state.mode_offset
+            eff: list[float] = []
+            for i, s in enumerate(solar_curve):
+                when = state.now + timedelta(minutes=i * PLAN_SIM_STEP_MIN)
+                t_out = _forecast_temp_at(self._forecast, when)
+                if t_out is None:
+                    t_out = state.outdoor_temp
+                eff.append(cooling_effectiveness(center, t_out, s, a=a, b=b, c=c, k=k))
+            pv_kwh = _num(self.hass, CONDOMINIO_PV_REMAINING)
+            local = dt_util.now()  # LOCAL day clock (state.now is UTC)
+            frac_remaining = max(0.0, (1440 - (local.hour * 60 + local.minute)) / 1440.0)
+            daily_need = float(
+                self.entry.options.get(
+                    OPT_PV_BIAS_DAILY_NEED_KWH, DEFAULT_PV_BIAS_DAILY_NEED_KWH
+                )
+            )
+            raw = energy_precool_decision(
+                effectiveness=eff, now_index=0,
+                pv_kwh_remaining=pv_kwh,
+                consumption_kwh_remaining=daily_need * frac_remaining,
+                eff_fraction=float(
+                    self.entry.options.get(
+                        OPT_PV_BIAS_EFF_FRACTION, DEFAULT_PV_BIAS_EFF_FRACTION
+                    )
+                ),
+                eff_min=float(
+                    self.entry.options.get(OPT_PV_BIAS_EFF_MIN, DEFAULT_PV_BIAS_EFF_MIN)
+                ),
+                floor_rich=float(
+                    self.entry.options.get(
+                        OPT_PV_BIAS_FLOOR_RICH, DEFAULT_PV_BIAS_FLOOR_RICH
+                    )
+                ),
+                floor_poor=float(
+                    self.entry.options.get(
+                        OPT_PV_BIAS_FLOOR_POOR, DEFAULT_PV_BIAS_FLOOR_POOR
+                    )
+                ),
+            )
+        except Exception:  # noqa: BLE001 - PV bias is best-effort, never break the cycle
+            _LOGGER.debug("PV bias failed; no opinion this cycle", exc_info=True)
+            self._pv_since = None
+            return state
+        # Min-dwell anti-thrash: hold the previous decision when the mode would flip
+        # before PV_BIAS_MIN_DWELL elapses (a mode flip jumps the center ~2°C >> band,
+        # which would slam the valve). state.now is UTC — fine for a duration.
+        prev = self._pv_decision if self._pv_since is not None else None
+        if (
+            prev is not None and prev.mode != raw.mode
+            and state.now - self._pv_since < PV_BIAS_MIN_DWELL
+        ):
+            decision = prev
+        else:
+            decision = raw
+            if self._pv_since is None or (prev is not None and prev.mode != raw.mode):
+                self._pv_since = state.now
+        self._pv_decision = decision
+        coast_relax = float(
+            self.entry.options.get(
+                OPT_PV_BIAS_COAST_RELAX, DEFAULT_PV_BIAS_COAST_RELAX
+            )
+        )
+        return replace(
+            state, pv_mode=decision.mode, pv_floor=decision.floor,
+            pv_coast_relax=coast_relax,
+        )
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)

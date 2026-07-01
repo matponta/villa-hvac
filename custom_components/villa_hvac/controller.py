@@ -170,6 +170,12 @@ def fan_pacing_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "fan_pacing") == STATE_ON
 
 
+def pv_bias_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the PV/energy-aware pre-cool switch is on (opt-in). It executes via
+    the band center, so it also needs fan_pacing on to have any effect."""
+    return _switch_state(hass, entry, "pv_bias") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF

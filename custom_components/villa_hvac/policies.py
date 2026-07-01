@@ -58,6 +58,8 @@ from .supervisor import (
     _is_cooling_leader,
     DutyState,
     HouseState,
+    PRECOOL_BANK,
+    PRECOOL_COAST,
     REGIME_MEDIUM,
     RegimeState,
     coalesce_phase,
@@ -367,14 +369,33 @@ class FanBandController:
                 and z.enabled and not z.paused and not free_cool
             )
             center = center_base
-            if eligible and state.precool and state.duty_enabled and (
-                state.precool_offset is not None
+            # PV/energy-aware pre-cool (F4c-lite) takes precedence when it has an
+            # opinion — it's the daily scheduler. BANK drives center down to the floor
+            # (a comfort floor, so it also caps how deep temp-peak precool can go);
+            # COAST raises center to defer, capped at duty_comfort_max. Comfort stays
+            # guaranteed per-zone by band_step (it still cools above center + B/2).
+            if eligible and center_base is not None and state.pv_mode == PRECOOL_BANK and (
+                state.pv_floor is not None
             ):
-                center = center_base - state.precool_offset
-            # F4b: outside its comfort window, let the room drift warm (capped by
-            # the engine so center never exceeds duty_comfort_max).
-            if eligible and center is not None and z.comfort_relax:
-                center += z.comfort_relax
+                center = min(center_base, state.pv_floor)
+            elif eligible and center_base is not None and state.pv_mode == PRECOOL_COAST:
+                # Respect F4b: inside a room's comfort window (comfort enabled +
+                # z.comfort_relax == 0) DON'T defer — keep it tight. Outside the
+                # window, defer by the larger of the PV relax and the F4b relax.
+                protected = state.comfort_enabled and z.comfort_relax == 0
+                coast = 0.0 if protected else max(state.pv_coast_relax, z.comfort_relax)
+                center = center_base + coast
+                if state.duty_comfort_max is not None:
+                    center = min(center, state.duty_comfort_max)
+            else:
+                if eligible and state.precool and state.duty_enabled and (
+                    state.precool_offset is not None
+                ):
+                    center = center_base - state.precool_offset
+                # F4b: outside its comfort window, let the room drift warm (capped by
+                # the engine so center never exceeds duty_comfort_max).
+                if eligible and center is not None and z.comfort_relax:
+                    center += z.comfort_relax
             # F3c: when the regime coordinator coalesces, it dictates the phase;
             # the band controller still slams the setpoint + sizes the fan exactly
             # as usual, so exactly ONE component decides the phase per zone.

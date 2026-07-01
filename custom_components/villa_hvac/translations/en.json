@@ -51,7 +51,13 @@
           "comfort_night_to": "Night comfort window — to",
           "return_max_lead_hours": "Return pre-cond · max lead (hours)",
           "return_margin_min": "Return pre-cond · safety margin (min)",
-          "notify_target": "Notify service for the “when are you back?” ask"
+          "notify_target": "Notify service for the “when are you back?” ask",
+          "pv_floor_rich": "PV bias · bank floor, solar-rich (°C)",
+          "pv_floor_poor": "PV bias · bank floor, solar-poor (°C)",
+          "pv_coast_relax": "PV bias · coast relax (°C)",
+          "pv_eff_fraction": "PV bias · bank effectiveness fraction",
+          "pv_eff_min": "PV bias · min effective rate (°C/h)",
+          "pv_daily_need_kwh": "PV bias · estimated daily consumption (kWh)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
@@ -89,7 +95,13 @@
           "comfort_night_to": "Bedroom comfort window end (HH:MM).",
           "return_max_lead_hours": "#8: cap how early pre-conditioning starts before your return ETA.",
           "return_margin_min": "Safety margin added to the computed pre-cond lead time.",
-          "notify_target": "e.g. mobile_app_iphone (without the notify. prefix). Blank = auto-detect a mobile_app target."
+          "notify_target": "e.g. mobile_app_iphone (without the notify. prefix). Blank = auto-detect a mobile_app target.",
+          "pv_floor_rich": "How cold to bank the rooms during the free-solar efficient hours (deeper). Summer value — revise for the heating season.",
+          "pv_floor_poor": "Gentler bank floor on solar-poor days, to limit grid draw. Summer value.",
+          "pv_coast_relax": "How much to raise the band centre to DEFER cooling in the hot, inefficient evening (capped at the duty comfort-max).",
+          "pv_eff_fraction": "Bank now when this hour's cooling effectiveness is at least this fraction of the best upcoming hour.",
+          "pv_eff_min": "Net cooling rate (°C/h) below which an hour is 'ineffective' — defer/hold instead of banking.",
+          "pv_daily_need_kwh": "Rough estimate of the Condominio's daily electricity use, to judge whether forecast solar covers the day (solar-rich vs solar-poor). Tunable."
         }
       }
     }

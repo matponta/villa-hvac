@@ -618,6 +618,41 @@ WINDOW_OPEN_DELAY = timedelta(minutes=1)  # debounce: open this long before paus
 WINDOW_OPEN_STATES = ("open", "opening", "on")
 WINDOW_CLOSED_STATES = ("closed", "off")
 
+# --- PV/energy-aware daily pre-cool (F4c-lite) -------------------------------
+# Bank coolth at the thermodynamically most effective hours (cool + low solar gain),
+# using the solar forecast + battery as a buffer, so the hot/expensive evening needs
+# minimal compressor. Works PURELY through the band center (requires fan_pacing) — it
+# adds no new lever, so it stays clear of the BLOCCO/duty fail-safe cluster. Opt-in
+# via switch.pv_bias (deploy-dark). See STORY_PV_BIAS.md + memory condominio-pv-energy-map.
+# Condominio FusionSolar entities (node ne=199688300; the _2 suffix is CONDOMINIO for
+# these FusionSolar-named entities — verified live 2026-07-01).
+PDC_LOAD_POWER = "sensor.shellypro3em63_e08cfe9573ac_power"  # W: PdC + pumps (local clamp)
+CONDOMINIO_BATTERY_SOC = "sensor.battery_percentage_2"       # %
+CONDOMINIO_BATTERY_POWER = (
+    "sensor.energy_battery_battery_consumption_power_2_battery_injection_power_2_net_power"
+)  # W, NEGATIVE = charging, POSITIVE = discharging
+CONDOMINIO_GRID_POWER = (
+    "sensor.energy_grid_grid_consumption_power_2_grid_injection_power_2_net_power"
+)  # W, POSITIVE = import, NEGATIVE = export (export ~never; self-consumption ~100%)
+CONDOMINIO_PV_REMAINING = "sensor.fusion_solar_condominio_panel_production_remaining_today"  # kWh
+
+OPT_PV_BIAS_FLOOR_RICH = "pv_floor_rich"     # bank band-center floor when solar-rich (°C)
+OPT_PV_BIAS_FLOOR_POOR = "pv_floor_poor"     # bank band-center floor when solar-poor (°C)
+OPT_PV_BIAS_COAST_RELAX = "pv_coast_relax"   # °C to raise center when coasting (capped)
+OPT_PV_BIAS_EFF_FRACTION = "pv_eff_fraction"  # bank when eff_now >= frac * eff_peak
+OPT_PV_BIAS_EFF_MIN = "pv_eff_min"           # °C/h below which an hour is "ineffective"
+OPT_PV_BIAS_DAILY_NEED_KWH = "pv_daily_need_kwh"  # est. daily Condominio consumption
+# Defaults are SUMMER cooling values; they must be revised for the heating season.
+DEFAULT_PV_BIAS_FLOOR_RICH = 22.0
+DEFAULT_PV_BIAS_FLOOR_POOR = 23.0
+DEFAULT_PV_BIAS_COAST_RELAX = 1.5
+DEFAULT_PV_BIAS_EFF_FRACTION = 0.6
+DEFAULT_PV_BIAS_EFF_MIN = 0.1
+DEFAULT_PV_BIAS_DAILY_NEED_KWH = 35.0
+# Min-dwell: hold the bank/coast/hold decision this long before flipping, so a mode
+# change (which jumps the band center ~2°C >> band) can't slam the valve cycle-to-cycle.
+PV_BIAS_MIN_DWELL = timedelta(minutes=20)
+
 # --- Story #8: return-home pre-conditioning ----------------------------------
 # While away (house_mode Via) with a return ETA armed, the house sits in deep
 # setback (building_protection) and starts pre-conditioning `lead_time` before the

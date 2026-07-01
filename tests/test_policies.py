@@ -366,6 +366,85 @@ def test_band_skips_followers():
     assert FanBandController()(_state([follower], **_BAND)) == {}
 
 
+# --- PV/energy-aware pre-cool wiring into the band controller (F4c-lite) ------
+
+from dataclasses import replace as _replace  # noqa: E402
+
+
+def test_band_pv_bank_drives_center_to_floor():
+    # BANK: center pulled to the floor (22) -> RUN slam = 22 - A(0.75).
+    s = _replace(
+        _state([_fanzone("a", temp=26.0)], **_BAND), pv_mode="bank", pv_floor=22.0
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 21.25
+
+
+def test_band_pv_bank_never_raises_center():
+    # floor above the base center must NOT reduce cooling (min(base, floor)).
+    s = _replace(
+        _state([_fanzone("a", temp=26.0)], setpoint=21.0, offset=0.0, **{
+            k: v for k, v in _BAND.items() if k not in ("setpoint", "offset")
+        }),
+        pv_mode="bank", pv_floor=22.0,
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 20.25  # 21 - A, floor ignored (higher)
+
+
+def test_band_pv_coast_defers_within_comfort():
+    # COAST raises the center -> a cold room's REST setpoint drifts up (deferred).
+    s = _replace(
+        _state([_fanzone("a", temp=23.0)], **_BAND),
+        pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 26.25  # (24+1.5) + A(0.75)
+
+
+def test_band_pv_coast_capped_at_comfort_max():
+    # a large relax is clamped at duty_comfort_max (never defers past comfort).
+    s = _replace(
+        _state([_fanzone("a", temp=23.0)], **_BAND),
+        pv_mode="coast", pv_coast_relax=5.0, duty_comfort_max=25.0,
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 25.75  # min(24+5, 25) + A
+
+
+def test_band_pv_hold_is_normal_band():
+    s = _replace(_state([_fanzone("a", temp=26.0)], **_BAND), pv_mode="hold")
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 23.25  # unchanged from no-PV RUN
+
+
+def test_band_pv_coast_respects_comfort_window():
+    # comfort enabled + in-window (z.comfort_relax == 0) -> COAST must NOT defer.
+    s = _replace(
+        _state([_fanzone("a", temp=23.0)], **_BAND),
+        pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
+        comfort_enabled=True,
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 24.75  # tight REST, not deferred
+
+
+def test_band_pv_coast_defers_outside_comfort_window():
+    # comfort enabled but OUT of window (z.comfort_relax > 0) -> defer by max(pv, f4b).
+    z = ZoneSnapshot(
+        zone_id="a", name="a", climate="climate.a", emitter="fancoil",
+        temp=23.0, comfort_relax=1.0,
+        fancoil_units=(("fan.a", "switch.a_man"),),
+    )
+    s = _replace(
+        _state([z], **_BAND),
+        pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
+        comfort_enabled=True,
+    )
+    out = FanBandController()(s)
+    assert out[temperature_lever("climate.a")] == 26.25  # (24 + max(1.5,1.0)) + A
+
+
 # --- F2: ThermalEstimator (online observer) ----------------------------------
 
 from datetime import timedelta  # noqa: E402

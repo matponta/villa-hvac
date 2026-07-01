@@ -48,6 +48,7 @@ async def async_setup_entry(
         FanPacingSwitch(entry),
         ReturnPrecondSwitch(entry),
         ReturnArmedSwitch(entry),
+        PvBiasSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -264,6 +265,45 @@ class ReturnArmedSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_return_armed"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class PvBiasSwitch(SwitchEntity, RestoreEntity):
+    """Opt-in for PV/energy-aware daily pre-cool (default OFF).
+
+    When on (with the master + fan_pacing on), the engine banks coolth at the
+    thermodynamically most effective hours using the solar forecast + battery as a
+    buffer, and defers within comfort during the hot/inefficient evening. Works
+    purely through the band center — no new lever. Off by default (deploy-dark).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "PV bias"
+    _attr_icon = "mdi:solar-power-variant"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_pv_bias"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

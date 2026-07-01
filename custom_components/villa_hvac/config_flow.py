@@ -37,6 +37,12 @@ from .const import (
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
+    DEFAULT_PV_BIAS_COAST_RELAX,
+    DEFAULT_PV_BIAS_DAILY_NEED_KWH,
+    DEFAULT_PV_BIAS_EFF_FRACTION,
+    DEFAULT_PV_BIAS_EFF_MIN,
+    DEFAULT_PV_BIAS_FLOOR_POOR,
+    DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
     DEFAULT_SOLAR_FORECAST,
@@ -70,6 +76,12 @@ from .const import (
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_MAX_DEPTH,
     OPT_PRECOOL_OFFSET,
+    OPT_PV_BIAS_COAST_RELAX,
+    OPT_PV_BIAS_DAILY_NEED_KWH,
+    OPT_PV_BIAS_EFF_FRACTION,
+    OPT_PV_BIAS_EFF_MIN,
+    OPT_PV_BIAS_FLOOR_POOR,
+    OPT_PV_BIAS_FLOOR_RICH,
     OPT_RETURN_MARGIN_MIN,
     OPT_RETURN_MAX_LEAD_HOURS,
     OPT_SEASON,
@@ -298,6 +310,44 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_NOTIFY_TARGET,
                     default=options.get(OPT_NOTIFY_TARGET, ""),
                 ): str,
+                # PV/energy-aware daily pre-cool (F4c-lite). Floors are SUMMER
+                # cooling values — revise for the heating season.
+                vol.Optional(
+                    OPT_PV_BIAS_FLOOR_RICH,
+                    default=options.get(
+                        OPT_PV_BIAS_FLOOR_RICH, DEFAULT_PV_BIAS_FLOOR_RICH
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=16, max=28)),
+                vol.Optional(
+                    OPT_PV_BIAS_FLOOR_POOR,
+                    default=options.get(
+                        OPT_PV_BIAS_FLOOR_POOR, DEFAULT_PV_BIAS_FLOOR_POOR
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=16, max=28)),
+                vol.Optional(
+                    OPT_PV_BIAS_COAST_RELAX,
+                    default=options.get(
+                        OPT_PV_BIAS_COAST_RELAX, DEFAULT_PV_BIAS_COAST_RELAX
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+                vol.Optional(
+                    OPT_PV_BIAS_EFF_FRACTION,
+                    default=options.get(
+                        OPT_PV_BIAS_EFF_FRACTION, DEFAULT_PV_BIAS_EFF_FRACTION
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.1, max=1.0)),
+                vol.Optional(
+                    OPT_PV_BIAS_EFF_MIN,
+                    default=options.get(
+                        OPT_PV_BIAS_EFF_MIN, DEFAULT_PV_BIAS_EFF_MIN
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=1.0)),
+                vol.Optional(
+                    OPT_PV_BIAS_DAILY_NEED_KWH,
+                    default=options.get(
+                        OPT_PV_BIAS_DAILY_NEED_KWH, DEFAULT_PV_BIAS_DAILY_NEED_KWH
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=1, max=200)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
