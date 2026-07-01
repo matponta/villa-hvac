@@ -788,6 +788,28 @@ def _is_cooling_leader(z: ZoneSnapshot) -> bool:
     )
 
 
+def active_cooling_leaders(state: HouseState) -> list[ZoneSnapshot]:
+    """Cooling leaders currently under active management this cycle: a leader that
+    is enabled (#10), not window-paused (#4), not a bedroom owned by camere
+    silenziose (#2b), and reporting a temperature.
+
+    The SINGLE definition shared by the duty comfort-breach and the coalescing
+    coordinator, so the two can never disagree on which rooms 'count'. Note it
+    deliberately EXCLUDES the non-cooled zones (radiant baths, split-AC rooms)
+    that carry a fused temp but no fancoil — a warm bathroom must not, e.g.,
+    force the duty cooloff to abort forever.
+    """
+    return [
+        z
+        for z in state.zones.values()
+        if _is_cooling_leader(z)
+        and z.enabled
+        and not z.paused
+        and not (z.bedroom and state.night_active)
+        and z.temp is not None
+    ]
+
+
 # --- F3a: house load index + regime selector (pure) --------------------------
 # Aggregate per-room heat-gain G and capacity k into a house regime: PEAK (no
 # coalescing headroom — lean on shading/precool), MEDIUM (coalesce demand into

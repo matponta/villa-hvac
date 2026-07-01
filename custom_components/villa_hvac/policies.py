@@ -56,6 +56,7 @@ from .supervisor import (
     BLOCCO_RELEASE,
     BandState,
     _is_cooling_leader,
+    active_cooling_leaders,
     DutyState,
     HouseState,
     PRECOOL_BANK,
@@ -256,12 +257,19 @@ POLICIES = (*PRESET_POLICIES, shading_policy)
 
 
 def _comfort_breach(state: HouseState) -> bool:
-    """True if any zone is above the duty comfort-max (overrides the timer)."""
+    """True if any actively-managed cooling leader is above the duty comfort-max
+    (overrides the timer).
+
+    Scoped to `active_cooling_leaders` — NOT every zone. A radiant bath or a
+    split-AC room has no fancoil cooling but still reports a fused temp; letting a
+    perpetually-warm uncooled room trip this would abort every duty cooloff and
+    force RUN forever, silently defeating #9. Shares the leader set with
+    RegimeCoordinator so the two can never drift (ENGINE_REVIEW §4)."""
     if state.duty_comfort_max is None:
         return False
     return any(
-        z.temp is not None and z.temp > state.duty_comfort_max
-        for z in state.zones.values()
+        z.temp > state.duty_comfort_max
+        for z in active_cooling_leaders(state)
     )
 
 
@@ -623,11 +631,9 @@ class RegimeCoordinator:
         if regime != REGIME_MEDIUM or center is None or _free_cooling(state):
             self._rs = RegimeState()
             return {}, None
-        leaders = [
-            z for z in state.zones.values()
-            if _is_cooling_leader(z) and z.enabled and not z.paused
-            and not (z.bedroom and state.night_active) and z.temp is not None
-        ]
+        # Same leader set as the duty comfort-breach (shared helper) so the two
+        # never disagree on which rooms count.
+        leaders = active_cooling_leaders(state)
         if not leaders:
             self._rs = RegimeState()
             return {}, None

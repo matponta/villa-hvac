@@ -608,3 +608,28 @@ def test_duty_controller_emits_release_when_disabled():
 
     out = DutyController()(_state([_zone("living_room")], duty=False))
     assert out == {BLOCCO_LEVER: BLOCCO_RELEASE}
+
+
+def test_comfort_breach_ignores_non_cooling_zones():
+    """The duty comfort-breach counts only actively-managed cooling leaders. A hot
+    radiant/split room (fused temp but no fancoil) must NOT trip it — otherwise a
+    warm bathroom aborts every duty cooloff forever (ENGINE_REVIEW §4)."""
+    from dataclasses import replace
+
+    from custom_components.villa_hvac.policies import _comfort_breach
+
+    leader = _fanzone("living_room", temp=24.0)          # comfortable cooling leader
+    hot_bath = ZoneSnapshot(                              # radiant, no fancoil units
+        zone_id="bagno", name="bagno", climate="climate.bagno",
+        emitter="radiant", temp=30.0,
+    )
+    state = replace(
+        _state([leader, hot_bath], season=SEASON_SUMMER), duty_comfort_max=27.0
+    )
+    assert _comfort_breach(state) is False               # hot bath ignored
+
+    hot_leader = replace(
+        _state([_fanzone("living_room", temp=28.0)], season=SEASON_SUMMER),
+        duty_comfort_max=27.0,
+    )
+    assert _comfort_breach(hot_leader) is True            # a hot leader trips it
