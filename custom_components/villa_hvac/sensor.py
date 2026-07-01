@@ -16,6 +16,12 @@ from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
 from .const import OUTDOOR_TEMP, OUTDOOR_TEMP_FALLBACK, SOLAR_RADIATION, ZONES
+from .controller import (
+    return_armed,
+    return_date,
+    return_daypart,
+    return_precond_enabled,
+)
 from .coordinator import VillaHvacCoordinator
 from .supervisor import PlanView, cooling_load
 
@@ -30,6 +36,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         CoolingDemandZonesSensor(coordinator, entry),
         HvacPlanSensor(coordinator, entry),
+        ReturnPlanSensor(coordinator, entry),
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
@@ -334,4 +341,55 @@ class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "k_confidence": round(k_conf, 3),
             "passive_updates": m.n,
             "capacity_updates": m.n_k,
+        }
+
+
+class ReturnPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """#8 diagnostic: the return-home state (off / waiting / precond) + the plan.
+
+    State = the AwayReturnController's decision (or `off`). Attributes expose the
+    armed ETA, the computed lead time, and the pre-cond window start, so a
+    dashboard module can show "Via — in attesa, pre-cond alle HH:MM".
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Return plan"
+    _attr_icon = "mdi:home-clock-outline"
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_return_plan"
+
+    @property
+    def _ctrl(self):
+        engine = getattr(self.coordinator, "engine", None)
+        return getattr(engine, "away_return", None)
+
+    @property
+    def native_value(self) -> str:
+        ctrl = self._ctrl
+        return (ctrl.decision if ctrl and ctrl.decision else "off")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        ctrl = self._ctrl
+        rdate = return_date(self.hass, self._entry)
+        lead_min = (
+            round(ctrl.lead.total_seconds() / 60) if ctrl and ctrl.lead else None
+        )
+        eta = ctrl.eta if ctrl else None
+        window_start = (
+            (eta - ctrl.lead) if (eta is not None and ctrl and ctrl.lead) else None
+        )
+        return {
+            "opt_in": return_precond_enabled(self.hass, self._entry),
+            "armed": return_armed(self.hass, self._entry),
+            "return_date": rdate.isoformat() if rdate else None,
+            "daypart": return_daypart(self.hass, self._entry),
+            "eta": eta.isoformat() if eta else None,
+            "lead_minutes": lead_min,
+            "precond_starts": window_start.isoformat() if window_start else None,
         }

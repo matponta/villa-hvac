@@ -309,7 +309,25 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        south). Verified 2026-06-27: the 6 cooled-room covers are labeled south/west.
 9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
        consenso mechanism TBD (behind a flag, verify in heating season)
-10. [ ] #8 Interactive weekend scenes (actionable notification)
+10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",
+        reframed with the owner: on entering **Via** an actionable notification
+        asks *when you're back* (coarse: date + `mattino/pomeriggio/sera`); the
+        house sits in **building_protection** (deep setback) until a computed
+        pre-cond window, then ramps to comfort so it's ready by arrival (hold &
+        wait for presence at the ETA). Implementation = **effective-mode override**
+        (NOT new levers): `AwayReturnController.apply` replaces
+        `state.house_mode`/`mode_offset` while Via+armed — `Vacanza` (BP, band
+        yields to AUTO) while waiting, `Casa` (comfort ramp) inside the window —
+        so the whole existing stack follows with zero lever conflict. Pure core in
+        `supervisor.py` (`return_eta`/`return_lead_time`/`return_decision` with an
+        anti-chatter **latch**); HA wiring in `returnhome.py` (controller +
+        `ReturnHomeManager` notification/action). Entities:
+        `switch.villa_hvac_return_precond` (opt-in, deploy-dark),
+        `switch.villa_hvac_return_armed`, `date.villa_hvac_return_date`,
+        `select.villa_hvac_return_daypart`, `sensor.villa_hvac_return_plan`.
+        Lead-time is ADVISORY until k converges (gain-limited rooms clamp to
+        `OPT_RETURN_MAX_LEAD_HOURS`); fail-safe already covers it (override
+        vanishes on unload → native Via). Spec: `STORY_8_RETURN_PRECOND.md`.
 11. [x] #11 Plan visualization — DONE (v0.15.0): `sensor.hvac_plan` exposes the
         next-12h PLAN. State = the regime (`pre_cool`/`peak_run`/`duty_rest`/
         `cooling`/`free_cool`/`heating`/`idle`); attributes carry the forecast

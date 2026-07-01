@@ -92,6 +92,28 @@ at 34°C peak — comfort always guaranteed by the live band); controllers-first
 recorder-excluded trajectory. LIVE = old v0.16.0 still (see NEXT_SESSION.md); deploy
 v0.24.0 to light up the model.
 
+## Post-v0.24 backlog (reordered 2026-07-01, owner review)
+
+Gap analysis vs the original 9 user stories + new owner asks. LIVE = v0.24.0
+deployed 2026-06-30; F1 band control verified (chatter killed). Detailed #8 spec:
+[`STORY_8_RETURN_PRECOND.md`](./STORY_8_RETURN_PRECOND.md).
+
+| Pri | Item | Kind | Notes |
+|---|---|---|---|
+| 1 | **#8 Rientro & pre-cond** (v0.25.0) | build | effective-mode override (Vacanza↔Casa) while Via+armed; date+daypart, push azionabile, dashboard module. Spec locked. |
+| 2 | **Solar forecast ON** (`OPT_SOLAR_FORECAST`) | enable+validate | PLAN-ONLY today (feeds only room_trajectories in the plan view; band uses live gw3000a). Validate curve vs gw3000a on a clear day. |
+| 3 | **PV/battery bias** | build | shift cooling to Condominio PV-surplus hours (Fusion Solar); pre-cond #8/#7 prefer PV. Headline energy lever. NOT in code yet. |
+| 4 | **Proportional shading** | build | shade position ∝ solar_radiation + outdoor_temp (today: on/off threshold + default). Enhance #6. |
+| 5 | **Enable comfort → regime opt-ins** | enable+tune | after k converges; one at a time, tune on data. |
+| 6 | **Second AC circuit (split trio)** | build | Palestra/Cantina/Garage same-compressor group, own setpoints/params. |
+| 7 | **Window contacts (cooled rooms)** | hardware+build | mount contacts, wire the `window` key in ZONES → completes #4. |
+| 8 | **Season changeover + heating** | seasonal | auto changeover; live-verify caldo. |
+| 9 | **#7 winter pre-heat (radiant)** | seasonal | caldo mechanism unverified until heating season. |
+| 10 | **#6 winter open-for-gain** (SO + Ovest-P2) | seasonal | passive solar admit in winter. |
+| 11 | **EP-primary temp fusion?** | investigate | decide EP-primary (time-varying offset) vs occupancy-only (#1). |
+| 12 | Startup re-sync (re-enter camere silenziose after reboot in Notte) | cleanup | |
+| 13 | Delete 9 legacy automations → **tag v1.0.0** | cleanup | |
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve

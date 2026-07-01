@@ -12,6 +12,7 @@ from .coordinator import VillaHvacCoordinator
 from .engine import RoomModelStore, SupervisorEngine
 from .night import NightController
 from .policies import POLICIES, DutyController, FanBandController
+from .returnhome import ReturnHomeManager
 from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
@@ -67,6 +68,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     engine.start()
     entry.async_on_unload(engine.stop)
     entry.async_on_unload(engine.async_fail_safe)
+
+    # #8 return-home: ask "when are you back?" on the Via transition and map the
+    # answer onto the entities. Started after the platforms so the house-mode
+    # select entity is registered. The actuation (deep setback -> pre-cond ramp)
+    # lives in the engine's AwayReturnController; this is only the trigger.
+    returns = ReturnHomeManager(hass, entry)
+    returns.start()
+    entry.async_on_unload(returns.stop)
 
     # Re-apply the restored house mode once HA has fully started (re-enters
     # camere silenziose after a reboot in Notte). Mirrors the legacy

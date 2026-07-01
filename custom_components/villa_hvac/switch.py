@@ -46,6 +46,8 @@ async def async_setup_entry(
         SupervisorEnableSwitch(entry),
         DutyCycleSwitch(entry),
         FanPacingSwitch(entry),
+        ReturnPrecondSwitch(entry),
+        ReturnArmedSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -187,6 +189,81 @@ class FanPacingSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_fan_pacing"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class ReturnPrecondSwitch(SwitchEntity, RestoreEntity):
+    """Opt-in for #8 return-home pre-conditioning (default OFF).
+
+    When on (and the master is on), a Via with an armed return ETA drives the
+    house into deep setback (building_protection) until the pre-cond window, then
+    ramps to comfort so it's ready by arrival. Off by default — deploy-dark.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Return pre-cond"
+    _attr_icon = "mdi:home-import-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_return_precond"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class ReturnArmedSwitch(SwitchEntity, RestoreEntity):
+    """A return-home ETA is armed (#8, default OFF).
+
+    Set by the actionable "when are you back?" notification or the dashboard.
+    While off, #8 keeps the house in deep setback with no pre-cond ramp (you told
+    it you don't know when you're back). Turning it off means "no ETA".
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Return armed"
+    _attr_icon = "mdi:calendar-check"
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_return_armed"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

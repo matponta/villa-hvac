@@ -67,6 +67,16 @@ are released to GitHub but NOT yet pulled to the live HA. Dashboard "CoolClima"
 DEV: source .venv/bin/activate; ruff check custom_components/villa_hvac tests &&
 pytest -q (186). Per increment: small commit + tag + gh release on main.
 
+✅ F1 ACCEPTANCE PASSED (verified 2026-07-01, v0.24.0 deployed ~18:12 2026-06-30):
+chatter ELIMINATED. Salotto/cucina valve cycles post-deploy = RUN 107min / REST 35min
+/ RUN 24min then off overnight -> ~1 transition/h during cooling vs ~23/h under old
+v0.16.0 (before baseline 10:26-16:07 06-30). Long+uniform, exactly the band intent.
+Setpoint swings confirmed (Casa evening RUN 23.2; now Via -> center 24+5=29, REST 29.75,
+valve correctly closed, room 25.7 < away center). Model learning: sensor.salotto_model
+abc_conf 0.59, k_conf 0.13, 57 passive + 3 capacity updates, G learned 1.11.
+NEXT WATCH: k_confidence needs daytime held-fan cooling windows to climb (was ~0.13
+after a mostly-off/away night); re-check over a few hot days before enabling opt-ins.
+
 NEXT (recommended order):
 1) DEPLOY v0.24.0 to the live HA (HACS update villa_hvac -> 0.24.0 -> restart). This
    REPLACES the old chattering pacing with F1 band control AND starts the F2 model
@@ -78,8 +88,11 @@ NEXT (recommended order):
    vs gw3000a on a clear day), then OPT_COMFORT_ENABLED (set the day/night fasce),
    then OPT_REGIME_ENABLED (coalescing) — one at a time, tune peak_ratio /
    precool_max_depth / band on real data.
-3) Optional: refresh CoolClima with a "Brain" tab (sensor.hvac_model_* + regime +
-   room_plans). Consider F4c MPC-lite only after the model is validated live.
+3) [DONE 2026-06-30] CoolClima "Brain" tab added (/cool-clima → Brain): regime +
+   house model from sensor.hvac_plan; per-room model tiles + a/b/c/k convergence
+   table (watch k%) + 48h G graph (sensor.<zone>_model, NOT hvac_model_*); 12h
+   room_plans summary. Dashboard lives in HA storage, not the repo.
+   Consider F4c MPC-lite only after the model is validated live.
 4) Live-verify gates still open (supervised): held-low-fan smoothness (#3), mild-
    weather duty/coalescing tuning, winter caldo mechanism (#7, heating season).
 5) When confident: delete the disabled legacy automations + tag v1.0.0.

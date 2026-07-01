@@ -7,11 +7,17 @@ from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import VillaHvacConfigEntry
-from .const import HOUSE_MODE_HOME, HOUSE_MODES
+from .const import (
+    HOUSE_MODE_HOME,
+    HOUSE_MODES,
+    RETURN_DAYPART_EVENING,
+    RETURN_DAYPARTS,
+)
 from .controller import apply_house_mode
 
 
@@ -20,8 +26,8 @@ async def async_setup_entry(
     entry: VillaHvacConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the house-mode select."""
-    async_add_entities([HouseModeSelect(entry)])
+    """Set up the house-mode select + the #8 return-daypart select."""
+    async_add_entities([HouseModeSelect(entry), ReturnDaypartSelect(entry)])
 
 
 class HouseModeSelect(SelectEntity, RestoreEntity):
@@ -48,3 +54,30 @@ class HouseModeSelect(SelectEntity, RestoreEntity):
         self._attr_current_option = option
         self.async_write_ha_state()
         await apply_house_mode(self.hass, self._entry, option)
+
+
+class ReturnDaypartSelect(SelectEntity, RestoreEntity):
+    """Coarse time-of-day for the #8 return-home ETA (mattino/pomeriggio/sera)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Return daypart"
+    _attr_icon = "mdi:clock-time-four-outline"
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_options = RETURN_DAYPARTS
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_return_daypart"
+        self._attr_current_option = RETURN_DAYPART_EVENING
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) and last.state in RETURN_DAYPARTS:
+            self._attr_current_option = last.state
+
+    async def async_select_option(self, option: str) -> None:
+        self._attr_current_option = option
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()

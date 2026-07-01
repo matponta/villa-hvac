@@ -13,7 +13,9 @@ from homeassistant.const import Platform
 DOMAIN = "villa_hvac"
 
 # Diagnostics + control platforms (#10 zone disable, #1 temp, #2a house mode).
+# DATE carries the #8 return-home date.
 PLATFORMS: list[Platform] = [
+    Platform.DATE,
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
@@ -605,3 +607,34 @@ FORECAST_REFRESH = timedelta(minutes=30)  # re-fetch + re-plan cadence
 WINDOW_OPEN_DELAY = timedelta(minutes=1)  # debounce: open this long before pausing
 WINDOW_OPEN_STATES = ("open", "opening", "on")
 WINDOW_CLOSED_STATES = ("closed", "off")
+
+# --- Story #8: return-home pre-conditioning ----------------------------------
+# While away (house_mode Via) with a return ETA armed, the house sits in deep
+# setback (building_protection) and starts pre-conditioning `lead_time` before the
+# ETA. Coarse ETA = a date + a daypart mapped to a canonical hour. #8 overrides the
+# EFFECTIVE house mode (Vacanza while waiting, Casa during pre-cond) so the whole
+# existing stack follows. Opt-in via switch.villa_hvac_return_precond (deploy-dark).
+RETURN_DAYPART_MORNING = "mattino"
+RETURN_DAYPART_AFTERNOON = "pomeriggio"
+RETURN_DAYPART_EVENING = "sera"
+RETURN_DAYPARTS: list[str] = [
+    RETURN_DAYPART_MORNING,
+    RETURN_DAYPART_AFTERNOON,
+    RETURN_DAYPART_EVENING,
+]
+# Canonical hour each daypart resolves to for the ETA / lead-time math.
+DEFAULT_RETURN_DAYPART_HOURS: dict[str, int] = {
+    RETURN_DAYPART_MORNING: 8,
+    RETURN_DAYPART_AFTERNOON: 14,
+    RETURN_DAYPART_EVENING: 19,
+}
+# Options-flow tunables.
+OPT_RETURN_MAX_LEAD_HOURS = "return_max_lead_hours"  # clamp the pre-cond lead time
+OPT_RETURN_MARGIN_MIN = "return_margin_min"          # safety margin on the lead time
+OPT_NOTIFY_TARGET = "notify_target"                  # notify.* service for the ask
+DEFAULT_RETURN_MAX_LEAD_HOURS = 6.0
+DEFAULT_RETURN_MARGIN_MIN = 30.0
+# Actionable-notification identifiers (the ask fired on entering Via).
+RETURN_NOTIFY_TAG = "villa_hvac_return_home"
+RETURN_ACTION_PREFIX = "VILLA_HVAC_RETURN_"  # + TODAY_EVENING / TOMORROW_MORNING / …
+RETURN_ACTION_UNKNOWN = "VILLA_HVAC_RETURN_UNKNOWN"

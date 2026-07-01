@@ -37,6 +37,8 @@ from .const import (
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_MAX_DEPTH,
     DEFAULT_PRECOOL_OFFSET,
+    DEFAULT_RETURN_MARGIN_MIN,
+    DEFAULT_RETURN_MAX_LEAD_HOURS,
     DEFAULT_SOLAR_FORECAST,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_POSITION,
@@ -63,10 +65,13 @@ from .const import (
     OPT_FREE_COOL_OUTDOOR,
     OPT_MODEL_ENABLED,
     OPT_NIGHT_THRESHOLD,
+    OPT_NOTIFY_TARGET,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
     OPT_PRECOOL_MARGIN,
     OPT_PRECOOL_MAX_DEPTH,
     OPT_PRECOOL_OFFSET,
+    OPT_RETURN_MARGIN_MIN,
+    OPT_RETURN_MAX_LEAD_HOURS,
     OPT_SEASON,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
@@ -275,6 +280,23 @@ class VillaHvacOptionsFlow(OptionsFlow):
                 vol.Optional(
                     OPT_COMFORT_NIGHT_TO,
                     default=options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO),
+                ): str,
+                # #8 return-home pre-conditioning.
+                vol.Optional(
+                    OPT_RETURN_MAX_LEAD_HOURS,
+                    default=options.get(
+                        OPT_RETURN_MAX_LEAD_HOURS, DEFAULT_RETURN_MAX_LEAD_HOURS
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=12)),
+                vol.Optional(
+                    OPT_RETURN_MARGIN_MIN,
+                    default=options.get(
+                        OPT_RETURN_MARGIN_MIN, DEFAULT_RETURN_MARGIN_MIN
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=180)),
+                vol.Optional(
+                    OPT_NOTIFY_TARGET,
+                    default=options.get(OPT_NOTIFY_TARGET, ""),
                 ): str,
             }
         )

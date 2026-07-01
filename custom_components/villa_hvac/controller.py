@@ -175,6 +175,45 @@ def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> b
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF
 
 
+def return_precond_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the #8 return-precond opt-in switch is on (on top of the master)."""
+    return _switch_state(hass, entry, "return_precond") == STATE_ON
+
+
+def return_armed(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when a #8 return-home ETA is armed."""
+    return _switch_state(hass, entry, "return_armed") == STATE_ON
+
+
+def _entity_id(
+    hass: HomeAssistant, entry: ConfigEntry, domain: str, unique_suffix: str
+) -> str | None:
+    registry = er.async_get(hass)
+    return registry.async_get_entity_id(
+        domain, DOMAIN, f"{entry.entry_id}_{unique_suffix}"
+    )
+
+
+def return_date(hass: HomeAssistant, entry: ConfigEntry):
+    """The #8 return date (a `datetime.date`), or None if unset/invalid."""
+    from homeassistant.util import dt as dt_util  # local: keep module import-light
+
+    entity_id = _entity_id(hass, entry, "date", "return_date")
+    if not entity_id or (state := hass.states.get(entity_id)) is None:
+        return None
+    if state.state in ("unavailable", "unknown", ""):
+        return None
+    return dt_util.parse_date(state.state)
+
+
+def return_daypart(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """The #8 return daypart (mattino/pomeriggio/sera), or None if unset."""
+    entity_id = _entity_id(hass, entry, "select", "return_daypart")
+    if not entity_id or (state := hass.states.get(entity_id)) is None:
+        return None
+    return state.state if state.state not in ("unavailable", "unknown", "") else None
+
+
 def current_house_mode(hass: HomeAssistant, entry: ConfigEntry) -> str:
     """Current house-mode select value (defaults to Home if unavailable)."""
     registry = er.async_get(hass)

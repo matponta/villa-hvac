@@ -153,6 +153,7 @@ from .policies import (
     RegimeCoordinator,
     ThermalEstimator,
 )
+from .returnhome import AwayReturnController
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -569,6 +570,9 @@ class SupervisorEngine:
         # emits a per-leader phase_override + a BLOCCO opinion. Placed BEFORE the
         # DutyController in the merge so its BLOCCO wins when it's coalescing.
         self.regime = RegimeCoordinator()
+        # #8: overrides the effective house mode while Via+armed (deep setback ->
+        # pre-cond ramp). Applied to the state before policies run. Holds the latch.
+        self.away_return = AwayReturnController()
         self._fan_controller = next(
             (c for c in self.controllers if isinstance(c, FanBandController)), None
         )
@@ -638,8 +642,16 @@ class SupervisorEngine:
             )
             # F2: learn the per-room model EVERY cycle, even deploy-dark (the
             # observer never actuates; passive params converge before go-live).
+            # Observe the RAW state (before the #8 mode override, which only
+            # changes intended presets/setpoints, not the measured conditions).
             self.thermal.observe(state)
             await self._maybe_persist_model()
+            # #8: override the effective house mode while Via+armed (deep setback
+            # -> pre-cond ramp). Both the plan view and actuation see it; the latch
+            # only advances on an actuating pass.
+            state = self.away_return.apply(
+                state, self.hass, self.entry, commit=actuate
+            )
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
