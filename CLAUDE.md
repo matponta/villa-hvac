@@ -426,3 +426,12 @@ In the parent folder (`Home Assistant/`), authored during design:
 These were built with the HA MCP connector (live introspection). Live HA control
 during dev can stay in that Cowork session; code + git + deploy live here in
 Claude Code.
+
+Repo-local review + hardening backlog:
+- `ENGINE_REVIEW.md` — critical multi-agent audit of the logic engine (2026-07-01,
+  58 verified findings). The **§9-A safety batch is DONE** (v0.29.0, PR #1:
+  fail-open BLOCCO, shutdown/boot/master-off hooks, lock-serialized fail-safe,
+  BLOCCO never-concede, `_comfort_breach` scope fix, season corroboration, isfinite
+  ingest, `asyncio.Lock` cycle serialization). **Do §9-A before enabling
+  `duty`/`regime`.** Remaining §B/§C/§D items are tracked in the *Engine-hardening
+  backlog* table in `MASTER_PLAN.md`.

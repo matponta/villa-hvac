@@ -114,6 +114,31 @@ deployed 2026-06-30; F1 band control verified (chatter killed). Detailed #8 spec
 | 12 | Startup re-sync (re-enter camere silenziose after reboot in Notte) | cleanup | |
 | 13 | Delete 9 legacy automations → **tag v1.0.0** | cleanup | |
 
+## Engine-hardening backlog (from `ENGINE_REVIEW.md`, audit 2026-07-01)
+
+Critical multi-agent audit of the logic engine (58 verified findings). Full report +
+prioritised plan §9 in [`ENGINE_REVIEW.md`](./ENGINE_REVIEW.md). **§9-A (the safety
+batch that MUST precede enabling `duty`/`regime`) is DONE** — v0.29.0, branch
+`harden/failsafe-blocco`, PR https://github.com/matponta/villa-hvac/pull/1
+(fail-open BLOCCO + shutdown/boot/master-off hooks + lock-serialized fail-safe;
+`allow_override=False` for BLOCCO + explicit duty-disable release; `_comfort_breach`
+scoped to `active_cooling_leaders`; season corroborates `s5a_stagione`; `isfinite`
+on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
+`_stopped` guard). Remaining, tracked for future sessions:
+
+| Pri | Item (§ / finding) | Kind | Notes |
+|---|---|---|---|
+| B1 | **Fail-safe restores per-zone presets** (`failsafe-leaves-bp`) | reliability | on unload/removal, hand house-mode/free-cool/Vacanza zones back to a neutral preset (`auto`); SKIP #10-disabled + window-paused zones (they *should* stay BP). Today only self-heals via `_startup_resync` on a normal restart, not on integration removal. |
+| B2 | **`sensor.hvac_levers` decision log** (`no-reconcile-decision-observability`) | observability | surface the per-lever reconcile `note` (write/reassert/override/manual-hold) + desired/current/attempts/override_until, computed-then-discarded today. Add a WARNING when a lever crosses into `override`. Directly serves the #1 documented robustness risk (manual-override on a lossy bus). |
+| B3 | **Engine-seam integration tests** (`cycle-orchestration-untested-seams`, `regime-coalesce-engine-untested`) | testing | full policies+controllers stack through `_cycle`: regime BLOCCO beats duty; band setpoint beats house_mode while free-cool forces BP; lock the `[*ctrl, *pure]` merge order before the split. |
+| B4 | **State-robustness leftovers** | robustness | consenso `unavailable` → freeze duty timer / skip learning window (not "not cooling"); sort `self._cloud` before the `_forecast_cloud_at` early-break; cover legacy `"closed"` vs numeric `current_position` type mismatch; diagnostic when a leader's fused temp is `None` > N cycles. |
+| C1 | **NightController → arbiter controller** (`night-second-writer`) | refactor | #2b is the last direct writer (bypasses reconcile/override tracking); make it a `night_silence` controller emitting `{switch:manuale, fan:pct}` lever opinions. Then simplify `_startup_resync` (drop the `apply_house_mode` night branch). |
+| C2 | **Split `supervisor.py`** (1452 lines / 8 concerns) | refactor | pure package: `arbiter` (LeverState/reconcile/merge/lever-keys) · `thermal` (RLS/blend) · `planner` (RunPlan/sim/precool/solar) · `control_law` (band/fan/duty/coalesce) · `returnhome`. Keep the no-HA-imports property. |
+| C3 | **`SupervisorConfig` parsed-once dataclass** (`options-parsed-ad-hoc`, `housestate-flag-explosion`) | refactor | one `from_entry(entry)` that coerces+clamps every option once/cycle; kills ~33 scattered `float(entry.options.get(...))` try/excepts; splits `HouseState` into measured-state + config. |
+| C4 | **Explicit opt-in dependency graph** (`triple-nested-optin-gating`) | refactor | regime needs duty AND fan_pacing AND regime, gate duplicated; collapse to one "optimise cooling" switch or model the dependency in one place + surface *why* a feature is inert. |
+| C5 | **Perf/robustness nits** | refactor | cache `shadeable_covers` (full registry scan every 30 s) + refresh on a registry-updated listener; wrap each lever `_call` in `asyncio.wait_for` so one wedged KNX write can't stall a cycle; hoist the `astral` import. |
+| D1 | **Thermal identifiability gating** (`abc-convergence-summer-scarcity`) | research | only raise `abc` confidence when the fed windows spanned a real solar range (don't trust a `b` never excited); document hard-room `k` as a night-calibrated lower bound; deliberate daytime valve-close probing = research task (fights peak comfort). Model degrades safe (prior blend + band guarantees comfort) — no code change required for safety. |
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve

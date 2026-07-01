@@ -90,6 +90,21 @@ BUILT 2026-07-01 (session 2), repo now v0.26.0, LIVE still v0.24.0:
   chat) + point OPT_WEATHER_ENTITY at it, THEN enable OPT_SOLAR_FORECAST.
 Deploying v0.26.0 is safe (everything new is opt-in + plan-only/deploy-dark).
 
+SINCE (repo now v0.29.0; LIVE still v0.24.0):
+- **PV/energy-aware pre-cool (v0.28.0)**: opt-in switch.pv_bias (needs fan_pacing+
+  summer), band-center only. Spec STORY_PV_BIAS.md. Do NOT co-enable with regime yet.
+- **Engine safety hardening (v0.29.0, PR #1 `harden/failsafe-blocco`)** from the
+  critical audit `ENGINE_REVIEW.md` §9-A: fail-open BLOCCO (unconditional release +
+  EVENT_HOMEASSISTANT_STOP hook + boot baseline + master-off + lock-serialized
+  fail-safe w/ bounded wait); reconcile allow_override=False for BLOCCO + explicit
+  duty-disable release; _comfort_breach scoped to active_cooling_leaders (a warm
+  uncooled room no longer kills #9); season corroborates s5a_stagione; isfinite on
+  all numeric ingest incl. current_house_setpoint; asyncio.Lock serialising _cycle +
+  cancellable tick + _stopped guard. 248 tests. **MERGE THIS BEFORE enabling
+  duty/regime.** Remaining review items (fail-safe preset restore, sensor.hvac_levers
+  decision log, NightController→arbiter, split supervisor.py, SupervisorConfig,
+  identifiability gating) = *Engine-hardening backlog* table in MASTER_PLAN.md.
+
 NEXT (recommended order):
 0) OWNER: add OpenWeatherMap integration (paste key in HA UI). Then optionally deploy
    v0.26.0 (HACS update -> restart) — safe, nothing new actuates until you flip the
