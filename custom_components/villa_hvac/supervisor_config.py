@@ -47,6 +47,8 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_POOR,
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
+    DEFAULT_RETURN_MARGIN_MIN,
+    DEFAULT_RETURN_MAX_LEAD_HOURS,
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
     DEFAULT_SHADING_ENABLED,
@@ -84,6 +86,8 @@ from .const import (
     OPT_REGIME_ENABLED,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
+    OPT_RETURN_MARGIN_MIN,
+    OPT_RETURN_MAX_LEAD_HOURS,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_PROPORTIONAL,
@@ -156,6 +160,9 @@ class SupervisorConfig:
     pv_eff_fraction: float
     pv_eff_min: float
     pv_daily_need_kwh: float
+    # #8 return-home (also feeds the planner's advisory arrival lead time)
+    return_max_lead: timedelta
+    return_margin: timedelta
     # weather
     weather_entity: str
 
@@ -242,6 +249,17 @@ class SupervisorConfig:
             pv_eff_min=_f(options, OPT_PV_BIAS_EFF_MIN, DEFAULT_PV_BIAS_EFF_MIN, 0.0, 1.0),
             pv_daily_need_kwh=_f(
                 options, OPT_PV_BIAS_DAILY_NEED_KWH, DEFAULT_PV_BIAS_DAILY_NEED_KWH, 1, 200
+            ),
+            return_max_lead=timedelta(
+                hours=_f(
+                    options, OPT_RETURN_MAX_LEAD_HOURS, DEFAULT_RETURN_MAX_LEAD_HOURS,
+                    0.5, 12,
+                )
+            ),
+            return_margin=timedelta(
+                minutes=_f(
+                    options, OPT_RETURN_MARGIN_MIN, DEFAULT_RETURN_MARGIN_MIN, 0, 180
+                )
             ),
             weather_entity=str(options.get(OPT_WEATHER_ENTITY) or WEATHER_ENTITY_DEFAULT),
         )

@@ -310,10 +310,23 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        force-rest a slow one), comfort breach forces RUN, min compressor on/off 10/10
        guardrail; coordinator BLOCCO opinion merged before DutyController (yields ->
        duty survives). Opt-in OPT_REGIME_ENABLED (default off) AND duty AND fan_pacing.
-       F4c MPC-lite: DEFERRED (owner). Cross-cutting (from review): identifiability
-       gating, hard-room trajectories ADVISORY until k learned (4-param model
-       predicts ~0.6°C/h cooling at the verified ~0-net 34°C peak), controllers-first
-       merge, recorder-excluded 12h trajectory. 186 tests.
+       F4c UNIFIED PLANNER — Phases 0–5 DONE (v0.32.0–v0.37.0; spec
+       `STORY_F4C_UNIFIED_PLANNER.md`). A reference-governor MPC: `plan_center_schedule`
+       (`supervisor/planner.py`) jointly schedules a per-leader 12h band-center
+       REFERENCE (`CenterSchedule`) composing schedule_precool/energy_precool/
+       run_rest_durations/return_lead_time → `sensor.hvac_plan.center_schedule`,
+       PLAN-ONLY (drives nothing). The reactive band keeps the model-free comfort
+       guarantee + clamps the reference into [comfort_floor, duty_comfort_max]. Also
+       shipped: comfort FLOOR (`OPT_COMFORT_FLOOR`) + `compose_center` (Phase 1),
+       C1 NightSilenceController, C2 `supervisor/` package, C3 `SupervisorConfig`,
+       D1 `planner_eligible` (hard rooms stay ADVISORY until k converges).
+       **Phase 6 (planner DRIVES the center) is a GATED CHECKPOINT** — needs
+       mild-weather data + per-room k-convergence + owner sign-off. TRUE
+       comfort-in-optimizer F4c (Phase 8) stays a NON-GOAL. 309 tests.
+       Cross-cutting (from review): identifiability gating, hard-room trajectories
+       ADVISORY until k learned (4-param model predicts ~0.6°C/h cooling at the
+       verified ~0-net 34°C peak), controllers-first merge, recorder-excluded 12h
+       trajectory.
 8. [x] #5/#6 Outdoor shutoff + solar shading (Ecowitt `gw3000a_*` + sun + facade).
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to

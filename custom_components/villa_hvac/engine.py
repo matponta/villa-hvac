@@ -132,6 +132,7 @@ from .supervisor import (
     house_load_index,
     in_window,
     merge_desired,
+    plan_center_schedule,
     plan_run,
     reconcile,
     select_regime,
@@ -827,12 +828,45 @@ class SupervisorEngine:
             dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
             max_precool_depth=cfg.precool_max_depth,
         )
+        # F4c Phase 5: the unified band-center REFERENCE schedule (PLAN-ONLY —
+        # observable, drives nothing; Phase 6 wires it behind the switch).
+        center_schedule = self._center_schedule(state, solar_curve, solar_model)
         return replace(
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
             solar_model=solar_model,
             center_compositions=self._center_compositions(state),
+            center_schedule=center_schedule,
         )
+
+    def _center_schedule(self, state: HouseState, solar_curve, solar_model):
+        """F4c Phase 5: build the unified per-leader band-center reference schedule
+        by composing the shipping pure cores (schedule_precool / energy_precool /
+        run_rest_durations / return_lead_time). PLAN-ONLY — returned on the plan
+        view, consumed by nothing. Best-effort: never breaks the plan view."""
+        cfg = state.config
+        try:
+            # PV shaping needs a REAL solar forecast + a PV-remaining reading;
+            # otherwise the reference is just base + #9 pre-cool.
+            pv_kwh = _num(self.hass, CONDOMINIO_PV_REMAINING)
+            local = dt_util.now()
+            frac = max(0.0, (1440 - (local.hour * 60 + local.minute)) / 1440.0)
+            pv_active = solar_model != "flat" and pv_kwh is not None
+            return plan_center_schedule(
+                state, self._room_params(state), list(self._forecast), solar_curve,
+                lookahead=cfg.lookahead, max_precool_depth=cfg.precool_max_depth,
+                pv_active=pv_active, pv_kwh_remaining=pv_kwh,
+                consumption_kwh_remaining=cfg.pv_daily_need_kwh * frac,
+                pv_floor_rich=cfg.pv_floor_rich, pv_floor_poor=cfg.pv_floor_poor,
+                pv_coast_relax=cfg.pv_coast_relax, pv_eff_fraction=cfg.pv_eff_fraction,
+                pv_eff_min=cfg.pv_eff_min,
+                eta=getattr(self.away_return, "eta", None),
+                return_max_lead=cfg.return_max_lead, return_margin=cfg.return_margin,
+                dt_min=PLAN_SIM_STEP_MIN,
+            )
+        except Exception:  # noqa: BLE001 - plan-only reference must never break the view
+            _LOGGER.debug("Center-schedule build failed", exc_info=True)
+            return None
 
     def _center_compositions(self, state: HouseState) -> dict:
         """F4c Phase 1 observability: the composed band center per eligible cooling

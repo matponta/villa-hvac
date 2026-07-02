@@ -161,6 +161,33 @@ def _minutes(value: timedelta | None) -> float | None:
     return round(value.total_seconds() / 60, 1) if value is not None else None
 
 
+def _center_schedule_attr(sched) -> dict | None:
+    """Serialize the F4c unified band-center reference schedule for the sensor
+    (PLAN-ONLY). None when no schedule was built this cycle."""
+    if sched is None:
+        return None
+    return {
+        "created_at": _iso(sched.created_at),
+        "horizon_minutes": _minutes(sched.horizon),
+        "house_blocco": sched.house_blocco,
+        "house_run_minutes": _minutes(sched.house_run),
+        "house_rest_minutes": _minutes(sched.house_rest),
+        "return_lead_minutes": _minutes(sched.return_lead),
+        "zones": {
+            zid: {
+                "eligible": zs.eligible,
+                "precool_depth": zs.precool_depth,
+                "precool_start_min": zs.precool_start_min,
+                "points": [
+                    {"min": p.minute, "center": p.center, "source": p.source}
+                    for p in zs.points
+                ],
+            }
+            for zid, zs in sched.zones.items()
+        },
+    }
+
+
 # Icon per plan regime (the sensor state) — keeps the dashboard chip legible.
 _PLAN_ICONS = {
     "pre_cool": "mdi:snowflake-alert",
@@ -189,7 +216,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
     # (the 12h per-room trajectories + the forecast curve + per-zone lists).
     _unrecorded_attributes = frozenset(
         {"room_plans", "forecast", "zones", "covers_closing", "per_zone",
-         "center_compositions"}
+         "center_compositions", "center_schedule"}
     )
 
     def __init__(
@@ -234,6 +261,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "load_ratio": plan.load_ratio,
             "solar_model": plan.solar_model,
             "center_compositions": plan.center_compositions,
+            "center_schedule": _center_schedule_attr(plan.center_schedule),
             "season": plan.season,
             "house_mode": plan.house_mode,
             "cooling": plan.cooling,

@@ -1,7 +1,20 @@
 # STORY F4c — Unified forecast planner (build plan)
 
-**Status:** PLANNED (not started). Authored 2026-07-02 after a design judge-panel
-(3 positions → adversarial critique → synthesis). Owner decided to build the full
+**Status (2026-07-02):** Phases **0–5 DONE** (v0.32.0 → v0.37.0), CI green, all
+deploy-dark / behaviour-preserving / plan-only. **Phase 6 is the checkpoint** — the
+first phase that lets the planner DRIVE a lever; it needs mild-weather validation
+data + a per-room k-convergence check + owner sign-off before building (see §3
+Phase 6 preconditions + §6.3). Shipped so far: Phase 0 input hardening (B4+C5),
+Phase 1 composition contract + `OPT_COMFORT_FLOOR` + `compose_center` + C1
+NightSilenceController, Phase 2 `supervisor/` pure package split (C2), Phase 3
+`SupervisorConfig` (C3), Phase 4 identifiability gating + `planner_eligible` (D1),
+Phase 5 `plan_center_schedule` → `CenterSchedule` on `sensor.hvac_plan.center_schedule`
+(PLAN-ONLY, drives nothing). 309 tests.
+
+---
+
+**Original plan follows** (authored 2026-07-02 after a design judge-panel:
+3 positions → adversarial critique → synthesis). Owner decided to build the full
 thing (Track A + Track B together) and fold in the remaining §B/§C/§D engine-hardening.
 This doc is the executable plan for a **fresh build session** — read it top to bottom
 plus `CLAUDE.md`, `ENGINE_REVIEW.md`, `MASTER_PLAN.md`, and the panel synthesis captured

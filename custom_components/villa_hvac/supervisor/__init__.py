@@ -82,6 +82,8 @@ from .model import (
     active_cooling_leaders,
 )
 from .planner import (
+    CenterPoint,
+    CenterSchedule,
     HouseLoad,
     PlanView,
     REGIME_LOW,
@@ -91,6 +93,7 @@ from .planner import (
     RoomTrajectory,
     RunPlan,
     TrajPoint,
+    ZoneCenterSchedule,
     ZonePlan,
     _downsample,
     _forecast_temp_at,
@@ -101,6 +104,7 @@ from .planner import (
     clear_sky_solar,
     house_load_index,
     peak_window,
+    plan_center_schedule,
     plan_run,
     schedule_precool,
     select_regime,
@@ -111,6 +115,10 @@ from .planner import (
 )
 
 __all__ = [
+    "CenterPoint",
+    "CenterSchedule",
+    "ZoneCenterSchedule",
+    "plan_center_schedule",
     "BLOCCO_BLOCK",
     "BLOCCO_LEVER",
     "BLOCCO_RELEASE",

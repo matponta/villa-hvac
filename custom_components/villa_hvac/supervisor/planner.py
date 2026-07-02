@@ -8,13 +8,24 @@ from datetime import datetime, timedelta
 import math
 
 from .arbiter import BLOCCO_BLOCK, BLOCCO_RELEASE, cover_lever, temperature_lever
-from .control_law import DutyState, band_step, capacity_fan, cooling_load
+from .control_law import (
+    PRECOOL_BANK,
+    PRECOOL_COAST,
+    DutyState,
+    band_step,
+    capacity_fan,
+    cooling_effectiveness,
+    cooling_load,
+    energy_precool_decision,
+    run_rest_durations,
+)
 from .model import (
     HouseState,
     _SEASON_SUMMER,
     _is_cooling_leader,
     _is_free_cooling,
 )
+from .returnhome import ReturnRoom, return_lead_time
 
 
 
@@ -132,6 +143,9 @@ class PlanView:
     # floor) for observability — zone_id -> CenterComposition. Computed read-only
     # every cycle (even deploy-dark) so the composition is visible before go-live.
     center_compositions: dict = field(default_factory=dict)
+    # F4c Phase 5: the unified 12h band-center REFERENCE schedule (Track B),
+    # PLAN-ONLY — observable, drives nothing (Phase 6 wires it behind the switch).
+    center_schedule: "CenterSchedule | None" = None
 
 
 
@@ -677,3 +691,225 @@ def solar_curve_v2(
     if bias == 1.0:
         return base, False
     return [round(v * bias, 1) for v in base], True
+
+
+# --- F4c: unified band-center REFERENCE schedule (Track B, pure) --------------
+# ONE joint 12h scheduler for the per-leader band CENTER, composing the shipping
+# pure cores — schedule_precool (#9), energy_precool_decision (PV bank/coast),
+# run_rest_durations (duty intent), return_lead_time (#8) — instead of the myopic
+# fixed-priority ladder. It emits a REFERENCE ONLY: the reactive band (band_step +
+# duty_comfort_max ceiling + comfort-breach-forces-RUN) still owns the model-free
+# comfort guarantee and CLAMPS this reference into [comfort_floor, duty_comfort_max].
+# PLAN-ONLY here (Phase 5): nothing consumes it for control yet (Phase 6, gated).
+
+
+@dataclass(frozen=True)
+class CenterPoint:
+    """One step of a zone's reference center trajectory."""
+
+    minute: int          # offset from the schedule's created_at
+    center: float        # reference band center at this step
+    source: str = "base"  # dominant driver: base | pv_bank | pv_coast | precool
+
+
+@dataclass(frozen=True)
+class ZoneCenterSchedule:
+    """A leader zone's reference center trajectory over the horizon."""
+
+    zone_id: str
+    points: tuple[CenterPoint, ...] = ()
+    precool_depth: float = 0.0
+    precool_start_min: int | None = None
+    # D1: may this reference DRIVE the center (Phase 6)? Else it stays ADVISORY —
+    # a hard gain-limited room whose k hasn't converged (comfort held by the band).
+    eligible: bool = False
+
+
+@dataclass(frozen=True)
+class CenterSchedule:
+    """The unified 12h band-center reference + an advisory house intent.
+
+    `.at(zone, now)` looks up the reference center; `is_stale` gates Phase-6 use on
+    the age of the last good refresh (a stale 12h reference is confidently wrong —
+    sized to a peak that has moved — so Phase 6 falls back to the base center, never
+    to a stale reference)."""
+
+    zones: dict = field(default_factory=dict)   # zone_id -> ZoneCenterSchedule
+    created_at: datetime | None = None           # validity/staleness stamp
+    horizon: timedelta | None = None
+    dt_min: int = 15
+    house_blocco: str | None = None       # advisory: the reference never BLOCKs
+    house_run: timedelta | None = None    # advisory duty run length
+    house_rest: timedelta | None = None   # advisory duty rest length
+    return_lead: timedelta | None = None  # advisory #8 lead time (ETA armed)
+
+    def at(self, zone_id: str, now: datetime) -> float | None:
+        """Step-interpolated reference center for a zone at `now` (None if absent)."""
+        zs = self.zones.get(zone_id)
+        if zs is None or self.created_at is None or not zs.points:
+            return None
+        minute = (now - self.created_at).total_seconds() / 60.0
+        best = zs.points[0].center
+        for p in zs.points:
+            if p.minute <= minute:
+                best = p.center
+            else:
+                break
+        return best
+
+    def is_stale(self, now: datetime, max_age: timedelta) -> bool:
+        return self.created_at is None or (now - self.created_at) > max_age
+
+
+def plan_center_schedule(
+    measured: HouseState,
+    params_by_zone: dict,
+    forecast: list[tuple[datetime, float]],
+    solar: list[float] | None,
+    *,
+    lookahead: timedelta,
+    max_precool_depth: float,
+    pv_active: bool = False,
+    pv_kwh_remaining: float | None = None,
+    consumption_kwh_remaining: float | None = None,
+    pv_floor_rich: float = 22.0,
+    pv_floor_poor: float = 23.0,
+    pv_coast_relax: float = 0.0,
+    pv_eff_fraction: float = 0.6,
+    pv_eff_min: float = 0.1,
+    eta: datetime | None = None,
+    return_max_lead: timedelta = timedelta(hours=6),
+    return_margin: timedelta = timedelta(minutes=30),
+    dt_min: int = 15,
+) -> CenterSchedule:
+    """Jointly schedule a per-leader band-center REFERENCE over the lookahead.
+
+    Composition (each hour, deepest LOWERING wins, RAISING capped at the ceiling,
+    all bounded below by the comfort floor):
+      base = house_setpoint + mode_offset
+      · PV bank -> center toward pv_floor / PV coast -> center + relax (capped)
+        [energy_precool_decision, looking forward from each hour]
+      · #9 pre-cool -> center - depth between start and the forecast peak
+        [schedule_precool]
+    Plus an advisory house intent: duty run/rest [run_rest_durations] and the #8
+    arrival lead time [return_lead_time]. PLAN-ONLY — emits a reference, drives
+    nothing; the reactive band clamps + owns comfort.
+    """
+    now = measured.now
+    if measured.house_setpoint is None or measured.mode_offset is None:
+        return CenterSchedule(
+            created_at=now, horizon=lookahead, dt_min=dt_min,
+            house_blocco=BLOCCO_RELEASE,
+        )
+    base = measured.house_setpoint + measured.mode_offset
+    band = measured.band_width if measured.band_width is not None else 1.5
+    slam = measured.band_slam if measured.band_slam is not None else 0.75
+    floor = measured.comfort_floor
+    ceiling = measured.duty_comfort_max
+    free = _is_free_cooling(measured)
+    n_steps = max(1, int(lookahead.total_seconds() / 60 // dt_min))
+    pk = peak_window(forecast, now, lookahead)
+    peak_min = int((pk[0] - now).total_seconds() / 60) if pk else None
+
+    zones_out: dict[str, ZoneCenterSchedule] = {}
+    for z in measured.zones.values():
+        if not _is_cooling_leader(z) or not z.enabled or z.paused or free:
+            continue
+        if z.bedroom and measured.night_active:
+            continue
+        if z.temp is None or z.zone_id not in params_by_zone:
+            continue
+        params = params_by_zone[z.zone_id]
+        # #9 pre-cool depth + start (reuse the shipping scheduler).
+        traj = schedule_precool(
+            zone_id=z.zone_id, params=params, t0=z.temp, center=base, band=band,
+            slam=slam, forecast=forecast, solar=solar, now=now, lookahead=lookahead,
+            max_depth=max_precool_depth, dt_min=dt_min,
+        )
+        depth, start_min = traj.precool_depth, traj.precool_start_min
+        # Effectiveness horizon at the base center (for the PV ranking).
+        eff: list[float] = []
+        for h in range(n_steps + 1):
+            when = now + timedelta(minutes=h * dt_min)
+            t_out = _forecast_temp_at(forecast, when)
+            if t_out is None:
+                t_out = measured.outdoor_temp
+            eff.append(cooling_effectiveness(
+                base, t_out, _solar_at(solar, h),
+                a=params.a, b=params.b, c=params.c, k=params.k,
+            ))
+        points: list[CenterPoint] = []
+        for h in range(n_steps + 1):
+            minute = h * dt_min
+            center_h = base
+            src = "base"
+            if pv_active:
+                d = energy_precool_decision(
+                    effectiveness=eff, now_index=h,
+                    pv_kwh_remaining=pv_kwh_remaining,
+                    consumption_kwh_remaining=consumption_kwh_remaining,
+                    eff_fraction=pv_eff_fraction, eff_min=pv_eff_min,
+                    floor_rich=pv_floor_rich, floor_poor=pv_floor_poor,
+                )
+                if d.mode == PRECOOL_BANK and d.floor is not None:
+                    center_h = min(center_h, d.floor)
+                    src = "pv_bank"
+                elif d.mode == PRECOOL_COAST:
+                    raised = base + pv_coast_relax
+                    if ceiling is not None:
+                        raised = min(raised, ceiling)
+                    center_h = raised
+                    src = "pv_coast"
+            # #9 pre-cool overlay: deepest lowering wins, between start and the peak.
+            if depth > 0 and start_min is not None and minute >= start_min and (
+                peak_min is None or minute <= peak_min
+            ):
+                pc = base - depth
+                if pc < center_h:
+                    center_h = pc
+                    src = "precool"
+            # comfort FLOOR bounds all lowering (symmetric to the ceiling on raising).
+            if floor is not None and center_h < floor:
+                center_h = floor
+            points.append(
+                CenterPoint(minute=minute, center=round(center_h, 2), source=src)
+            )
+        zones_out[z.zone_id] = ZoneCenterSchedule(
+            zone_id=z.zone_id, points=tuple(points),
+            precool_depth=depth, precool_start_min=start_min,
+            eligible=bool(z.model_planner_eligible),
+        )
+
+    # Advisory house duty intent: run/rest length from the aggregate load.
+    g_sum = k_sum = 0.0
+    for zid, p in params_by_zone.items():
+        zz = measured.zones.get(zid)
+        if zz is not None and zz.temp is not None and zid in zones_out:
+            g_sum += max(0.0, cooling_load(
+                zz.temp, measured.outdoor_temp, measured.solar, a=p.a, b=p.b, c=p.c
+            ))
+            k_sum += p.k
+    run, rest = (
+        run_rest_durations(g_sum, k_sum, 1.0, band) if k_sum > 0 else (None, None)
+    )
+    # Advisory #8 arrival lead time (only when an ETA is armed).
+    lead = None
+    if eta is not None:
+        rooms = [
+            ReturnRoom(
+                temp=zz.temp, target=measured.house_setpoint,
+                a=p.a, b=p.b, c=p.c, k=p.k,
+            )
+            for zid, p in params_by_zone.items()
+            if (zz := measured.zones.get(zid)) is not None and zz.temp is not None
+        ]
+        if rooms:
+            lead = return_lead_time(
+                rooms, measured.outdoor_temp, measured.solar,
+                max_lead=return_max_lead, margin=return_margin,
+            )
+    return CenterSchedule(
+        zones=zones_out, created_at=now, horizon=lookahead, dt_min=dt_min,
+        house_blocco=BLOCCO_RELEASE,   # the reference never BLOCKs; reactive owns it
+        house_run=run, house_rest=rest, return_lead=lead,
+    )

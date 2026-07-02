@@ -968,3 +968,23 @@ async def test_plan_view_surfaces_center_compositions(hass):
     # Casa (offset 0) + default setpoint 24, no features -> base center 24.
     assert comps["living_room"]["source"] == "base"
     assert comps["living_room"]["center"] == 24.0
+
+
+async def test_plan_view_surfaces_center_schedule(hass):
+    """F4c Phase 5: the plan view exposes the unified band-center REFERENCE schedule
+    (PLAN-ONLY, computed read-only every cycle even deploy-dark)."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )  # summer
+    hass.states.async_set("sensor.clima_salotto", "24.0")
+    await entry.runtime_data.async_refresh()  # fuse the zone temp
+    await engine._tick()  # deploy-dark tick still builds the schedule
+
+    sched = engine.plan_view.center_schedule
+    assert sched is not None and sched.created_at is not None
+    assert sched.house_blocco == "off"          # the reference never blocks
+    assert "living_room" in sched.zones          # a cooling leader is scheduled
+    zs = sched.zones["living_room"]
+    assert zs.points and zs.points[0].center == 24.0  # base center (no features)
