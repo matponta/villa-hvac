@@ -70,6 +70,7 @@ from .supervisor import (
     PRECOOL_COAST,
     REGIME_MEDIUM,
     RegimeState,
+    TRANSIENT_STATES,
     coalesce_phase,
     ParamBounds,
     ThermalParams,
@@ -347,12 +348,24 @@ class DutyController:
             # only writer of BLOCCO is duty/regime, and RELEASE is idempotent, so
             # opining "off" whenever duty is off is always the safe baseline.
             return {BLOCCO_LEVER: BLOCCO_RELEASE}
-        cooling = state.consenso_freddo == "on"
         at_peak = (
             state.outdoor_temp is not None
             and state.duty_peak_outdoor is not None
             and state.outdoor_temp >= state.duty_peak_outdoor
         )
+        # B4: a transient consenso read (a dropped KNX telegram) must NOT be read
+        # as "not cooling" — that would reset the stint timer, letting the villa
+        # re-accrue a fresh full stint after every dropout. FREEZE the DutyState
+        # and re-emit the cooloff-consistent BLOCCO opinion instead. (at_peak /
+        # precool still force a release below, since neither depends on consenso.)
+        if state.consenso_freddo in TRANSIENT_STATES and not at_peak and not state.precool:
+            return {
+                BLOCCO_LEVER: (
+                    BLOCCO_BLOCK if self._duty.cooloff_until is not None
+                    else BLOCCO_RELEASE
+                )
+            }
+        cooling = state.consenso_freddo == "on"
         self._duty, blocco = duty_decision(
             cooling,
             _comfort_breach(state),
@@ -570,11 +583,21 @@ class ThermalEstimator:
                 demand_any = True
         if demand_any is None:
             return  # no valve signal -> can't classify the window
+        # B4: a transient consenso read can't be classified — treating it as "off"
+        # would mislabel a cooling window as a passive {a,b,c} window and poison
+        # the model. Skip the sample (don't clear the buffer; a dropout is brief).
+        if state.consenso_freddo in TRANSIENT_STATES:
+            return
         w = (
             bool(demand_any)
             and state.consenso_freddo == "on"
             and state.blocco != BLOCCO_BLOCK
         )
+        # A w=True (k-learning) window additionally needs a TRUSTED blocco read:
+        # a transient blocco could hide an active block, so don't admit a k window
+        # (observer-blocco-read-poisons-k).
+        if w and state.blocco in TRANSIENT_STATES:
+            return
         buf = self._buf.setdefault(zid, [])
         prev_w = self._last_w.get(zid)
         if prev_w is not None and w != prev_w:

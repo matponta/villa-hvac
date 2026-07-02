@@ -45,6 +45,7 @@ from homeassistant.const import (
     STATE_CLOSED,
     STATE_OFF,
     STATE_ON,
+    STATE_OPEN,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
@@ -153,6 +154,7 @@ from .const import (
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
     SOLAR_RADIATION,
+    STALE_TEMP_CYCLES,
     WEATHER_ENTITY_DEFAULT,
     ZONES,
 )
@@ -189,6 +191,7 @@ from .supervisor import (
     RunPlan,
     ZoneSnapshot,
     RoomParams,
+    _is_cooling_leader,
     build_plan,
     build_room_plans,
     house_load_index,
@@ -205,10 +208,26 @@ from .supervisor import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Astral ships with HA core; hoisted to module top so the solar forecast doesn't
+# re-import every solar-enabled cycle. Guarded so a (theoretical) missing astral
+# degrades to the flat-solar fallback instead of breaking integration setup.
+try:
+    from astral import Observer as _AstralObserver
+    from astral.sun import elevation as _sun_elevation
+except ImportError:  # pragma: no cover - astral is a hard HA-core dependency
+    _AstralObserver = None
+    _sun_elevation = None
+
 # Fail-safe waits at most this long for an in-flight cycle to finish before
 # releasing anyway — a redundant write beats a block stranded behind a wedged
 # cycle (the hand-back must never hang on the cooling-block release).
 _FAILSAFE_LOCK_TIMEOUT = 5.0
+
+# C5: bound every lever service call so one wedged KNX write can't stall the whole
+# cycle (a KNX write normally lands sub-second; on timeout we log + move on and the
+# reconcile re-asserts next cycle). Kept above _FAILSAFE_LOCK_TIMEOUT so the
+# fail-safe still pre-empts a hang by releasing without the lock.
+LEVER_CALL_TIMEOUT = 10.0
 
 
 def _num(hass: HomeAssistant, entity_id: str) -> float | None:
@@ -402,12 +421,16 @@ def shadeable_zones(hass: HomeAssistant) -> dict[str, str]:
 
 
 def build_house_state(
-    hass: HomeAssistant, entry: ConfigEntry, coordinator, forecast=()
+    hass: HomeAssistant, entry: ConfigEntry, coordinator, forecast=(),
+    base_covers: "tuple[CoverInfo, ...] | None" = None,
 ) -> HouseState:
     """Assemble one unified snapshot of the house for the policy stack.
 
     `forecast` is the cached hourly forecast (list of (datetime, temp)); the
     engine refreshes it out-of-band and passes it in so this stays sync + pure.
+    `base_covers` is the cover set resolved from the registries — the engine
+    caches it (invalidated on a registry update) to avoid a full-registry scan
+    every cycle; None resolves it inline (used by tests).
     """
     data = coordinator.data or {}
     zone_temps = data.get("zone_temps") or {}
@@ -499,13 +522,14 @@ def build_house_state(
     shading_default = int(
         entry.options.get(OPT_SHADING_DEFAULT_POSITION, DEFAULT_SHADING_POSITION)
     )
+    resolved_covers = base_covers if base_covers is not None else shadeable_covers(hass)
     covers = tuple(
         replace(
             c,
             target_position=shade_position(hass, entry, c.zone) if c.zone else None,
             blocked=shade_blocked(hass, entry, c.zone) if c.zone else False,
         )
-        for c in shadeable_covers(hass)
+        for c in resolved_covers
     )
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
@@ -625,6 +649,15 @@ class SupervisorEngine:
         # computed then discarded before this. Rebuilt each actuating cycle.
         self._lever_decisions: dict[str, dict] = {}
         self._unsub = None
+        # C5: shadeable covers resolved once from the registries and cached, so we
+        # don't scan the entire entity registry every 30 s cycle. Invalidated on a
+        # registry-updated event (the resolution keys off entity/device labels +
+        # area/floor, which only change via the registries).
+        self._covers_cache: tuple[CoverInfo, ...] | None = None
+        self._reg_unsubs: list = []
+        # B4 diagnostic: consecutive cycles a controlled cooling leader has had no
+        # fused temperature (it silently drops out of band control).
+        self._stale_temp: dict[str, int] = {}
         # One lock serialises every cycle (a scheduled tick + an awaited
         # request_run can otherwise interleave over the shared lever/forecast/
         # controller state). `_stopped` short-circuits any pass that is scheduled
@@ -649,12 +682,35 @@ class SupervisorEngine:
 
     def start(self) -> None:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
+        # Invalidate the shadeable-cover cache whenever the entity / device / area
+        # registries change (a cover's area, orientation label or floor moving).
+        self._reg_unsubs = [
+            self.hass.bus.async_listen(event, self._invalidate_covers)
+            for event in (
+                er.EVENT_ENTITY_REGISTRY_UPDATED,
+                dr.EVENT_DEVICE_REGISTRY_UPDATED,
+                ar.EVENT_AREA_REGISTRY_UPDATED,
+            )
+        ]
 
     def stop(self) -> None:
         self._stopped = True
         if self._unsub:
             self._unsub()
             self._unsub = None
+        for unsub in self._reg_unsubs:
+            unsub()
+        self._reg_unsubs = []
+
+    @callback
+    def _invalidate_covers(self, _event=None) -> None:
+        self._covers_cache = None
+
+    def _resolve_covers(self) -> tuple[CoverInfo, ...]:
+        """Cached shadeable-cover resolution (see `_invalidate_covers`)."""
+        if self._covers_cache is None:
+            self._covers_cache = shadeable_covers(self.hass)
+        return self._covers_cache
 
     # -- enable gate ----------------------------------------------------------
     @property
@@ -672,6 +728,36 @@ class SupervisorEngine:
         """B2: the last reconcile decision per lever this actuating cycle (empty
         while deploy-dark, since nothing actuates). Surfaced by sensor.hvac_levers."""
         return self._lever_decisions
+
+    @property
+    def stale_temp_leaders(self) -> list[str]:
+        """B4: cooling leaders whose fused temp has been None for >= STALE_TEMP_CYCLES
+        cycles (silently out of band control). Surfaced on sensor.hvac_plan."""
+        return sorted(
+            zid for zid, n in self._stale_temp.items() if n >= STALE_TEMP_CYCLES
+        )
+
+    def _track_stale_temp(self, state: HouseState) -> None:
+        """B4 diagnostic: count consecutive cycles a CONTROLLED cooling leader has no
+        fused temp, and WARN once when it crosses STALE_TEMP_CYCLES. A temp-less
+        leader silently drops out of band control (band_step yields with no center),
+        which is otherwise invisible. Runs every cycle, incl. deploy-dark."""
+        for z in state.zones.values():
+            controlled = (
+                _is_cooling_leader(z) and z.enabled and not z.paused
+                and not (z.bedroom and state.night_active)
+            )
+            if not controlled or z.temp is not None:
+                self._stale_temp.pop(z.zone_id, None)
+                continue
+            n = self._stale_temp.get(z.zone_id, 0) + 1
+            self._stale_temp[z.zone_id] = n
+            if n == STALE_TEMP_CYCLES:  # log once, on the crossing
+                _LOGGER.warning(
+                    "Cooling leader %s has had no fused temperature for %d cycles — "
+                    "it is not under band control until a reading returns",
+                    z.zone_id, n,
+                )
 
     # -- main loop ------------------------------------------------------------
     @callback
@@ -723,8 +809,10 @@ class SupervisorEngine:
                 return
             await self._maybe_refresh_forecast()
             state = build_house_state(
-                self.hass, self.entry, self.coordinator, forecast=self._forecast
+                self.hass, self.entry, self.coordinator,
+                forecast=self._forecast, base_covers=self._resolve_covers(),
             )
+            self._track_stale_temp(state)
             # F2: learn the per-room model EVERY cycle, even deploy-dark (the
             # observer never actuates; passive params converge before go-live).
             # Observe the RAW state (before the #8 mode override, which only
@@ -929,11 +1017,11 @@ class SupervisorEngine:
         if not self.entry.options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST):
             cur = state.solar if state.solar is not None else 0.0
             return [cur] * n, "flat"
+        if _AstralObserver is None:  # astral unavailable -> flat fallback
+            cur = state.solar if state.solar is not None else 0.0
+            return [cur] * n, "flat"
         try:
-            from astral import Observer
-            from astral.sun import elevation as _sun_elevation
-
-            obs = Observer(
+            obs = _AstralObserver(
                 latitude=self.hass.config.latitude,
                 longitude=self.hass.config.longitude,
                 elevation=self.hass.config.elevation or 0.0,
@@ -1123,7 +1211,17 @@ class SupervisorEngine:
             return s.attributes.get(ATTR_PERCENTAGE)
         if kind == "cover":
             # position-controlled shading: compare on current_position (0-100).
-            return s.attributes.get(ATTR_CURRENT_POSITION)
+            pos = s.attributes.get(ATTR_CURRENT_POSITION)
+            if pos is not None:
+                return pos
+            # B4: a cover with no position support reports only open/closed — map
+            # it so reconcile can still compare against a numeric target
+            # (0 = closed/down, 100 = open). Anything else stays None → transient.
+            if s.state == STATE_CLOSED:
+                return 0
+            if s.state == STATE_OPEN:
+                return 100
+            return None
         if kind == "switch":
             return s.state  # on / off (e.g. a fancoil manuale switch)
         return None
@@ -1163,7 +1261,19 @@ class SupervisorEngine:
             await self._call_switch(entity, on=str(value) == STATE_ON)
 
     async def _call(self, domain: str, service: str, data: dict) -> None:
-        await self.hass.services.async_call(domain, service, data, blocking=True)
+        # C5: bound the write so a wedged KNX call can't stall the whole cycle. On
+        # timeout the reconcile re-asserts next cycle. wait_for cancels the inner
+        # call, so a partial write self-heals on the next pass.
+        try:
+            await asyncio.wait_for(
+                self.hass.services.async_call(domain, service, data, blocking=True),
+                LEVER_CALL_TIMEOUT,
+            )
+        except TimeoutError:
+            _LOGGER.warning(
+                "Lever write %s.%s (%s) timed out after %ss; moving on",
+                domain, service, data.get(ATTR_ENTITY_ID), LEVER_CALL_TIMEOUT,
+            )
 
     async def _call_switch(self, entity_id: str, *, on: bool) -> None:
         await self._call(
@@ -1214,6 +1324,11 @@ class SupervisorEngine:
                 # F4a: capture cloud cover (0-1) for the solar estimate; often absent.
                 cc = item.get("cloud_coverage")
                 clouds.append((when, float(cc) / 100.0 if cc is not None else None))
+        # B4: `_forecast_temp_at` / `_forecast_cloud_at` early-break assuming the
+        # lists are time-sorted; the weather integration usually returns them so,
+        # but sort defensively so an out-of-order response can't truncate the scan.
+        parsed.sort(key=lambda wt: wt[0])
+        clouds.sort(key=lambda wc: wc[0])
         self._forecast = parsed
         self._cloud = clouds
 

@@ -502,10 +502,15 @@ def _leader(zid="lr", **kw):
     return ZoneSnapshot(**base)
 
 
-def _obs_state(z, *, now, outdoor=30.0, solar=0.0, consenso="off", enabled=True):
+def _obs_state(
+    z, *, now, outdoor=30.0, solar=0.0, consenso="off", blocco="off", enabled=True
+):
+    # blocco defaults to "off" (released) — its realistic value while cooling; a
+    # transient/None blocco read now bars admitting a k-learning window (B4:
+    # observer-blocco-read-poisons-k).
     return HouseState(
         now=now, zones={z.zone_id: z}, outdoor_temp=outdoor, solar=solar,
-        consenso_freddo=consenso, model_learning_enabled=enabled,
+        consenso_freddo=consenso, blocco=blocco, model_learning_enabled=enabled,
     )
 
 
@@ -573,6 +578,35 @@ def test_estimator_learns_capacity_on_held_steady_window():
         est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
     assert est.params["lr"].n_k >= 1     # capacity learned
     assert est.params["lr"].n == 0        # passive untouched on a cooling window
+
+
+def test_estimator_skips_learning_on_transient_consenso():
+    """B4: a transient consenso read can't classify the window — skip it (don't
+    mislabel a possible cooling window as a passive {a,b,c} window)."""
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 2, 0, 0)
+    for m in range(0, 17, 2):
+        z = _leader(temp=24.0 + 0.4 * (m / 60.0), demand=False)
+        est.observe(
+            _obs_state(z, now=base + timedelta(minutes=m), consenso="unavailable")
+        )
+    assert est.params["lr"].n == 0  # seeded prior, but nothing learned
+
+
+def test_estimator_skips_k_window_on_transient_blocco():
+    """B4 (observer-blocco-read-poisons-k): a k-learning window needs a TRUSTED
+    blocco read; a transient blocco could hide an active block -> skip."""
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    for m in range(0, 17, 2):  # w=True, held-steady fan, but blocco transient
+        z = _leader(temp=25.0 - 0.2 * (m / 60.0), demand=True, fan_pct=50, manuale_on=True)
+        est.observe(
+            _obs_state(
+                z, now=base + timedelta(minutes=m), consenso="on", blocco="unavailable"
+            )
+        )
+    p = est.params.get("lr")
+    assert p is None or p.n_k == 0
 
 
 def test_estimator_skips_capacity_when_fan_not_held():
@@ -649,6 +683,37 @@ def test_duty_controller_emits_release_when_disabled():
 
     out = DutyController()(_state([_zone("living_room")], duty=False))
     assert out == {BLOCCO_LEVER: BLOCCO_RELEASE}
+
+
+def test_duty_freezes_stint_on_transient_consenso():
+    """B4: a transient consenso read must NOT reset the stint timer — otherwise a
+    dropped KNX telegram lets the villa re-accrue a fresh full stint each time."""
+    from dataclasses import replace
+
+    from custom_components.villa_hvac.policies import DutyController
+    from custom_components.villa_hvac.supervisor import (
+        BLOCCO_BLOCK,
+        BLOCCO_LEVER,
+        BLOCCO_RELEASE,
+        DutyState,
+    )
+
+    base = replace(
+        _state([_zone("living_room")], duty=True, consenso="unavailable"),
+        duty_max_stint=timedelta(minutes=120), duty_cooloff=timedelta(minutes=30),
+    )
+
+    c = DutyController()
+    c._duty = DutyState(stint_start=T0)
+    out = c(base)
+    assert out == {BLOCCO_LEVER: BLOCCO_RELEASE}   # no cooloff -> release
+    assert c._duty.stint_start == T0                # timer FROZEN (not reset)
+
+    c2 = DutyController()
+    c2._duty = DutyState(cooloff_until=T0 + timedelta(minutes=10))
+    out2 = c2(replace(base, consenso_freddo="unknown"))
+    assert out2 == {BLOCCO_LEVER: BLOCCO_BLOCK}     # mid-cooloff -> keep blocking
+    assert c2._duty.cooloff_until == T0 + timedelta(minutes=10)  # held
 
 
 def test_comfort_breach_ignores_non_cooling_zones():

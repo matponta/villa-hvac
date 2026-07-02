@@ -385,6 +385,11 @@ FAN_STAGES = (33, 67, 100)
 # A temperature source older than this is treated as stale -> fall back (#1).
 TEMP_STALE_AFTER = timedelta(minutes=30)
 
+# B4 diagnostic: a controlled cooling leader whose fused temp is None for this many
+# consecutive engine cycles (≈5 min at 30 s) has silently dropped out of band
+# control — the engine logs a WARNING once and surfaces it on sensor.hvac_plan.
+STALE_TEMP_CYCLES = 10
+
 # Measured EP-vs-thermostat offsets (offset = thermostat - EP), live 2026-06-23.
 # UNUSED today: #1 is thermostat-primary, so EP is not the absolute source.
 # Kept for the planned EP-primary revisit. Most zones show a large,

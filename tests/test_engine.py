@@ -790,3 +790,153 @@ async def test_coordinator_rejects_nan_fused_temp(hass):
 
     state = build_house_state(hass, entry, coordinator)
     assert state.zones["living_room"].temp is None
+
+
+# --- Phase 0: input hardening (B4 / C5) --------------------------------------
+
+async def test_forecast_and_cloud_sorted_after_refresh(hass):
+    """B4: `_forecast`/`_cloud` must end up time-sorted even if the weather
+    integration returns hourly entries out of order (the *_at scans early-break
+    assuming ascending time)."""
+    from datetime import timedelta
+
+    from homeassistant.core import SupportsResponse
+    from homeassistant.util import dt as dt_util
+
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    hass.states.async_set("weather.forecast_home", "sunny")
+    now = dt_util.utcnow()
+    t1 = (now + timedelta(hours=1)).isoformat()
+    t2 = (now + timedelta(hours=2)).isoformat()
+    t3 = (now + timedelta(hours=3)).isoformat()
+
+    async def _fake_forecast(_call):
+        # deliberately OUT OF ORDER (t3, t1, t2)
+        return {
+            "weather.forecast_home": {
+                "forecast": [
+                    {"datetime": t3, "temperature": 33, "cloud_coverage": 30},
+                    {"datetime": t1, "temperature": 28, "cloud_coverage": 10},
+                    {"datetime": t2, "temperature": 31, "cloud_coverage": 20},
+                ]
+            }
+        }
+
+    hass.services.async_register(
+        "weather", "get_forecasts", _fake_forecast,
+        supports_response=SupportsResponse.ONLY,
+    )
+    engine._forecast_ts = None  # force a refresh
+    await engine._maybe_refresh_forecast()
+
+    ftimes = [w for w, _ in engine._forecast]
+    ctimes = [w for w, _ in engine._cloud]
+    assert ftimes == sorted(ftimes)
+    assert ctimes == sorted(ctimes)
+    assert [t for _, t in engine._forecast] == [28.0, 31.0, 33.0]  # ordered by time
+
+
+async def test_cover_read_derives_position_from_open_closed(hass):
+    """B4: a cover with no `current_position` attribute must still yield a numeric
+    read (0 = closed, 100 = open) so the reconcile can compare it to a target."""
+    entry = await _setup(hass)
+    engine = SupervisorEngine(hass, entry, entry.runtime_data)
+
+    hass.states.async_set("cover.x", "closed", {})
+    assert engine._read_current("cover:cover.x") == 0
+    hass.states.async_set("cover.x", "open", {})
+    assert engine._read_current("cover:cover.x") == 100
+    hass.states.async_set("cover.x", "open", {"current_position": 42})
+    assert engine._read_current("cover:cover.x") == 42
+    hass.states.async_set("cover.x", "unknown", {})
+    assert engine._read_current("cover:cover.x") is None  # transient -> None
+
+
+async def test_shadeable_covers_cached_and_invalidated(hass):
+    """C5: the shadeable-cover resolution is cached (no full-registry scan every
+    cycle) and invalidated on a registry-updated event."""
+    from homeassistant.helpers import (
+        area_registry as ar,
+        device_registry as dr,
+        entity_registry as er,
+    )
+
+    entry = await _setup(hass)
+    area_reg, dev_reg, ent_reg = ar.async_get(hass), dr.async_get(hass), er.async_get(hass)
+    area = area_reg.async_get_or_create("Cache West Room")
+    device = dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={("knx", "cache-test")}
+    )
+    dev_reg.async_update_device(device.id, area_id=area.id, labels={"west"})
+    ent_reg.async_get_or_create("cover", "knx", "cache-uid", device_id=device.id)
+
+    engine = SupervisorEngine(hass, entry, entry.runtime_data)
+    engine.start()
+    try:
+        c1 = engine._resolve_covers()
+        assert c1  # non-empty (a west cover exists)
+        assert engine._resolve_covers() is c1  # cached: same object
+        assert len(engine._reg_unsubs) == 3    # entity/device/area listeners wired
+
+        hass.bus.async_fire(
+            er.EVENT_ENTITY_REGISTRY_UPDATED,
+            {"action": "update", "entity_id": "cover.whatever"},
+        )
+        await hass.async_block_till_done()
+        assert engine._covers_cache is None     # listener invalidated the cache
+        assert engine._resolve_covers() is not c1  # re-resolved -> new object
+    finally:
+        engine.stop()
+    assert engine._reg_unsubs == []
+
+
+async def test_stale_temp_warns_after_threshold(hass):
+    """B4: a controlled cooling leader with no fused temp for STALE_TEMP_CYCLES
+    cycles is surfaced (and warned once); a returning temp clears it."""
+    from dataclasses import replace
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.villa_hvac.const import STALE_TEMP_CYCLES
+    from custom_components.villa_hvac.supervisor import HouseState, ZoneSnapshot
+
+    entry = await _setup(hass)
+    engine = SupervisorEngine(hass, entry, entry.runtime_data)
+    leader = ZoneSnapshot(
+        zone_id="living_room", name="lr", climate="climate.x", emitter="fancoil",
+        fancoil_units=(("fan.x", "switch.x_man"),), temp=None, enabled=True,
+    )
+    state = HouseState(now=dt_util.utcnow(), zones={"living_room": leader})
+
+    for _ in range(STALE_TEMP_CYCLES - 1):
+        engine._track_stale_temp(state)
+    assert engine.stale_temp_leaders == []          # not yet at the threshold
+    engine._track_stale_temp(state)
+    assert engine.stale_temp_leaders == ["living_room"]
+
+    warm = replace(state, zones={"living_room": replace(leader, temp=24.0)})
+    engine._track_stale_temp(warm)
+    assert engine.stale_temp_leaders == []          # a returning temp clears it
+
+
+async def test_lever_call_timeout_is_swallowed(hass, monkeypatch):
+    """C5: a wedged KNX write must not stall the cycle — `_call` times out and
+    returns instead of hanging/raising."""
+    import asyncio
+
+    import custom_components.villa_hvac.engine as engine_mod
+
+    entry = await _setup(hass)
+    engine = SupervisorEngine(hass, entry, entry.runtime_data)
+    monkeypatch.setattr(engine_mod, "LEVER_CALL_TIMEOUT", 0.05)
+
+    async def _slow(_call):
+        await asyncio.sleep(5)
+
+    hass.services.async_register("climate", "set_preset_mode", _slow)
+    # Must return (not raise, not hang) despite the 5 s handler + 0.05 s timeout.
+    await engine._call(
+        "climate", "set_preset_mode",
+        {"entity_id": "climate.x", "preset_mode": "comfort"},
+    )
