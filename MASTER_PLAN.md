@@ -148,6 +148,19 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 > model-free comfort guarantee. TRUE F4c (comfort inside the optimizer) stays a gated **non-goal**.
 > A fresh session executes the build; this session only produced the plan.
 
+> **NOTE (2026-07-02, later): TIER-1 `CoolingController` program LOCKED** — see
+> [`STORY_TIER1_COOLING_CONTROLLER.md`](./STORY_TIER1_COOLING_CONTROLLER.md). Next build
+> program (fresh session): fold FanBandController + DutyController + RegimeCoordinator into
+> ONE `CoolingController` (merge-early: R1 `resolve_center` identity → structural fold with a
+> differential-oracle gate → R2 deviation-space coalescing w/ ANCHOR/BANK REST partition +
+> crossing cap + relax double-count fix → R3 REST-quorum guard → R4 `feature_graph`), releases
+> v0.39.0 → v0.43.0, ALL deploy-dark / flip-no-switch. Fixes the base-vs-shifted center
+> mismatch (engine `_regime_step` BASE vs FanBand SHIFTED) that blocks pv_bias × regime
+> co-enable, and closes **C4** (the explicit opt-in graph = `feature_graph`). STOP-gate: soak
+> v0.40.0 (the fold) live before P3 deletes the trio. Design locked 2026-07-02 via 2
+> adversarial workflows (composition investigation + Tier-1 judge panel); implementation is a
+> fresh session.
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve
