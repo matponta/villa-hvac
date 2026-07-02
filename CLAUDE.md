@@ -116,9 +116,14 @@ do local bang-bang regulation.
   map (zone → climate/fancoils/floor/EP device/emitter), `FAN_STAGES`.
 - `coordinator.py` — `DataUpdateCoordinator` (30 s): read-only (fan speeds,
   cooling zones, consenso, fused zone temps). The engine ticks off this.
-- `supervisor.py` — **pure** write-arbiter core (no HA imports): `reconcile`
-  (manual-override re-assert state machine), `merge_desired` (priority), the
-  `HouseState`/`ZoneSnapshot` model, lever-key helpers. Unit-tested in isolation.
+- `supervisor/` — **pure** core PACKAGE (C2 split, v0.34.0; no HA imports),
+  re-exported from `supervisor/__init__.py` so `from .supervisor import X` is
+  unchanged. Submodules: `arbiter` (`reconcile` override re-assert + `merge_desired`
+  + lever keys) · `control_law` (band/fan, `compose_center`, duty, coalesce, PV
+  pre-cool) · `thermal` (F2 RLS + blend) · `model` (`HouseState`/`ZoneSnapshot`/
+  `CoverInfo` + leader helpers) · `planner` (run-plan, forward sim, precool, solar
+  curve, plan view — **home for the F4c unified planner**) · `returnhome` (#8 core).
+  Unit-tested in isolation.
 - `engine.py` — `SupervisorEngine`: builds `HouseState` each tick/`request_run`,
   runs the policy stack, applies the merged result via `reconcile` one lever at a
   time (preset/temperature/fan/BLOCCO). Gated by `switch.supervisor`; `async_fail_safe`
