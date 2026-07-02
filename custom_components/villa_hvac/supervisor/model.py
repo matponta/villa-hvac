@@ -6,8 +6,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:  # runtime-pure: the annotation never resolves at import time
+if TYPE_CHECKING:  # runtime-pure: the annotations never resolve at import time
     from ..supervisor_config import SupervisorConfig
+    from .planner import CenterSchedule
 
 
 
@@ -127,6 +128,12 @@ class HouseState:
     # the planner reads; None in bare-constructed test states. Runtime-pure (the
     # type is a TYPE_CHECKING import), read duck-typed by attribute.
     config: "SupervisorConfig | None" = None
+    # F4c Phase 6: the cached unified band-center REFERENCE schedule + whether the
+    # planner may DRIVE the center this cycle (switch on). The FanBandController
+    # reads `center_schedule.at(zone, now)` for planner-eligible rooms when
+    # `unified_planner_enabled`; else the compose_center ladder. None = no schedule.
+    center_schedule: "CenterSchedule | None" = None
+    unified_planner_enabled: bool = False
 
 
 

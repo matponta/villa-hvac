@@ -185,3 +185,63 @@ def test_bedroom_at_night_excluded():
         lookahead=LOOK, max_precool_depth=3.0, dt_min=DT,
     )
     assert "bed" not in sched.zones  # camere silenziose owns it at night
+
+
+# --- Phase 6: planner_ref gate (does the schedule DRIVE the center?) ----------
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    CenterPoint,
+    CenterSchedule,
+    ZoneCenterSchedule,
+    planner_ref,
+)
+
+_PR = dict(
+    zone_id="lr", now=NOW, planner_eligible=True, unified_enabled=True,
+    center_base=24.0, comfort_floor=22.0, comfort_ceiling=27.0,
+    max_age=timedelta(minutes=90),
+)
+
+
+def _one_point_sched(center=23.0, created=NOW):
+    return CenterSchedule(
+        zones={"lr": ZoneCenterSchedule(
+            zone_id="lr", points=(CenterPoint(minute=0, center=center),), eligible=True,
+        )},
+        created_at=created,
+    )
+
+
+def test_planner_ref_drives_when_all_gates_pass():
+    assert planner_ref(_one_point_sched(23.0), **_PR) == 23.0
+
+
+def test_planner_ref_none_when_switch_off():
+    assert planner_ref(_one_point_sched(), **{**_PR, "unified_enabled": False}) is None
+
+
+def test_planner_ref_none_when_zone_ineligible():
+    assert planner_ref(_one_point_sched(), **{**_PR, "planner_eligible": False}) is None
+
+
+def test_planner_ref_none_when_no_schedule():
+    assert planner_ref(None, **_PR) is None
+
+
+def test_planner_ref_none_when_stale():
+    stale = _one_point_sched(created=NOW - timedelta(minutes=120))  # > 90 max_age
+    assert planner_ref(stale, **_PR) is None
+
+
+def test_planner_ref_none_in_deep_setback():
+    # base above the comfort ceiling (Via/Notte setback) -> the ladder owns it.
+    assert planner_ref(_one_point_sched(), **{**_PR, "center_base": 29.0}) is None
+
+
+def test_planner_ref_none_when_zone_absent_from_schedule():
+    assert planner_ref(_one_point_sched(), **{**_PR, "zone_id": "other"}) is None
+
+
+def test_planner_ref_clamps_into_comfort_bounds():
+    assert planner_ref(_one_point_sched(18.0), **_PR) == 22.0   # below floor -> floored
+    assert planner_ref(_one_point_sched(30.0), **_PR) == 27.0   # above ceiling -> capped

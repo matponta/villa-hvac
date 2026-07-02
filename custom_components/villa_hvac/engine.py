@@ -74,6 +74,7 @@ from .const import (
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
+    SCHEDULE_MAX_AGE,
     SEASON_SUMMER,
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
@@ -104,6 +105,7 @@ from .controller import (
     shade_blocked,
     shade_position,
     supervisor_enabled,
+    unified_planner_enabled,
 )
 from .policies import (
     DutyController,
@@ -133,6 +135,7 @@ from .supervisor import (
     in_window,
     merge_desired,
     plan_center_schedule,
+    planner_ref,
     plan_run,
     reconcile,
     select_regime,
@@ -590,6 +593,12 @@ class SupervisorEngine:
         # PV/energy-aware pre-cool: last decision (diagnostic) + min-dwell anchor.
         self._pv_decision = None
         self._pv_since = None
+        # F4c Phase 6: the cached unified band-center reference schedule. Recomputed
+        # at the forecast cadence (or on a mode change), read forward by the fast
+        # loop — a SLOW-moving reference, NOT recomputed every 30 s tick.
+        self._center_schedule_cache = None
+        self._schedule_ts = None
+        self._schedule_mode = None
 
     def start(self) -> None:
         self._unsub = self.coordinator.async_add_listener(self._on_update)
@@ -740,6 +749,10 @@ class SupervisorEngine:
             # state so the band controller banks in efficient hours / defers in the
             # evening. Stateless (decides from forecasts) — safe for the plan view too.
             state = self._pv_bias_apply(state)
+            # F4c Phase 6: attach the cached unified reference schedule + the
+            # planner-drive gate to the state, so BOTH the plan view and the
+            # FanBandController see the same slow-moving reference.
+            state = self._maybe_refresh_schedule(state)
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
@@ -828,15 +841,42 @@ class SupervisorEngine:
             dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
             max_precool_depth=cfg.precool_max_depth,
         )
-        # F4c Phase 5: the unified band-center REFERENCE schedule (PLAN-ONLY —
-        # observable, drives nothing; Phase 6 wires it behind the switch).
-        center_schedule = self._center_schedule(state, solar_curve, solar_model)
+        # F4c: surface the CACHED unified reference schedule (already attached to
+        # the state by _maybe_refresh_schedule) — the same one the band controller
+        # reads, so the sensor and the drive path never disagree.
         return replace(
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
             solar_model=solar_model,
             center_compositions=self._center_compositions(state),
-            center_schedule=center_schedule,
+            center_schedule=state.center_schedule,
+        )
+
+    def _maybe_refresh_schedule(self, state: HouseState) -> HouseState:
+        """F4c Phase 6: keep a SLOW-moving cached reference schedule + attach it (and
+        the planner-drive gate) to the state. Recompute at the forecast cadence, on
+        an effective-mode change (so a #8 Via->Casa transition re-plans promptly), or
+        when we have none yet — NOT every 30 s tick (the fast loop reads it forward
+        via CenterSchedule.at). Computed regardless of the switch (for the plan-only
+        sensor); the switch only gates whether the band controller USES it."""
+        mode_key = (state.house_mode, state.mode_offset)
+        due = (
+            self._center_schedule_cache is None
+            or self._schedule_ts is None
+            or state.now - self._schedule_ts >= FORECAST_REFRESH
+            or mode_key != self._schedule_mode
+        )
+        if due:
+            solar_curve, solar_model = self._solar_forecast(state)
+            self._center_schedule_cache = self._center_schedule(
+                state, solar_curve, solar_model
+            )
+            self._schedule_ts = state.now
+            self._schedule_mode = mode_key
+        return replace(
+            state,
+            center_schedule=self._center_schedule_cache,
+            unified_planner_enabled=unified_planner_enabled(self.hass, self.entry),
         )
 
     def _center_schedule(self, state: HouseState, solar_curve, solar_model):
@@ -894,9 +934,21 @@ class SupervisorEngine:
                 comfort_ceiling=state.duty_comfort_max,
                 comfort_floor=state.comfort_floor,
             )
+            # F4c Phase 6: is the planner actually DRIVING this room this cycle (vs.
+            # the ladder)? Same gate the FanBandController uses (observability).
+            ref = planner_ref(
+                state.center_schedule, zone_id=z.zone_id, now=state.now,
+                planner_eligible=z.model_planner_eligible,
+                unified_enabled=state.unified_planner_enabled,
+                center_base=base, comfort_floor=state.comfort_floor,
+                comfort_ceiling=state.duty_comfort_max, max_age=SCHEDULE_MAX_AGE,
+            )
             out[z.zone_id] = {
-                "center": round(comp.center, 2), "base": round(comp.base, 2),
-                "source": comp.source, "floored": comp.floored,
+                "center": round(ref if ref is not None else comp.center, 2),
+                "base": round(comp.base, 2),
+                "source": "planner" if ref is not None else comp.source,
+                "floored": comp.floored,
+                "planner_driven": ref is not None,
             }
         return out
 

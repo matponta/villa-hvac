@@ -988,3 +988,27 @@ async def test_plan_view_surfaces_center_schedule(hass):
     assert "living_room" in sched.zones          # a cooling leader is scheduled
     zs = sched.zones["living_room"]
     assert zs.points and zs.points[0].center == 24.0  # base center (no features)
+
+
+async def test_unified_planner_switch_defaults_off(hass):
+    await _setup(hass)
+    assert hass.states.get("switch.unified_planner").state == "off"
+
+
+async def test_center_schedule_cached_not_recomputed_each_tick(hass):
+    """F4c Phase 6: the reference schedule is SLOW-moving — cached across ticks
+    (within the forecast cadence + same mode), not recomputed every 30 s."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )
+    hass.states.async_set("sensor.clima_salotto", "24.0")
+    await entry.runtime_data.async_refresh()
+
+    await engine._tick()
+    first, ts1 = engine._center_schedule_cache, engine._schedule_ts
+    assert first is not None
+    await engine._tick()  # within cadence + same mode -> reuse the cached object
+    assert engine._center_schedule_cache is first
+    assert engine._schedule_ts == ts1

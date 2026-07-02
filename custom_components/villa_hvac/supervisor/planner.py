@@ -761,6 +761,41 @@ class CenterSchedule:
         return self.created_at is None or (now - self.created_at) > max_age
 
 
+def planner_ref(
+    schedule: "CenterSchedule | None", *,
+    zone_id: str, now: datetime,
+    planner_eligible: bool, unified_enabled: bool,
+    center_base: float, comfort_floor: float | None, comfort_ceiling: float | None,
+    max_age: timedelta,
+) -> float | None:
+    """F4c Phase 6: the clamped planner REFERENCE center for a zone, or None to use
+    the fallback ladder. Returns a value ONLY when every gate passes:
+      * the unified planner is enabled (switch on),
+      * the zone is planner-eligible (D1: k converged + solar-excited),
+      * a schedule exists and is not stale (age <= max_age; else the reference is
+        confidently wrong — fall back to base),
+      * the mode is in the comfort band (center_base <= ceiling; a Via/Notte deep
+        setback stays on the reactive ladder, which handles setback correctly),
+      * the schedule has a point for this zone.
+    The reference is clamped into [comfort_floor, comfort_ceiling] — the reactive
+    band's own comfort bounds — so the model can only ever cost efficiency, never
+    comfort. All gates false-safe to None (the ladder)."""
+    if not unified_enabled or schedule is None or not planner_eligible:
+        return None
+    if comfort_ceiling is not None and center_base > comfort_ceiling:
+        return None  # deep setback -> the ladder owns the center
+    if schedule.is_stale(now, max_age):
+        return None
+    ref = schedule.at(zone_id, now)
+    if ref is None:
+        return None
+    if comfort_floor is not None:
+        ref = max(comfort_floor, ref)
+    if comfort_ceiling is not None:
+        ref = min(ref, comfort_ceiling)
+    return ref
+
+
 def plan_center_schedule(
     measured: HouseState,
     params_by_zone: dict,

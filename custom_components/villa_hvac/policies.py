@@ -71,6 +71,7 @@ from .const import (
     COALESCE_EXIT_FRACTION,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
+    SCHEDULE_MAX_AGE,
     SEASON_SUMMER,
     SHADE_POSITION_MAX,
     SHADE_POSITION_MIN,
@@ -111,6 +112,7 @@ from .supervisor import (
     fan_lever,
     k_confidence,
     planner_eligible,
+    planner_ref,
     preset_lever,
     rls_capacity_update,
     rls_passive_update,
@@ -478,22 +480,35 @@ class FanBandController:
                 center_base is not None
                 and z.enabled and not z.paused and not free_cool
             )
-            # Compose the band center from the base mode center + at most one active
-            # feature (PV bank/coast XOR #9 pre-cool + F4b relax), then bound it by
-            # the comfort floor. compose_center is the single named, tested home for
-            # that ladder — the drop-in point the unified planner (Phase 6) replaces.
+            # The band center: the F4c unified planner's forecast REFERENCE drives it
+            # for planner-eligible rooms when the switch is on + the schedule is fresh
+            # (Phase 6); otherwise the reactive compose_center ladder (base + at most
+            # one active feature, floored). planner_ref false-safes to None -> ladder,
+            # and the reference is clamped into [comfort_floor, duty_comfort_max], so
+            # the model can only ever cost efficiency, never comfort.
             center = center_base
             if eligible and center_base is not None:
-                center = compose_center(
-                    base=center_base,
-                    pv_mode=state.pv_mode, pv_floor=state.pv_floor,
-                    pv_coast_relax=state.pv_coast_relax,
-                    comfort_enabled=state.comfort_enabled, comfort_relax=z.comfort_relax,
-                    precool=state.precool, precool_offset=state.precool_offset,
-                    duty_enabled=state.duty_enabled,
-                    comfort_ceiling=state.duty_comfort_max,
-                    comfort_floor=state.comfort_floor,
-                ).center
+                ref = planner_ref(
+                    state.center_schedule, zone_id=z.zone_id, now=state.now,
+                    planner_eligible=z.model_planner_eligible,
+                    unified_enabled=state.unified_planner_enabled,
+                    center_base=center_base, comfort_floor=state.comfort_floor,
+                    comfort_ceiling=state.duty_comfort_max, max_age=SCHEDULE_MAX_AGE,
+                )
+                if ref is not None:
+                    center = ref
+                else:
+                    center = compose_center(
+                        base=center_base,
+                        pv_mode=state.pv_mode, pv_floor=state.pv_floor,
+                        pv_coast_relax=state.pv_coast_relax,
+                        comfort_enabled=state.comfort_enabled,
+                        comfort_relax=z.comfort_relax,
+                        precool=state.precool, precool_offset=state.precool_offset,
+                        duty_enabled=state.duty_enabled,
+                        comfort_ceiling=state.duty_comfort_max,
+                        comfort_floor=state.comfort_floor,
+                    ).center
             # F3c: when the regime coordinator coalesces, it dictates the phase;
             # the band controller still slams the setpoint + sizes the fan exactly
             # as usual, so exactly ONE component decides the phase per zone.

@@ -228,6 +228,13 @@ def pv_bias_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "pv_bias") == STATE_ON
 
 
+def unified_planner_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the F4c unified-planner switch is on (opt-in, deploy-dark). It lets
+    the forecast schedule DRIVE the band center for planner-eligible rooms; it
+    executes through the band, so it also needs fan_pacing on to have any effect."""
+    return _switch_state(hass, entry, "unified_planner") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF

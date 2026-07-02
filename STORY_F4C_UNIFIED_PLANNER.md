@@ -1,10 +1,17 @@
 # STORY F4c — Unified forecast planner (build plan)
 
-**Status (2026-07-02):** Phases **0–5 DONE** (v0.32.0 → v0.37.0), CI green, all
-deploy-dark / behaviour-preserving / plan-only. **Phase 6 is the checkpoint** — the
-first phase that lets the planner DRIVE a lever; it needs mild-weather validation
-data + a per-room k-convergence check + owner sign-off before building (see §3
-Phase 6 preconditions + §6.3). Shipped so far: Phase 0 input hardening (B4+C5),
+**Status (2026-07-02):** Phases **0–6 DONE** (v0.32.0 → v0.38.0), CI green.
+Phases 0–5 shipped + DEPLOYED live at v0.37.0 (plan-only). **Phase 6 BUILT
+deploy-dark** (v0.38.0): `switch.unified_planner` (default OFF) lets the forecast
+schedule DRIVE the band center for planner-ELIGIBLE rooms via the pure `planner_ref`
+gate (clamped into [comfort_floor, duty_comfort_max]; false-safes to the reactive
+ladder on switch-off / ineligible / stale / deep-setback / missing-point). The
+schedule is a SLOW-moving cached reference (recomputed at the forecast cadence or on
+a mode change). **ACTIVATION (flipping the switch) is still gated** on mild-weather
+validation data + per-room k-convergence — and is INERT today anyway (no room is
+planner-eligible yet: solar_excitation 0, k unconverged). **Phase 7** = validate
+live over a mild season, then retire the dual-path ladder. **Phase 8** stays a
+NON-GOAL. Shipped so far: Phase 0 input hardening (B4+C5),
 Phase 1 composition contract + `OPT_COMFORT_FLOOR` + `compose_center` + C1
 NightSilenceController, Phase 2 `supervisor/` pure package split (C2), Phase 3
 `SupervisorConfig` (C3), Phase 4 identifiability gating + `planner_eligible` (D1),

@@ -49,6 +49,7 @@ async def async_setup_entry(
         ReturnPrecondSwitch(entry),
         ReturnArmedSwitch(entry),
         PvBiasSwitch(entry),
+        UnifiedPlannerSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -310,6 +311,47 @@ class PvBiasSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_pv_bias"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class UnifiedPlannerSwitch(SwitchEntity, RestoreEntity):
+    """Opt-in for the F4c unified planner to DRIVE the band center (default OFF).
+
+    When on (with the master + fan_pacing on), the forecast schedule's per-room
+    center reference drives the band center for planner-ELIGIBLE rooms (k
+    converged + solar-excited); every other room keeps the reactive compose_center
+    ladder. The reactive band still owns the comfort guarantee (clamps the
+    reference into [comfort_floor, duty_comfort_max]). Off by default (deploy-dark)
+    — enable only after mild-weather validation + per-room k-convergence.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Unified planner"
+    _attr_icon = "mdi:calendar-arrow-right"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_unified_planner"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

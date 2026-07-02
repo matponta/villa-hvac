@@ -83,7 +83,7 @@ sequenced into small gated releases. All opt-in / observe / plan-only except F1.
 | F4a | Solar forecast (sun elev × clear-sky × cloud); opt-in `solar_forecast_enabled` | v0.22.0 |
 | F4b | Per-room/per-fascia comfort windows (capped center relax, never BP slam); opt-in `comfort_windows_enabled` | v0.23.0 |
 | F3c | Demand coalescing (MEDIUM regime sync via phase_override; REST via setpoint; min-on/off 10/10); opt-in `regime_enabled` | v0.24.0 |
-| F4c | **Unified 12h band-center forecast PLANNER** (reference-governor MPC; NOT comfort-in-optimizer) | **Phases 0–5 DONE v0.32–v0.37** |
+| F4c | **Unified 12h band-center forecast PLANNER** (reference-governor MPC; NOT comfort-in-optimizer) | **Phases 0–6 DONE v0.32–v0.38** (Phase 6 = `switch.unified_planner`, deploy-dark; ENABLING gated on mild-weather data + per-room k-convergence) |
 | G | Deploy v0.24.0 to live + tune on data + live-verify gates + retire legacy | v1.0.0 |
 
 Cross-cutting (from review): identifiability gating (k vs {a,b,c} on disjoint windows);

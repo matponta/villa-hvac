@@ -809,3 +809,62 @@ def test_estimator_persists_solar_excitation():
     est2 = ThermalEstimator()
     est2.load(dumped)
     assert est2.solar_excitation("lr") == 320.0
+
+
+# --- Phase 6: FanBandController driven by the unified planner reference -------
+
+def _sched_for(zid, center, *, created):
+    from custom_components.villa_hvac.supervisor import (
+        CenterPoint,
+        CenterSchedule,
+        ZoneCenterSchedule,
+    )
+    return CenterSchedule(
+        zones={zid: ZoneCenterSchedule(
+            zone_id=zid, points=(CenterPoint(minute=0, center=center),), eligible=True,
+        )},
+        created_at=created,
+    )
+
+
+def test_band_planner_drives_eligible_zone():
+    """Switch on + schedule fresh + zone eligible -> the band center is the planner
+    reference (23.0), not the ladder base (24.0). RUN slam = 23 - 0.75 = 22.25."""
+    from dataclasses import replace as _replace
+
+    z = _replace(_fanzone("a", temp=26.0), model_planner_eligible=True)
+    sched = _sched_for("a", 23.0, created=T0)
+    st = _replace(
+        _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=True,
+        comfort_floor=22.0, duty_comfort_max=27.0,
+    )
+    out = FanBandController()(st)
+    assert out[temperature_lever("climate.a")] == 22.25   # 23 (ref) - 0.75
+
+
+def test_band_uses_ladder_when_planner_switch_off():
+    """Switch off -> the ladder drives (base 24). RUN slam = 24 - 0.75 = 23.25."""
+    from dataclasses import replace as _replace
+
+    z = _replace(_fanzone("a", temp=26.0), model_planner_eligible=True)
+    sched = _sched_for("a", 23.0, created=T0)
+    st = _replace(
+        _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=False,
+        comfort_floor=22.0, duty_comfort_max=27.0,
+    )
+    out = FanBandController()(st)
+    assert out[temperature_lever("climate.a")] == 23.25   # ladder base 24 - 0.75
+
+
+def test_band_uses_ladder_when_zone_not_planner_eligible():
+    """Switch on but the zone is NOT planner-eligible (hard room) -> ladder."""
+    from dataclasses import replace as _replace
+
+    z = _fanzone("a", temp=26.0)  # model_planner_eligible defaults False
+    sched = _sched_for("a", 23.0, created=T0)
+    st = _replace(
+        _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=True,
+        comfort_floor=22.0, duty_comfort_max=27.0,
+    )
+    out = FanBandController()(st)
+    assert out[temperature_lever("climate.a")] == 23.25   # advisory -> ladder

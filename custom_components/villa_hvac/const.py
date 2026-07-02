@@ -658,6 +658,14 @@ DEFAULT_PRECOOL_MARGIN = 3.0
 DEFAULT_PRECOOL_OFFSET = 1.5     # °C below the normal target while pre-cooling
 FORECAST_REFRESH = timedelta(minutes=30)  # re-fetch + re-plan cadence
 
+# --- F4c Phase 6: unified planner DRIVES the band center (opt-in) -------------
+# The reference is a SLOW-moving schedule: recomputed at the forecast cadence (or
+# on a mode change), read forward via CenterSchedule.at(zone, now) by the fast
+# 30 s reactive loop. If the last good schedule is older than this (e.g. the
+# forecast fetch has been failing), the band controller falls back to the base
+# ladder — never drives off a stale 12 h reference sized to a peak that has moved.
+SCHEDULE_MAX_AGE = timedelta(minutes=90)
+
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)
 # until it closes. Per-zone opening entity is the `window` key in ZONES (only

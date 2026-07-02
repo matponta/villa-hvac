@@ -310,19 +310,24 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        force-rest a slow one), comfort breach forces RUN, min compressor on/off 10/10
        guardrail; coordinator BLOCCO opinion merged before DutyController (yields ->
        duty survives). Opt-in OPT_REGIME_ENABLED (default off) AND duty AND fan_pacing.
-       F4c UNIFIED PLANNER — Phases 0–5 DONE (v0.32.0–v0.37.0; spec
+       F4c UNIFIED PLANNER — Phases 0–6 DONE (v0.32.0–v0.38.0; spec
        `STORY_F4C_UNIFIED_PLANNER.md`). A reference-governor MPC: `plan_center_schedule`
        (`supervisor/planner.py`) jointly schedules a per-leader 12h band-center
        REFERENCE (`CenterSchedule`) composing schedule_precool/energy_precool/
-       run_rest_durations/return_lead_time → `sensor.hvac_plan.center_schedule`,
-       PLAN-ONLY (drives nothing). The reactive band keeps the model-free comfort
-       guarantee + clamps the reference into [comfort_floor, duty_comfort_max]. Also
-       shipped: comfort FLOOR (`OPT_COMFORT_FLOOR`) + `compose_center` (Phase 1),
-       C1 NightSilenceController, C2 `supervisor/` package, C3 `SupervisorConfig`,
-       D1 `planner_eligible` (hard rooms stay ADVISORY until k converges).
-       **Phase 6 (planner DRIVES the center) is a GATED CHECKPOINT** — needs
-       mild-weather data + per-room k-convergence + owner sign-off. TRUE
-       comfort-in-optimizer F4c (Phase 8) stays a NON-GOAL. 309 tests.
+       run_rest_durations/return_lead_time → `sensor.hvac_plan.center_schedule`. Phase 6
+       (v0.38.0): `switch.unified_planner` (deploy-dark, default OFF) lets that reference
+       DRIVE the band center for planner-ELIGIBLE rooms via the pure `planner_ref` gate
+       (clamped into [comfort_floor, duty_comfort_max]; false-safes to the reactive
+       compose_center ladder on switch-off / ineligible / stale / deep-setback). The
+       schedule is a SLOW-moving CACHED reference (recomputed at the forecast cadence /
+       on a mode change, read forward via `.at(zone, now)`), NOT recomputed every 30 s.
+       The reactive band keeps the model-free comfort guarantee. Also shipped: comfort
+       FLOOR (`OPT_COMFORT_FLOOR`) + `compose_center` (Phase 1), C1 NightSilenceController,
+       C2 `supervisor/` package, C3 `SupervisorConfig`, D1 `planner_eligible` (hard rooms
+       stay ADVISORY until k converges). **ENABLING `switch.unified_planner` is GATED** on
+       mild-weather validation + per-room k-convergence (inert today: no eligible room).
+       Phase 7 = validate live + retire the dual-path ladder. TRUE comfort-in-optimizer
+       F4c (Phase 8) stays a NON-GOAL. 322 tests.
        Cross-cutting (from review): identifiability gating, hard-room trajectories
        ADVISORY until k learned (4-param model predicts ~0.6°C/h cooling at the
        verified ~0-net 34°C peak), controllers-first merge, recorder-excluded 12h
