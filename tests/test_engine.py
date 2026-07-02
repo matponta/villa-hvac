@@ -247,14 +247,20 @@ async def test_duty_switch_defaults_off(hass):
 
 async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
     """#9: duty on + stint exceeded -> the engine blocks via the Consenso BLOCCO."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
     from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
+    from custom_components.villa_hvac.policies import DutyController
+    from custom_components.villa_hvac.supervisor import DutyState
 
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
     hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # cooling
     hass.states.async_set(CONSENSO_BLOCCO, "off")
     entry = MockConfigEntry(
         domain=DOMAIN, unique_id=DOMAIN, data={},
-        options={OPT_DUTY_MAX_STINT: 0, OPT_DUTY_COOLOFF: 30},  # stint over at once
+        options={OPT_DUTY_MAX_STINT: 15, OPT_DUTY_COOLOFF: 30},  # 15 = clamp min
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -263,8 +269,12 @@ async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.duty_cycle", "on")
     on_calls = async_mock_service(hass, "switch", "turn_on")
+    # Force the stint to already exceed the (clamped) 15-min cap.
+    engine = entry.runtime_data.engine
+    duty = next(c for c in engine.controllers if isinstance(c, DutyController))
+    duty._duty = DutyState(stint_start=dt_util.utcnow() - timedelta(minutes=20))
 
-    await entry.runtime_data.engine.request_run()
+    await engine.request_run()
 
     assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in on_calls)
 

@@ -143,6 +143,10 @@ do local bang-bang regulation.
   `duty_comfort_max` ceiling. Named ladder = `COMPOSITION_ORDER` (policies.py);
   per-leader composition on `sensor.hvac_plan.center_compositions` (read-only, incl.
   deploy-dark). The drop-in point the unified planner (Phase 6) replaces.
+- `supervisor_config.py` — `SupervisorConfig.from_options()` (C3, v0.35.0): every
+  option coerced+clamped ONCE/cycle into a frozen snapshot on `HouseState.config`
+  (the clean config half the planner reads). Lives at the villa_hvac level (imports
+  const) so the pure `supervisor/` package stays HA-import-free.
 - `__init__.py` — wires coordinator + engine (policies=PRESET_POLICIES) + the
   legacy controllers; `async_unload_entry`.
 - `sensor.py` — diagnostics: `Cooling demand zones`, `hvac_plan` (#11), per-zone

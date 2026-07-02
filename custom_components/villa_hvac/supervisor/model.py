@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:  # runtime-pure: the annotation never resolves at import time
+    from ..supervisor_config import SupervisorConfig
 
 
 
@@ -116,6 +119,10 @@ class HouseState:
     consenso_freddo: str | None = None
     consenso_caldo: str | None = None
     blocco: str | None = None          # central BLOCCO switch state
+    # C3: the parsed-once options snapshot (SupervisorConfig). The clean config half
+    # the planner reads; None in bare-constructed test states. Runtime-pure (the
+    # type is a TYPE_CHECKING import), read duck-typed by attribute.
+    config: "SupervisorConfig | None" = None
 
 
 

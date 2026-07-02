@@ -65,86 +65,16 @@ from .const import (
     COOL_GAIN_SOLAR,
     CLEAR_SKY_GHI,
     COOL_PULLDOWN,
-    DEFAULT_PV_BIAS_COAST_RELAX,
-    DEFAULT_PV_BIAS_DAILY_NEED_KWH,
-    DEFAULT_PV_BIAS_EFF_FRACTION,
-    DEFAULT_PV_BIAS_EFF_MIN,
-    DEFAULT_PV_BIAS_FLOOR_POOR,
-    DEFAULT_PV_BIAS_FLOOR_RICH,
     FORECASTSOLAR_GHI_FACTOR,
     FORECASTSOLAR_POWER,
-    OPT_PV_BIAS_COAST_RELAX,
-    OPT_PV_BIAS_DAILY_NEED_KWH,
-    OPT_PV_BIAS_EFF_FRACTION,
-    OPT_PV_BIAS_EFF_MIN,
-    OPT_PV_BIAS_FLOOR_POOR,
-    OPT_PV_BIAS_FLOOR_RICH,
     PV_BIAS_MIN_DWELL,
     COOL_VALVES,
-    DEFAULT_COMFORT_DAY_FROM,
-    DEFAULT_COMFORT_DAY_TO,
-    DEFAULT_COMFORT_ENABLED,
-    DEFAULT_COMFORT_NIGHT_FROM,
-    DEFAULT_COMFORT_NIGHT_TO,
-    DEFAULT_COMFORT_RELAX,
-    OPT_COMFORT_DAY_FROM,
-    OPT_COMFORT_DAY_TO,
-    OPT_COMFORT_ENABLED,
-    OPT_COMFORT_NIGHT_FROM,
-    OPT_COMFORT_NIGHT_TO,
-    OPT_COMFORT_RELAX,
-    DEFAULT_BAND_SLAM,
-    DEFAULT_BAND_WIDTH,
-    DEFAULT_DUTY_COMFORT_MAX,
-    DEFAULT_DUTY_COOLOFF,
-    DEFAULT_DUTY_MAX_STINT,
-    DEFAULT_DUTY_PEAK_OUTDOOR,
-    DEFAULT_FREE_COOL_ENABLED,
-    DEFAULT_FREE_COOL_OUTDOOR,
-    DEFAULT_MIN_COMPRESSOR_OFF,
-    DEFAULT_MIN_COMPRESSOR_ON,
-    DEFAULT_MODEL_ENABLED,
-    DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
-    DEFAULT_PRECOOL_MARGIN,
-    DEFAULT_PRECOOL_MAX_DEPTH,
-    DEFAULT_PRECOOL_OFFSET,
-    DEFAULT_REGIME_ENABLED,
-    DEFAULT_REGIME_MEDIUM_RATIO,
-    DEFAULT_REGIME_PEAK_RATIO,
-    DEFAULT_SHADING_ENABLED,
-    DEFAULT_SHADING_PROPORTIONAL,
-    DEFAULT_SOLAR_FORECAST,
-    DEFAULT_SHADING_POSITION,
-    DEFAULT_SHADING_SOLAR,
     FORECAST_REFRESH,
     HOUSE_MODE_NIGHT,
-    OPT_BAND_SLAM,
-    OPT_BAND_WIDTH,
-    OPT_DUTY_COMFORT_MAX,
-    OPT_DUTY_COOLOFF,
-    OPT_DUTY_MAX_STINT,
-    OPT_DUTY_PEAK_OUTDOOR,
-    OPT_FREE_COOL_ENABLED,
-    OPT_FREE_COOL_OUTDOOR,
-    OPT_MIN_COMPRESSOR_OFF,
-    OPT_MIN_COMPRESSOR_ON,
-    OPT_MODEL_ENABLED,
-    OPT_PRECOOL_LOOKAHEAD_HOURS,
-    OPT_PRECOOL_MARGIN,
-    OPT_PRECOOL_MAX_DEPTH,
-    OPT_PRECOOL_OFFSET,
-    OPT_REGIME_ENABLED,
-    OPT_REGIME_MEDIUM_RATIO,
-    OPT_REGIME_PEAK_RATIO,
-    OPT_SOLAR_FORECAST,
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
     SEASON_SUMMER,
-    OPT_SHADING_DEFAULT_POSITION,
-    OPT_SHADING_ENABLED,
-    OPT_SHADING_PROPORTIONAL,
-    OPT_SHADING_SOLAR,
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
@@ -182,6 +112,7 @@ from .policies import (
     ThermalEstimator,
 )
 from .returnhome import AwayReturnController
+from .supervisor_config import SupervisorConfig
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -295,26 +226,22 @@ class _Comfort:
         return 0.0 if in_window(self.minute, frm, to) else self.relax
 
 
-def _comfort_config(hass: HomeAssistant, entry: ConfigEntry, center: float | None) -> "_Comfort | None":
+def _comfort_config(cfg: SupervisorConfig, center: float | None) -> "_Comfort | None":
     """Build the comfort schedule, or None when disabled / no center. The relax is
     pre-capped so center+relax can never exceed duty_comfort_max."""
-    if center is None or not entry.options.get(OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED):
+    if center is None or not cfg.comfort_enabled:
         return None
-    comfort_max = float(entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX))
-    relax = min(
-        float(entry.options.get(OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX)),
-        max(0.0, comfort_max - center),
-    )
+    relax = min(cfg.comfort_relax, max(0.0, cfg.duty_comfort_max - center))
     local = dt_util.now()
     return _Comfort(
         relax=relax,
         day=(
-            _parse_hhmm(entry.options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM), 480),
-            _parse_hhmm(entry.options.get(OPT_COMFORT_DAY_TO, DEFAULT_COMFORT_DAY_TO), 1380),
+            _parse_hhmm(cfg.comfort_day_from, 480),
+            _parse_hhmm(cfg.comfort_day_to, 1380),
         ),
         night=(
-            _parse_hhmm(entry.options.get(OPT_COMFORT_NIGHT_FROM, DEFAULT_COMFORT_NIGHT_FROM), 1320),
-            _parse_hhmm(entry.options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO), 480),
+            _parse_hhmm(cfg.comfort_night_from, 1320),
+            _parse_hhmm(cfg.comfort_night_to, 480),
         ),
         minute=local.hour * 60 + local.minute,
     )
@@ -339,21 +266,10 @@ class RoomModelStore:
         await self._store.async_save(data)
 
 
-def _lookahead(entry: ConfigEntry) -> timedelta:
-    """The #9 planner lookahead horizon (default 12 h)."""
-    return timedelta(
-        hours=float(
-            entry.options.get(
-                OPT_PRECOOL_LOOKAHEAD_HOURS, DEFAULT_PRECOOL_LOOKAHEAD_HOURS
-            )
-        )
-    )
-
-
 def _make_run_plan(
-    entry: ConfigEntry, forecast, now, outdoor: float | None
+    cfg: SupervisorConfig, forecast, now, outdoor: float | None
 ) -> RunPlan:
-    """Build the #9 forecast run-plan from the cached forecast + options.
+    """Build the #9 forecast run-plan from the cached forecast + parsed config.
 
     Shared by `build_house_state` (which keeps only `.precool`) and the #11 plan
     view (which surfaces the full plan), so both reason over the same horizon.
@@ -362,11 +278,9 @@ def _make_run_plan(
         list(forecast),
         now,
         outdoor,
-        peak_threshold=float(
-            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
-        ),
-        lookahead=_lookahead(entry),
-        margin=float(entry.options.get(OPT_PRECOOL_MARGIN, DEFAULT_PRECOOL_MARGIN)),
+        peak_threshold=cfg.duty_peak_outdoor,
+        lookahead=cfg.lookahead,
+        margin=cfg.precool_margin,
     )
 
 
@@ -442,6 +356,10 @@ def build_house_state(
     paused = window.paused if window is not None else set()
     # F2: the learned thermal model (blended prior->learned) for each leader.
     thermal = getattr(getattr(coordinator, "engine", None), "thermal", None)
+    # C3: parse + clamp every option ONCE for this cycle (kills the scattered
+    # float(entry.options.get(...)) sites below); the clean config half the planner
+    # reads, stored on the HouseState.
+    cfg = SupervisorConfig.from_options(entry.options)
 
     # Hoisted once (reused for the F4b comfort relax + the HouseState below).
     mode = current_house_mode(hass, entry)
@@ -451,7 +369,7 @@ def build_house_state(
         house_setpoint + house_offset
         if (house_setpoint is not None and house_offset is not None) else None
     )
-    comfort = _comfort_config(hass, entry, center)  # None when disabled / no center
+    comfort = _comfort_config(cfg, center)  # None when disabled / no center
 
     zones: dict[str, ZoneSnapshot] = {}
     for zone_id, zone in ZONES.items():
@@ -523,9 +441,6 @@ def build_house_state(
         )
 
     # #6: enrich each shadeable cover with its room's shade target + block flag.
-    shading_default = int(
-        entry.options.get(OPT_SHADING_DEFAULT_POSITION, DEFAULT_SHADING_POSITION)
-    )
     resolved_covers = base_covers if base_covers is not None else shadeable_covers(hass)
     covers = tuple(
         replace(
@@ -549,46 +464,28 @@ def build_house_state(
     )
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
-    plan = _make_run_plan(entry, forecast, now, outdoor)
+    plan = _make_run_plan(cfg, forecast, now, outdoor)
     return HouseState(
         now=now,
         zones=zones,
         covers=covers,
         sun_azimuth=sun.attributes.get("azimuth") if sun else None,
         sun_elevation=sun.attributes.get("elevation") if sun else None,
-        shading_enabled=bool(
-            entry.options.get(OPT_SHADING_ENABLED, DEFAULT_SHADING_ENABLED)
-        ),
-        shading_solar_threshold=float(
-            entry.options.get(OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR)
-        ),
-        shading_default_position=shading_default,
-        shading_proportional=bool(
-            entry.options.get(OPT_SHADING_PROPORTIONAL, DEFAULT_SHADING_PROPORTIONAL)
-        ),
-        band_width=float(entry.options.get(OPT_BAND_WIDTH, DEFAULT_BAND_WIDTH)),
-        band_slam=float(entry.options.get(OPT_BAND_SLAM, DEFAULT_BAND_SLAM)),
-        model_learning_enabled=bool(
-            entry.options.get(OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED)
-        ),
+        shading_enabled=cfg.shading_enabled,
+        shading_solar_threshold=cfg.shading_solar,
+        shading_default_position=cfg.shading_default_position,
+        shading_proportional=cfg.shading_proportional,
+        band_width=cfg.band_width,
+        band_slam=cfg.band_slam,
+        model_learning_enabled=cfg.model_learning_enabled,
         duty_enabled=duty_cycle_enabled(hass, entry),
-        duty_max_stint=timedelta(
-            minutes=float(entry.options.get(OPT_DUTY_MAX_STINT, DEFAULT_DUTY_MAX_STINT))
-        ),
-        duty_cooloff=timedelta(
-            minutes=float(entry.options.get(OPT_DUTY_COOLOFF, DEFAULT_DUTY_COOLOFF))
-        ),
-        duty_comfort_max=float(
-            entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX)
-        ),
+        duty_max_stint=cfg.duty_max_stint,
+        duty_cooloff=cfg.duty_cooloff,
+        duty_comfort_max=cfg.duty_comfort_max,
         comfort_floor=comfort_floor(hass, entry, house_setpoint),
-        duty_peak_outdoor=float(
-            entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
-        ),
+        duty_peak_outdoor=cfg.duty_peak_outdoor,
         precool=plan.precool,
-        precool_offset=float(
-            entry.options.get(OPT_PRECOOL_OFFSET, DEFAULT_PRECOOL_OFFSET)
-        ),
+        precool_offset=cfg.precool_offset,
         night_active=night_active,
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
         comfort_enabled=comfort is not None,
@@ -597,14 +494,11 @@ def build_house_state(
         auto_setback=setback_on,
         house_setpoint=house_setpoint,
         mode_offset=house_offset,
-        free_cool_enabled=bool(
-            entry.options.get(OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED)
-        ),
-        free_cool_threshold=float(
-            entry.options.get(OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR)
-        ),
+        free_cool_enabled=cfg.free_cool_enabled,
+        free_cool_threshold=cfg.free_cool_outdoor,
         outdoor_temp=outdoor,
         solar=_num(hass, SOLAR_RADIATION),
+        config=cfg,
         consenso_freddo=data.get("consenso_freddo"),
         consenso_caldo=data.get("consenso_caldo"),
         blocco=blocco_state.state if blocco_state is not None else None,
@@ -899,16 +793,15 @@ class SupervisorEngine:
         opinions) and the live DutyState; never runs the stateful controllers,
         so it has no side effects and is safe to compute while deploy-dark.
         """
+        cfg = state.config
         desired = merge_desired(pure_outputs)
-        run_plan = _make_run_plan(
-            self.entry, self._forecast, state.now, state.outdoor_temp
-        )
+        run_plan = _make_run_plan(cfg, self._forecast, state.now, state.outdoor_temp)
         duty_state = (
             self._duty_controller.duty if self._duty_controller else DutyState()
         )
         plan = build_plan(
             state, run_plan, desired, duty_state,
-            list(self._forecast), _lookahead(self.entry),
+            list(self._forecast), cfg.lookahead,
         )
         # F3a: classify the house regime read-only (pure; deploy-dark safe). On
         # priors the ratio is mis-scaled, so it's trusted only for converged-k
@@ -921,24 +814,15 @@ class SupervisorEngine:
         )
         regime = select_regime(
             load, at_peak=plan.at_peak, free_cool=plan.free_cool,
-            peak_ratio=float(
-                self.entry.options.get(OPT_REGIME_PEAK_RATIO, DEFAULT_REGIME_PEAK_RATIO)
-            ),
-            medium_ratio=float(
-                self.entry.options.get(
-                    OPT_REGIME_MEDIUM_RATIO, DEFAULT_REGIME_MEDIUM_RATIO
-                )
-            ),
+            peak_ratio=cfg.regime_peak_ratio, medium_ratio=cfg.regime_medium_ratio,
         )
         # F3b: per-room 12h forward simulation + pre-cool (pure, plan-only).
         solar_curve, solar_model = self._solar_forecast(state)
         trajectories = build_room_plans(
             state, self._room_params(state), list(self._forecast),
-            solar_curve, _lookahead(self.entry),
+            solar_curve, cfg.lookahead,
             dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
-            max_precool_depth=float(
-                self.entry.options.get(OPT_PRECOOL_MAX_DEPTH, DEFAULT_PRECOOL_MAX_DEPTH)
-            ),
+            max_precool_depth=cfg.precool_max_depth,
         )
         return replace(
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
@@ -983,8 +867,9 @@ class SupervisorEngine:
         """F3c: classify the regime and, if coalescing is enabled + MEDIUM, advance
         the coordinator and return (phase_override, BLOCCO opinion). Gated by
         regime_enabled AND duty_cycle AND fan_pacing; otherwise resets + yields."""
+        cfg = state.config
         coalescing = (
-            self.entry.options.get(OPT_REGIME_ENABLED, DEFAULT_REGIME_ENABLED)
+            cfg.regime_enabled
             and duty_cycle_enabled(self.hass, self.entry)
             and fan_pacing_enabled(self.hass, self.entry)
         )
@@ -1006,12 +891,7 @@ class SupervisorEngine:
         )
         regime = select_regime(
             load, at_peak=at_peak, free_cool=free_cool,
-            peak_ratio=float(
-                self.entry.options.get(OPT_REGIME_PEAK_RATIO, DEFAULT_REGIME_PEAK_RATIO)
-            ),
-            medium_ratio=float(
-                self.entry.options.get(OPT_REGIME_MEDIUM_RATIO, DEFAULT_REGIME_MEDIUM_RATIO)
-            ),
+            peak_ratio=cfg.regime_peak_ratio, medium_ratio=cfg.regime_medium_ratio,
         )
         center = (
             state.house_setpoint + state.mode_offset
@@ -1020,12 +900,7 @@ class SupervisorEngine:
         )
         return self.regime.step(
             state, regime=regime, center=center,
-            min_on=timedelta(
-                minutes=float(self.entry.options.get(OPT_MIN_COMPRESSOR_ON, DEFAULT_MIN_COMPRESSOR_ON))
-            ),
-            min_off=timedelta(
-                minutes=float(self.entry.options.get(OPT_MIN_COMPRESSOR_OFF, DEFAULT_MIN_COMPRESSOR_OFF))
-            ),
+            min_on=cfg.min_compressor_on, min_off=cfg.min_compressor_off,
         )
 
     def _room_params(self, state: HouseState) -> dict[str, RoomParams]:
@@ -1059,8 +934,8 @@ class SupervisorEngine:
         forecast cloud, then NOWCAST-ANCHORED to the live gw3000a (the regional
         cloud is unreliable here). Marker: `nowcast` when anchored, `forecast`
         when only the shape was available, `flat` (current solar) when disabled."""
-        n = int(_lookahead(self.entry).total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
-        if not self.entry.options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST):
+        n = int(state.config.lookahead.total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
+        if not state.config.solar_forecast_enabled:
             cur = state.solar if state.solar is not None else 0.0
             return [cur] * n, "flat"
         if _AstralObserver is None:  # astral unavailable -> flat fallback
@@ -1142,36 +1017,18 @@ class SupervisorEngine:
                 if t_out is None:
                     t_out = state.outdoor_temp
                 eff.append(cooling_effectiveness(center, t_out, s, a=a, b=b, c=c, k=k))
+            cfg = state.config
             pv_kwh = _num(self.hass, CONDOMINIO_PV_REMAINING)
             local = dt_util.now()  # LOCAL day clock (state.now is UTC)
             frac_remaining = max(0.0, (1440 - (local.hour * 60 + local.minute)) / 1440.0)
-            daily_need = float(
-                self.entry.options.get(
-                    OPT_PV_BIAS_DAILY_NEED_KWH, DEFAULT_PV_BIAS_DAILY_NEED_KWH
-                )
-            )
             raw = energy_precool_decision(
                 effectiveness=eff, now_index=0,
                 pv_kwh_remaining=pv_kwh,
-                consumption_kwh_remaining=daily_need * frac_remaining,
-                eff_fraction=float(
-                    self.entry.options.get(
-                        OPT_PV_BIAS_EFF_FRACTION, DEFAULT_PV_BIAS_EFF_FRACTION
-                    )
-                ),
-                eff_min=float(
-                    self.entry.options.get(OPT_PV_BIAS_EFF_MIN, DEFAULT_PV_BIAS_EFF_MIN)
-                ),
-                floor_rich=float(
-                    self.entry.options.get(
-                        OPT_PV_BIAS_FLOOR_RICH, DEFAULT_PV_BIAS_FLOOR_RICH
-                    )
-                ),
-                floor_poor=float(
-                    self.entry.options.get(
-                        OPT_PV_BIAS_FLOOR_POOR, DEFAULT_PV_BIAS_FLOOR_POOR
-                    )
-                ),
+                consumption_kwh_remaining=cfg.pv_daily_need_kwh * frac_remaining,
+                eff_fraction=cfg.pv_eff_fraction,
+                eff_min=cfg.pv_eff_min,
+                floor_rich=cfg.pv_floor_rich,
+                floor_poor=cfg.pv_floor_poor,
             )
         except Exception:  # noqa: BLE001 - PV bias is best-effort, never break the cycle
             _LOGGER.debug("PV bias failed; no opinion this cycle", exc_info=True)
@@ -1191,14 +1048,9 @@ class SupervisorEngine:
             if self._pv_since is None or (prev is not None and prev.mode != raw.mode):
                 self._pv_since = state.now
         self._pv_decision = decision
-        coast_relax = float(
-            self.entry.options.get(
-                OPT_PV_BIAS_COAST_RELAX, DEFAULT_PV_BIAS_COAST_RELAX
-            )
-        )
         return replace(
             state, pv_mode=decision.mode, pv_floor=decision.floor,
-            pv_coast_relax=coast_relax,
+            pv_coast_relax=state.config.pv_coast_relax,
         )
 
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
