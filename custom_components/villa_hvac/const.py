@@ -568,6 +568,16 @@ MODEL_K_CONF_MIN = 20
 # k is learned only on a HELD, STEADY fan window (manuale on + the % barely moving),
 # never from AUTO/unknown or a pull-down transient.
 MODEL_CAP_FAN_STABILITY = 12   # max (max-min) fan % spread over the window to learn k
+# D1 identifiability gate (F4c Phase 4): {a,b,c} is only trustworthy for the planner
+# once its passive (w=False) windows actually EXCITED the solar coefficient b — i.e.
+# a window with real irradiance was fed, not only sunless nights. Track the max
+# window-mean solar over passive windows (ThermalParams.s_hi) and require it >= this.
+# NOTE: this gates the (later-phase) PLANNER eligibility only; it does NOT change the
+# blend that feeds live fan sizing (that stays prior-dominant + band-guaranteed).
+# Hard (gain-limited) rooms rarely produce w=True held-fan windows, so their learned
+# k is a NIGHT-CALIBRATED LOWER BOUND — their planner trajectories stay ADVISORY
+# until k converges (may never, at the ~0-net 34°C peak). See ENGINE_REVIEW §6.
+MODEL_SOLAR_EXCITATION_MIN = 150.0   # W/m²: min max-window-solar for abc to be "identified"
 
 # --- F3: regime selector + coalescing -----------------------------------------
 # Aggregate per-room load/capacity -> regime; in MEDIUM, coalesce demand into

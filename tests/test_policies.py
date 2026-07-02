@@ -739,3 +739,73 @@ def test_comfort_breach_ignores_non_cooling_zones():
         duty_comfort_max=27.0,
     )
     assert _comfort_breach(hot_leader) is True            # a hot leader trips it
+
+
+# --- D1: identifiability gating (F4c Phase 4) --------------------------------
+
+def test_abc_identified_requires_solar_excitation():
+    from custom_components.villa_hvac.supervisor import ThermalParams, abc_identified
+
+    # high passive count but sunless windows (s_hi ~ 0) -> b never excited -> NO.
+    night = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=100, s_hi=0.0)
+    assert abc_identified(night, conf_min=40, solar_excitation_min=150) is False
+    # high count + a real daytime passive window seen -> identified.
+    day = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=100, s_hi=400.0)
+    assert abc_identified(day, conf_min=40, solar_excitation_min=150) is True
+    # excited but too few updates -> not yet identified.
+    fresh = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=5, s_hi=400.0)
+    assert abc_identified(fresh, conf_min=40, solar_excitation_min=150) is False
+
+
+def test_planner_eligible_needs_abc_and_converged_k():
+    from custom_components.villa_hvac.supervisor import ThermalParams, planner_eligible
+
+    kw = dict(abc_conf_min=40, k_conf_min=20, solar_excitation_min=150)
+    # abc identified but k not converged (n_k=0) -> advisory, not eligible.
+    no_k = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=100, n_k=0, s_hi=400.0)
+    assert planner_eligible(no_k, **kw) is False
+    # abc identified + k converged -> eligible.
+    ok = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=100, n_k=100, s_hi=400.0)
+    assert planner_eligible(ok, **kw) is True
+    # k converged but abc not solar-excited -> not eligible.
+    no_sun = ThermalParams(a=0.03, b=0.0008, c=0.0, k=1.2, n=100, n_k=100, s_hi=0.0)
+    assert planner_eligible(no_sun, **kw) is False
+
+
+def test_passive_update_tracks_solar_excitation():
+    from custom_components.villa_hvac.supervisor import (
+        ParamBounds,
+        rls_passive_update,
+        seed_params,
+    )
+
+    p = seed_params(0.03, 0.0008, 0.0, 1.2, p0_passive=(0.5, 1e-5, 4.0), p0_k=4.0)
+    bounds = ParamBounds(0.5, 0.01, 3.0, 0.1, 5.0)
+    kw = dict(dt_dt=0.1, t_out=25.0, temp=24.0, forgetting=0.995, bounds=bounds)
+    p2 = rls_passive_update(p, solar=400.0, **kw)
+    assert p2.s_hi == 400.0                       # a sunny passive window raises it
+    p3 = rls_passive_update(p2, solar=0.0, **kw)   # a later night window
+    assert p3.s_hi == 400.0                        # never lowers the max
+
+
+def test_estimator_exposes_planner_eligibility():
+    est = ThermalEstimator()
+    ok = {"a": 0.03, "b": 0.0008, "c": 0.0, "k": 1.2, "p": [0.0] * 9,
+          "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0}
+    night = {**ok, "s_hi": 0.0}
+    est.load({"day": ok, "night": night})
+    assert est.solar_excitation("day") == 400.0
+    assert est.abc_identified("day") is True and est.planner_eligible("day") is True
+    assert est.abc_identified("night") is False and est.planner_eligible("night") is False
+    assert est.planner_eligible("unknown") is False  # no model -> not eligible
+
+
+def test_estimator_persists_solar_excitation():
+    est = ThermalEstimator()
+    est.load({"lr": {"a": 0.03, "b": 0.0008, "c": 0.0, "k": 1.2, "p": [0.0] * 9,
+                     "p_k": 0.0, "n": 5, "s_hi": 320.0}})
+    dumped = est.dump()
+    assert dumped["lr"]["s_hi"] == 320.0
+    est2 = ThermalEstimator()
+    est2.load(dumped)
+    assert est2.solar_excitation("lr") == 320.0

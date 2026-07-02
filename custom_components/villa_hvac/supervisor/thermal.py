@@ -42,6 +42,10 @@ class ThermalParams:
     p_k: float = 0.0                    # scalar k variance
     n: int = 0                          # passive ({a,b,c}) update count
     n_k: int = 0                        # capacity (k) update count
+    s_hi: float = 0.0                   # D1: max window-mean solar over passive
+    #                                     windows (solar-excitation of b). abc is
+    #                                     only planner-trustworthy once this crosses
+    #                                     the excitation threshold.
 
 
 
@@ -126,7 +130,12 @@ def rls_passive_update(
     )
     if not all(math.isfinite(v) for v in (a, b, c, *new_p)):
         return params
-    return replace(params, a=a, b=b, c=c, p=new_p, n=params.n + 1)
+    # D1: track the max window-mean solar over passive windows (b excitation). A
+    # room whose passive windows were all sunless nights keeps s_hi ~ 0 -> b is
+    # never identified -> not planner-eligible (though the count-based confidence,
+    # used by the live blend, still rises — this gate is planner-only).
+    s_hi = max(params.s_hi, solar) if solar >= 0 else params.s_hi
+    return replace(params, a=a, b=b, c=c, p=new_p, n=params.n + 1, s_hi=s_hi)
 
 
 
@@ -172,6 +181,38 @@ def k_confidence(params: ThermalParams, *, conf_min: float) -> float:
     """0→1 trust in the learned k, crossing 0.5 at conf_min updates."""
     total = params.n_k + conf_min
     return params.n_k / total if total > 0 else 0.0
+
+
+def abc_identified(
+    params: ThermalParams, *, conf_min: float, solar_excitation_min: float
+) -> bool:
+    """D1: is {a,b,c} trustworthy for the PLANNER? True only when the count-based
+    confidence has crossed 0.5 (n >= conf_min) AND the passive windows actually
+    excited b (max window-mean solar >= solar_excitation_min). Guards against a `b`
+    fit only on sunless nights (the gain-limited-room failure mode)."""
+    return (
+        abc_confidence(params, conf_min=conf_min) >= 0.5
+        and params.s_hi >= solar_excitation_min
+    )
+
+
+def planner_eligible(
+    params: ThermalParams, *,
+    abc_conf_min: float, k_conf_min: float, solar_excitation_min: float,
+    k_confidence_min: float = 0.5,
+) -> bool:
+    """D1: may the unified planner's reference drive THIS room's center? Only when
+    {a,b,c} is identified (excited) AND k has converged (> 0 and confidence
+    crossed). Hard gain-limited rooms rarely produce a held-fan k window, so their
+    k stays a night-calibrated lower bound and this stays False -> their planner
+    trajectories remain ADVISORY (comfort is always held by the reactive band)."""
+    return (
+        abc_identified(
+            params, conf_min=abc_conf_min, solar_excitation_min=solar_excitation_min
+        )
+        and params.k > 0
+        and k_confidence(params, conf_min=k_conf_min) >= k_confidence_min
+    )
 
 
 

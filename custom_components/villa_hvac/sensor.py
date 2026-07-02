@@ -356,6 +356,12 @@ class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "k_confidence": round(k_conf, 3),
             "passive_updates": m.n,
             "capacity_updates": m.n_k,
+            # D1: solar excitation of b + whether the planner may trust this room.
+            "solar_excitation": round(thermal.solar_excitation(self._zone_id), 1)
+            if thermal else 0.0,
+            "abc_identified": thermal.abc_identified(self._zone_id) if thermal else False,
+            "planner_eligible": thermal.planner_eligible(self._zone_id)
+            if thermal else False,
         }
 
 

@@ -403,6 +403,7 @@ def build_house_state(
                     break
         # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
         m_a = m_b = m_c = m_k = m_conf = m_kconf = None
+        m_eligible = False
         is_leader = bool(
             zone.get("climate") and emitter == "fancoil"
             and fancoils and not zone.get("follows")
@@ -412,6 +413,7 @@ def build_house_state(
             abc_conf, k_conf = thermal.confidence(zone_id)
             m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
             m_conf, m_kconf = min(abc_conf, k_conf), k_conf
+            m_eligible = thermal.planner_eligible(zone_id)  # D1: planner gate
         # F4b: relax the band center while OUTSIDE this room's comfort window.
         comfort_relax = (
             comfort.relax_for(bedroom=bool(zone.get("bedroom")))
@@ -436,6 +438,7 @@ def build_house_state(
             fancoil_units=tuple((f, _manuale_switch(f)) for f in fancoils),
             model_a=m_a, model_b=m_b, model_c=m_c, model_k=m_k,
             model_confidence=m_conf, model_k_confidence=m_kconf,
+            model_planner_eligible=m_eligible,
             fan_pct=fan_pct, manuale_on=manuale_on,
             comfort_relax=comfort_relax,
         )

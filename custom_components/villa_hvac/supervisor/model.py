@@ -45,6 +45,10 @@ class ZoneSnapshot:
     model_k: float | None = None
     model_confidence: float | None = None    # min(abc, k) confidence, for display
     model_k_confidence: float | None = None   # k-only confidence (regime/F2b gating)
+    # D1: may the unified planner's reference drive this room's center? (abc
+    # solar-excited + identified AND k converged). Hard gain-limited rooms stay
+    # False -> their planner trajectory is ADVISORY (comfort held by the band).
+    model_planner_eligible: bool = False
     # F2b: live actuation state, so the estimator can learn k only on held-fan
     # windows (manuale on + known %) — never from AUTO/unknown fan.
     fan_pct: int | None = None

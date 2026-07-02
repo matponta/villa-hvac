@@ -65,6 +65,8 @@ from .const import (
     MODEL_P0_PASSIVE,
     MODEL_RATE_MAX_MIN,
     MODEL_RATE_WINDOW_MIN,
+    MODEL_SOLAR_EXCITATION_MIN,
+    REGIME_K_CONF_MIN,
     COALESCE_ENTER_FRACTION,
     COALESCE_EXIT_FRACTION,
     PRESET_BUILDING_PROTECTION,
@@ -97,6 +99,7 @@ from .supervisor import (
     ThermalParams,
     ZoneSnapshot,
     abc_confidence,
+    abc_identified,
     band_step,
     blend_params,
     capacity_fan,
@@ -107,6 +110,7 @@ from .supervisor import (
     estimate_rate,
     fan_lever,
     k_confidence,
+    planner_eligible,
     preset_lever,
     rls_capacity_update,
     rls_passive_update,
@@ -584,6 +588,33 @@ class ThermalEstimator:
             k_confidence(learned, conf_min=MODEL_K_CONF_MIN),
         )
 
+    def solar_excitation(self, zone_id: str) -> float:
+        """D1: max window-mean solar over this zone's passive windows (b excitation)."""
+        learned = self.params.get(zone_id)
+        return learned.s_hi if learned is not None else 0.0
+
+    def abc_identified(self, zone_id: str) -> bool:
+        """D1: is {a,b,c} solar-excited + confident enough to trust for the planner?"""
+        learned = self.params.get(zone_id)
+        if learned is None:
+            return False
+        return abc_identified(
+            learned, conf_min=MODEL_ABC_CONF_MIN,
+            solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
+        )
+
+    def planner_eligible(self, zone_id: str) -> bool:
+        """D1: may the unified planner's reference drive this room's center? (abc
+        identified AND k converged). Hard gain-limited rooms stay False -> advisory."""
+        learned = self.params.get(zone_id)
+        if learned is None:
+            return False
+        return planner_eligible(
+            learned, abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
+            solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
+            k_confidence_min=REGIME_K_CONF_MIN,
+        )
+
     def observe(self, state: HouseState) -> None:
         """One read-only learning tick over all cooling leaders. Mutates params
         only; returns nothing. Safe to call deploy-dark."""
@@ -673,13 +704,14 @@ class ThermalEstimator:
                     a=float(d["a"]), b=float(d["b"]), c=float(d["c"]), k=float(d["k"]),
                     p=tuple(float(x) for x in d["p"]), p_k=float(d["p_k"]),
                     n=int(d.get("n", 0)), n_k=int(d.get("n_k", 0)),
+                    s_hi=float(d.get("s_hi", 0.0)),
                 )
             except (KeyError, TypeError, ValueError):
                 continue
             if (
                 len(p.p) == 9
-                and all(math.isfinite(x) for x in (p.a, p.b, p.c, p.k, p.p_k, *p.p))
-                and p.a >= 0 and p.b >= 0 and p.c >= 0 and p.k > 0
+                and all(math.isfinite(x) for x in (p.a, p.b, p.c, p.k, p.p_k, p.s_hi, *p.p))
+                and p.a >= 0 and p.b >= 0 and p.c >= 0 and p.k > 0 and p.s_hi >= 0
             ):
                 self.params[zid] = p
 
@@ -687,7 +719,7 @@ class ThermalEstimator:
         return {
             zid: {
                 "a": p.a, "b": p.b, "c": p.c, "k": p.k,
-                "p": list(p.p), "p_k": p.p_k, "n": p.n, "n_k": p.n_k,
+                "p": list(p.p), "p_k": p.p_k, "n": p.n, "n_k": p.n_k, "s_hi": p.s_hi,
             }
             for zid, p in self.params.items()
         }
