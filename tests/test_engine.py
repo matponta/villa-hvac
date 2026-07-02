@@ -940,3 +940,21 @@ async def test_lever_call_timeout_is_swallowed(hass, monkeypatch):
         "climate", "set_preset_mode",
         {"entity_id": "climate.x", "preset_mode": "comfort"},
     )
+
+
+async def test_plan_view_surfaces_center_compositions(hass):
+    """F4c Phase 1 observability: the plan view exposes each cooling leader's
+    composed band center (computed read-only every cycle, even deploy-dark)."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    hass.states.async_set(
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+    )  # summer
+    hass.states.async_set("sensor.clima_salotto", "25.0")
+    await engine._tick()  # deploy-dark tick still computes the plan view
+
+    comps = engine.plan_view.center_compositions
+    assert "living_room" in comps
+    # Casa (offset 0) + default setpoint 24, no features -> base center 24.
+    assert comps["living_room"]["source"] == "base"
+    assert comps["living_room"]["center"] == 24.0

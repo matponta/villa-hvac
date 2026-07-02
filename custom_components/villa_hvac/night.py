@@ -6,6 +6,13 @@ the 2 bedrooms. When the house enters Notte the bedrooms go silent (fancoil to
 the room overheats and silences it again once it cools. Leaving Notte or the
 daily auto-wake restores AUTO so KNX resumes control.
 
+C1 (F4c Phase 1): #2b is now an ARBITER CONTROLLER — `NightSilenceController`
+emits `{switch:manuale, fan:pct}` lever opinions merged like #9/#3, so every
+bedroom write flows through the engine's single reconcile writer (with its
+manual-override tracking) instead of direct service calls. `active` is DERIVED
+from the house mode (== Notte) + Auto-setback + a wake latch, so a reboot-in-Notte
+re-enters silence via the controller (no startup-resync special case).
+
 `evaluate_guard` is pure (no HA) so the hysteresis is unit-testable.
 """
 from __future__ import annotations
@@ -14,20 +21,14 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import logging
 
-from homeassistant.components.fan import (
-    ATTR_PERCENTAGE,
-    DOMAIN as FAN_DOMAIN,
-    SERVICE_SET_PERCENTAGE,
-)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_OFF, SERVICE_TURN_ON
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
-from homeassistant.util import dt as dt_util
 
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_NIGHT_THRESHOLD,
+    HOUSE_MODE_NIGHT,
     NIGHT_GUARD_FAN_PCT,
     NIGHT_GUARD_HIGH,
     NIGHT_GUARD_LOW,
@@ -35,7 +36,8 @@ from .const import (
     OPT_NIGHT_THRESHOLD,
     ZONES,
 )
-from .controller import auto_setback_enabled, supervisor_enabled
+from .controller import current_house_mode
+from .supervisor import fan_lever, switch_lever
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -86,28 +88,44 @@ def evaluate_guard(
     return replace(state, below_since=None), None
 
 
-class NightController:
-    """Drives camere silenziose for the bedrooms, off the coordinator tick."""
+class NightSilenceController:
+    """#2b camere silenziose as an engine merge controller (C1).
+
+    Each cycle the engine calls `__call__(state)`; while the house is in Notte
+    (`state.night_active`) it returns `{switch:manuale on, fan:pct}` opinions for
+    the 2 bedrooms — silenced (fan 0), or the heat-guard low stage when a room
+    overheats. The engine's reconcile arbiter does the writing, so #2b is no
+    longer a second direct writer. On the Notte-exit cycle it emits a one-shot
+    manuale release; placed AFTER FanBandController in the merge, so FanBand
+    re-taking a bedroom for pacing wins over that release.
+
+    `active` is DERIVED (mode == Notte, Auto-setback on, not woken) — computed in
+    `build_house_state` into `state.night_active` — so a reboot-in-Notte silences
+    via the next cycle with no startup-resync branch. The auto-wake timer sets a
+    latch that releases the silence until the mode leaves Notte.
+    """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry, coordinator) -> None:
         self.hass = hass
         self.entry = entry
         self.coordinator = coordinator
-        self.active = False
         self._guards: dict[str, GuardState] = {zid: GuardState() for zid, _ in bedrooms()}
-        self._unsub_coord = None
+        self._managing: set[str] = set()
+        self._woken = False
         self._unsub_wake = None
-        self._busy = False
+
+    @property
+    def woken(self) -> bool:
+        """The auto-wake latch (build_house_state reads it to gate night_active)."""
+        return self._woken
 
     def start(self) -> None:
-        self._unsub_coord = self.coordinator.async_add_listener(self._on_coordinator_update)
         self._schedule_wake()
 
     def stop(self) -> None:
-        if self._unsub_coord:
-            self._unsub_coord()
         if self._unsub_wake:
             self._unsub_wake()
+            self._unsub_wake = None
 
     def _threshold(self) -> float:
         try:
@@ -115,56 +133,39 @@ class NightController:
         except (TypeError, ValueError):
             return DEFAULT_NIGHT_THRESHOLD
 
-    async def enter(self) -> None:
-        """Silence all bedrooms (manuale on + fan off)."""
-        self.active = True
+    def __call__(self, state) -> dict:
+        # Reset the wake latch once we've left Notte, so a fresh Notte re-silences.
+        if state.house_mode != HOUSE_MODE_NIGHT:
+            self._woken = False
+        if not state.night_active:
+            return self._release()
+        threshold = self._threshold()
+        out: dict = {}
         for zid, zone in bedrooms():
-            self._guards[zid] = GuardState()
-            await self._switch(zone["manuale_switch"], on=True)
-            await self._fan_off(zone["fancoils"][0])
+            z = state.zones.get(zid)
+            temp = z.temp if z is not None else None
+            new_state, _action = evaluate_guard(
+                self._guards[zid], temp, threshold, state.now
+            )
+            self._guards[zid] = new_state
+            out[switch_lever(zone["manuale_switch"])] = "on"
+            out[fan_lever(zone["fancoils"][0])] = (
+                NIGHT_GUARD_FAN_PCT if new_state.cooling else 0
+            )
+            self._managing.add(zid)
+        return out
 
-    async def exit(self) -> None:
-        """Wake all bedrooms (manuale off -> KNX resumes)."""
-        self.active = False
+    def _release(self) -> dict:
+        """One-shot hand-back: manuale off for the bedrooms we were silencing."""
+        if not self._managing:
+            return {}
+        out: dict = {}
         for zid, zone in bedrooms():
-            self._guards[zid] = GuardState()
-            await self._switch(zone["manuale_switch"], on=False)
-
-    @callback
-    def _on_coordinator_update(self) -> None:
-        if not self.active or self._busy:
-            return
-        self.hass.async_create_task(self._run_guard())
-
-    async def _run_guard(self) -> None:
-        self._busy = True
-        try:
-            # Strict deploy-dark: if the master is off, release (manuale off) and
-            # stop guarding.
-            if not supervisor_enabled(self.hass, self.entry):
-                if self.active:
-                    await self.exit()
-                return
-            if not auto_setback_enabled(self.hass, self.entry):
-                if self.active:
-                    await self.exit()
-                return
-            threshold = self._threshold()
-            now = dt_util.utcnow()
-            zone_temps = self.coordinator.data.get("zone_temps") or {}
-            for zid, zone in bedrooms():
-                temp = (zone_temps.get(zid) or {}).get("value")
-                new_state, action = evaluate_guard(
-                    self._guards[zid], temp, threshold, now
-                )
-                self._guards[zid] = new_state
-                if action == "cool":
-                    await self._switch(zone["manuale_switch"], on=True)
-                    await self._fan_pct(zone["fancoils"][0], NIGHT_GUARD_FAN_PCT)
-                elif action == "silence":
-                    await self._fan_off(zone["fancoils"][0])
-        finally:
-            self._busy = False
+            if zid in self._managing:
+                out[switch_lever(zone["manuale_switch"])] = "off"
+                self._guards[zid] = GuardState()
+        self._managing.clear()
+        return out
 
     def _schedule_wake(self) -> None:
         raw = str(self.entry.options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME))
@@ -181,26 +182,13 @@ class NightController:
 
     @callback
     def _on_wake(self, now: datetime) -> None:
-        if self.active:
-            self.hass.async_create_task(self.exit())
-
-    async def _switch(self, entity_id: str, *, on: bool) -> None:
-        await self.hass.services.async_call(
-            "switch",
-            SERVICE_TURN_ON if on else SERVICE_TURN_OFF,
-            {ATTR_ENTITY_ID: entity_id},
-            blocking=True,
-        )
-
-    async def _fan_off(self, entity_id: str) -> None:
-        await self.hass.services.async_call(
-            FAN_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: entity_id}, blocking=True
-        )
-
-    async def _fan_pct(self, entity_id: str, pct: int) -> None:
-        await self.hass.services.async_call(
-            FAN_DOMAIN,
-            SERVICE_SET_PERCENTAGE,
-            {ATTR_ENTITY_ID: entity_id, ATTR_PERCENTAGE: pct},
-            blocking=True,
-        )
+        # Auto-wake: latch the silence off (until the mode leaves Notte) + nudge the
+        # engine to hand the bedrooms back this cycle rather than the next tick.
+        if current_house_mode(self.hass, self.entry) != HOUSE_MODE_NIGHT or self._woken:
+            return
+        self._woken = True
+        engine = getattr(self.coordinator, "engine", None)
+        if engine is not None:
+            self.entry.async_create_background_task(
+                self.hass, engine.request_run(), "villa_hvac_night_wake"
+            )

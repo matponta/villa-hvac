@@ -19,6 +19,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    COMFORT_FLOOR_MAX,
+    COMFORT_FLOOR_MIN,
+    COMFORT_FLOOR_OFFSET,
+    DEFAULT_COMFORT_FLOOR,
     DEFAULT_FAN_MIN,
     DOMAIN,
     HOUSE_MODE_AWAY,
@@ -26,6 +30,7 @@ from .const import (
     HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     MODE_PRESET,
+    OPT_COMFORT_FLOOR,
     OPT_FAN_MIN,
     OPT_SEASON,
     PRESET_CONTROLLABLE_EMITTERS,
@@ -174,6 +179,30 @@ def fan_min(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> int:
     return max(0, min(100, int(value)))
 
 
+def comfort_floor(
+    hass: HomeAssistant, entry: ConfigEntry, house_setpoint: float | None
+) -> float:
+    """Comfort floor (°C) — the lower bound on the band center (F4c Phase 1).
+
+    Explicit `OPT_COMFORT_FLOOR` if set, else the dynamic default
+    `house_setpoint − COMFORT_FLOOR_OFFSET` (so it tracks the slider until the
+    owner pins an absolute value). Clamped to [COMFORT_FLOOR_MIN, COMFORT_FLOOR_MAX].
+    """
+    raw = entry.options.get(OPT_COMFORT_FLOOR)
+    base: float | None = None
+    if raw is not None:
+        try:
+            base = float(raw)
+        except (TypeError, ValueError):
+            base = None
+    if base is None:
+        base = (
+            house_setpoint - COMFORT_FLOOR_OFFSET
+            if house_setpoint is not None else DEFAULT_COMFORT_FLOOR
+        )
+    return max(COMFORT_FLOOR_MIN, min(COMFORT_FLOOR_MAX, base))
+
+
 def supervisor_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """True only when the master Supervisor switch is on (strict deploy-dark).
 
@@ -277,24 +306,17 @@ def current_house_setpoint(hass: HomeAssistant, entry: ConfigEntry) -> float | N
 async def apply_house_mode(
     hass: HomeAssistant, entry: ConfigEntry, mode: str, *, force: bool = False
 ) -> None:
-    """Trigger a supervisor pass for `mode` + the camere-silenziose overlay.
+    """Trigger a supervisor pass so the mode change actuates.
 
-    Preset/setpoint actuation now belongs to the engine's policy stack
-    (`house_mode_policy` #2a, with #4/#10 as higher-priority overrides), so this
-    just nudges the engine to recompute against current state. Strict
-    deploy-dark: a no-op while the master Supervisor switch is off. `force` is
-    kept for call-site compatibility — the engine reads live Auto-setback state,
-    so no forced write is needed.
+    Preset/setpoint actuation belongs to the engine's policy stack
+    (`house_mode_policy` #2a, with #4/#10 as higher-priority overrides) and the
+    camere-silenziose overlay (#2b) is now a merge controller
+    (`NightSilenceController`, C1) that derives its active state from the house
+    mode — so this just nudges the engine to recompute against current state.
+    Strict deploy-dark: a no-op while the master Supervisor switch is off. `mode`/
+    `force` are kept for call-site compatibility; the engine reads live state.
     """
     engine = getattr(entry.runtime_data, "engine", None)
     if engine is None or not engine.enabled:
         return
     await engine.request_run()
-
-    # Camere silenziose overlay for the bedrooms (#2b) on Notte transitions.
-    night = getattr(entry.runtime_data, "night", None)
-    if night is not None:
-        if mode == HOUSE_MODE_NIGHT:
-            await night.enter()
-        else:
-            await night.exit()

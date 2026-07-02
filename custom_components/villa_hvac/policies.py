@@ -12,6 +12,29 @@ building_protection and overrides the house-mode preset.
 These are built and tested here; the live cutover (registering them as the
 engine's production policies and removing the legacy direct-write paths) is a
 separate, deliberate step.
+
+COMPOSITION CONTRACT (F4c Phase 1)
+----------------------------------
+Two things are "composed" each cycle and must stay legible:
+
+1. **Presets** — merged by priority via `merge_desired([*controllers, *policies])`.
+   Only `disabled_zones` (#10) / `window_pause` (#4) / `free_cool` (#5) may drive a
+   zone to `building_protection`; `house_mode` (#2a) is the low-priority base.
+2. **The fancoil band `center`** — composed by the pure `compose_center`
+   (supervisor.py) from the base mode center + AT MOST ONE feature, in the fixed
+   priority named in `COMPOSITION_ORDER` below, then bounded by the comfort floor.
+
+INVARIANTS (regression = stop; pinned by tests/test_composition.py):
+  * No RAISING feature (PV coast, F4b comfort-relax) pushes the center above
+    `duty_comfort_max` (the ceiling). [The base mode center itself may sit above
+    the ceiling for a Via/Notte setback — that is not a "feature".]
+  * No LOWERING feature (PV bank, #9 pre-cool) pushes the center below
+    `comfort_floor`.
+  * PV bias and #9 pre-cool are MUTUALLY EXCLUSIVE center sources (PV wins when it
+    has an opinion) — never double-counted.
+  * The unified planner (Phase 6) replaces this ladder as the center SOURCE behind
+    `switch.unified_planner`; the reactive band (`band_step` + this floor/ceiling)
+    still clamps + owns the closed-loop comfort guarantee.
 """
 from __future__ import annotations
 
@@ -66,8 +89,6 @@ from .supervisor import (
     active_cooling_leaders,
     DutyState,
     HouseState,
-    PRECOOL_BANK,
-    PRECOOL_COAST,
     REGIME_MEDIUM,
     RegimeState,
     TRANSIENT_STATES,
@@ -79,6 +100,7 @@ from .supervisor import (
     band_step,
     blend_params,
     capacity_fan,
+    compose_center,
     cooling_load,
     cover_lever,
     duty_decision,
@@ -301,6 +323,19 @@ PRESET_POLICIES = (
 # The full stack the engine runs (presets + the cover-lever shading policy).
 POLICIES = (*PRESET_POLICIES, shading_policy)
 
+# The named band-center composition ladder (HIGH→LOW), enforced by `compose_center`
+# (supervisor.py). Documentation + the reference the composition tests assert
+# against; changing the order here without updating compose_center + the tests is
+# a bug. Each entry: (feature, direction, bound). "base" is the mode center
+# (house_setpoint + mode_offset, incl. the #8 effective-mode override).
+COMPOSITION_ORDER: tuple[tuple[str, str, str], ...] = (
+    ("pv_bank", "lower", "comfort_floor"),      # PV: bank coolth toward the floor
+    ("pv_coast", "raise", "duty_comfort_max"),  # PV: defer within comfort (XOR bank)
+    ("precool", "lower", "comfort_floor"),      # #9: pre-cool ahead of a peak
+    ("comfort_relax", "raise", "duty_comfort_max"),  # F4b: drift warm off-window
+    ("base", "none", "none"),                   # mode center (setback-free)
+)
+
 
 def _comfort_breach(state: HouseState) -> bool:
     """True if any actively-managed cooling leader is above the duty comfort-max
@@ -439,34 +474,22 @@ class FanBandController:
                 center_base is not None
                 and z.enabled and not z.paused and not free_cool
             )
+            # Compose the band center from the base mode center + at most one active
+            # feature (PV bank/coast XOR #9 pre-cool + F4b relax), then bound it by
+            # the comfort floor. compose_center is the single named, tested home for
+            # that ladder — the drop-in point the unified planner (Phase 6) replaces.
             center = center_base
-            # PV/energy-aware pre-cool (F4c-lite) takes precedence when it has an
-            # opinion — it's the daily scheduler. BANK drives center down to the floor
-            # (a comfort floor, so it also caps how deep temp-peak precool can go);
-            # COAST raises center to defer, capped at duty_comfort_max. Comfort stays
-            # guaranteed per-zone by band_step (it still cools above center + B/2).
-            if eligible and center_base is not None and state.pv_mode == PRECOOL_BANK and (
-                state.pv_floor is not None
-            ):
-                center = min(center_base, state.pv_floor)
-            elif eligible and center_base is not None and state.pv_mode == PRECOOL_COAST:
-                # Respect F4b: inside a room's comfort window (comfort enabled +
-                # z.comfort_relax == 0) DON'T defer — keep it tight. Outside the
-                # window, defer by the larger of the PV relax and the F4b relax.
-                protected = state.comfort_enabled and z.comfort_relax == 0
-                coast = 0.0 if protected else max(state.pv_coast_relax, z.comfort_relax)
-                center = center_base + coast
-                if state.duty_comfort_max is not None:
-                    center = min(center, state.duty_comfort_max)
-            else:
-                if eligible and state.precool and state.duty_enabled and (
-                    state.precool_offset is not None
-                ):
-                    center = center_base - state.precool_offset
-                # F4b: outside its comfort window, let the room drift warm (capped by
-                # the engine so center never exceeds duty_comfort_max).
-                if eligible and center is not None and z.comfort_relax:
-                    center += z.comfort_relax
+            if eligible and center_base is not None:
+                center = compose_center(
+                    base=center_base,
+                    pv_mode=state.pv_mode, pv_floor=state.pv_floor,
+                    pv_coast_relax=state.pv_coast_relax,
+                    comfort_enabled=state.comfort_enabled, comfort_relax=z.comfort_relax,
+                    precool=state.precool, precool_offset=state.precool_offset,
+                    duty_enabled=state.duty_enabled,
+                    comfort_ceiling=state.duty_comfort_max,
+                    comfort_floor=state.comfort_floor,
+                ).center
             # F3c: when the regime coordinator coalesces, it dictates the phase;
             # the band controller still slams the setpoint + sizes the fan exactly
             # as usual, so exactly ONE component decides the phase per zone.

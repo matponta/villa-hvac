@@ -395,6 +395,75 @@ def capacity_fan(
     return int(min(100, max(fan_min_pct, level)))
 
 
+# --- Band-center composition (F4c Phase 1, pure) -----------------------------
+# The band `center` for a cooling leader is composed from the base mode center
+# (house_setpoint + mode_offset, incl. the #8 override) plus at most one feature
+# per cycle, in a FIXED priority: PV bank / PV coast are mutually exclusive with
+# the #9 pre-cool + F4b comfort-relax path. This is the single, named, testable
+# home for that ladder (was inline in FanBandController) — so the composition is
+# observable, unit-pinned, and the drop-in point the unified planner (Phase 6)
+# replaces behind its switch. See COMPOSITION_ORDER in policies.py.
+#
+# INVARIANT: a comfort FLOOR bounds the LOWERING features (pv_bank, precool)
+# symmetrically to how duty_comfort_max (the ceiling) bounds the RAISING features
+# (pv_coast, comfort_relax). The base mode center itself is NOT ceiling-clamped —
+# a Via/Notte setback center legitimately sits above the comfort ceiling.
+
+
+@dataclass(frozen=True)
+class CenterComposition:
+    """How one leader's band center was composed this cycle (observability)."""
+
+    center: float
+    base: float           # house_setpoint + mode_offset (the mode's center)
+    source: str           # base | pv_bank | pv_coast | precool | comfort_relax
+    floored: bool = False  # the comfort floor clamped a lowering feature up
+
+
+def compose_center(
+    *,
+    base: float,
+    pv_mode: str | None,
+    pv_floor: float | None,
+    pv_coast_relax: float,
+    comfort_enabled: bool,
+    comfort_relax: float,
+    precool: bool,
+    precool_offset: float | None,
+    duty_enabled: bool,
+    comfort_ceiling: float | None,
+    comfort_floor: float | None,
+) -> CenterComposition:
+    """Compose the band center from the base + the active feature, then apply the
+    comfort floor. Behaviour-preserving replica of the old FanBandController ladder
+    (PV bank/coast mutually exclusive with #9 pre-cool + F4b relax) + the floor.
+    """
+    center = base
+    source = "base"
+    if pv_mode == PRECOOL_BANK and pv_floor is not None:
+        center = min(base, pv_floor)              # bank down toward the floor
+        source = "pv_bank"
+    elif pv_mode == PRECOOL_COAST:
+        protected = comfort_enabled and comfort_relax == 0  # inside comfort window
+        coast = 0.0 if protected else max(pv_coast_relax, comfort_relax)
+        center = base + coast
+        if comfort_ceiling is not None:            # raising feature capped at ceiling
+            center = min(center, comfort_ceiling)
+        source = "pv_coast" if coast else "base"
+    else:
+        if precool and duty_enabled and precool_offset is not None:
+            center = base - precool_offset          # #9 pre-cool lowers
+            source = "precool"
+        if comfort_relax:                           # F4b relax (pre-capped by engine)
+            center += comfort_relax
+            if source == "base":
+                source = "comfort_relax"
+    floored = comfort_floor is not None and center < comfort_floor
+    if floored:
+        center = comfort_floor                      # LOWERING features bounded below
+    return CenterComposition(center=center, base=base, source=source, floored=floored)
+
+
 # --- F2: online self-refining per-room thermal model (pure RLS) --------------
 # Learn dT/dt = a(T_out−T) + b·S + c − k·u_eff per room. {a,b,c} are identified
 # on w=False windows (no chilled water → the −k·u term vanishes → a clean 3-param
@@ -652,6 +721,7 @@ class HouseState:
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None
     duty_comfort_max: float | None = None  # abort cooloff if a zone exceeds this
+    comfort_floor: float | None = None  # F4c: lower bound; lowering features can't go below
     duty_peak_outdoor: float | None = None  # at/above this outdoor temp -> no duty
     precool: bool = False               # #9 forecast: hot peak imminent
     precool_offset: float | None = None  # °C below target while pre-cooling
@@ -767,6 +837,10 @@ class PlanView:
     # F3b: per-room 12h trajectories (set by the engine via replace()).
     room_trajectories: tuple = ()
     solar_model: str = "flat"   # F4a: "flat" prior vs "forecast" (sun×cloud model)
+    # F4c Phase 1: per-leader band-center composition (base + active feature +
+    # floor) for observability — zone_id -> CenterComposition. Computed read-only
+    # every cycle (even deploy-dark) so the composition is visible before go-live.
+    center_compositions: dict = field(default_factory=dict)
 
 
 def _is_free_cooling(state: HouseState) -> bool:

@@ -188,7 +188,8 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
     # Recorder-exclude the heavy, every-30s attributes so they don't bloat the DB
     # (the 12h per-room trajectories + the forecast curve + per-zone lists).
     _unrecorded_attributes = frozenset(
-        {"room_plans", "forecast", "zones", "covers_closing", "per_zone"}
+        {"room_plans", "forecast", "zones", "covers_closing", "per_zone",
+         "center_compositions"}
     )
 
     def __init__(
@@ -232,6 +233,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "k_house": plan.k_house,
             "load_ratio": plan.load_ratio,
             "solar_model": plan.solar_model,
+            "center_compositions": plan.center_compositions,
             "season": plan.season,
             "house_mode": plan.house_mode,
             "cooling": plan.cooling,

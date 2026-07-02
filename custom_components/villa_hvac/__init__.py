@@ -10,7 +10,7 @@ from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import RoomModelStore, SupervisorEngine
-from .night import NightController
+from .night import NightSilenceController
 from .policies import POLICIES, DutyController, FanBandController
 from .returnhome import ReturnHomeManager
 from .window import WindowController
@@ -25,9 +25,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
 
-    # Camere silenziose controller (#2b); attached to the coordinator so the
-    # house-mode driver can reach it via entry.runtime_data.
-    night = NightController(hass, entry, coordinator)
+    # Camere silenziose controller (#2b, C1): an engine merge controller. Attached
+    # to the coordinator (build_house_state reads its wake latch) and added to the
+    # engine's controllers below so its bedroom writes flow through the arbiter.
+    night = NightSilenceController(hass, entry, coordinator)
     coordinator.night = night
     night.start()
     entry.async_on_unload(night.stop)
@@ -60,7 +61,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     engine = SupervisorEngine(
         hass, entry, coordinator,
         policies=POLICIES,
-        controllers=(DutyController(), FanBandController()),
+        # NightSilenceController LAST: on the Notte-exit cycle its one-shot manuale
+        # release must yield to FanBandController re-taking a bedroom for pacing.
+        controllers=(DutyController(), FanBandController(), night),
         model_store=model_store,
     )
     engine.thermal.load(model_data)

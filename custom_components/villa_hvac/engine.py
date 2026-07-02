@@ -117,6 +117,7 @@ from .const import (
     DEFAULT_SHADING_POSITION,
     DEFAULT_SHADING_SOLAR,
     FORECAST_REFRESH,
+    HOUSE_MODE_NIGHT,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
     OPT_DUTY_COMFORT_MAX,
@@ -160,6 +161,7 @@ from .const import (
 )
 from .controller import (
     auto_setback_enabled,
+    comfort_floor,
     current_house_mode,
     current_house_setpoint,
     current_season,
@@ -192,8 +194,10 @@ from .supervisor import (
     ZoneSnapshot,
     RoomParams,
     _is_cooling_leader,
+    _is_free_cooling,
     build_plan,
     build_room_plans,
+    compose_center,
     house_load_index,
     in_window,
     merge_desired,
@@ -534,7 +538,15 @@ def build_house_state(
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     sun = hass.states.get("sun.sun")
+    # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
+    # Computed here (not from a NightController.active flag) so it's consistent
+    # with what NightSilenceController computes THIS cycle (no transition lag) and
+    # so a reboot-in-Notte re-silences with no startup-resync branch.
     night = getattr(coordinator, "night", None)
+    setback_on = auto_setback_enabled(hass, entry)
+    night_active = (
+        mode == HOUSE_MODE_NIGHT and setback_on and not getattr(night, "woken", False)
+    )
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
     plan = _make_run_plan(entry, forecast, now, outdoor)
@@ -569,6 +581,7 @@ def build_house_state(
         duty_comfort_max=float(
             entry.options.get(OPT_DUTY_COMFORT_MAX, DEFAULT_DUTY_COMFORT_MAX)
         ),
+        comfort_floor=comfort_floor(hass, entry, house_setpoint),
         duty_peak_outdoor=float(
             entry.options.get(OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR)
         ),
@@ -576,12 +589,12 @@ def build_house_state(
         precool_offset=float(
             entry.options.get(OPT_PRECOOL_OFFSET, DEFAULT_PRECOOL_OFFSET)
         ),
-        night_active=bool(getattr(night, "active", False)),
+        night_active=night_active,
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
         comfort_enabled=comfort is not None,
         season=current_season(hass, entry),
         house_mode=mode,
-        auto_setback=auto_setback_enabled(hass, entry),
+        auto_setback=setback_on,
         house_setpoint=house_setpoint,
         mode_offset=house_offset,
         free_cool_enabled=bool(
@@ -931,7 +944,40 @@ class SupervisorEngine:
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
             solar_model=solar_model,
+            center_compositions=self._center_compositions(state),
         )
+
+    def _center_compositions(self, state: HouseState) -> dict:
+        """F4c Phase 1 observability: the composed band center per eligible cooling
+        leader (base + the active feature + comfort floor), computed read-only via
+        the same pure `compose_center` the FanBandController uses. Visible even
+        deploy-dark, so each feature's contribution to the center is inspectable
+        before actuation lights up. Mirrors the controller's eligibility."""
+        if state.house_setpoint is None or state.mode_offset is None:
+            return {}
+        base = state.house_setpoint + state.mode_offset
+        free = _is_free_cooling(state)
+        out: dict = {}
+        for z in state.zones.values():
+            if not (_is_cooling_leader(z) and z.enabled and not z.paused) or free:
+                continue
+            if z.bedroom and state.night_active:
+                continue
+            comp = compose_center(
+                base=base,
+                pv_mode=state.pv_mode, pv_floor=state.pv_floor,
+                pv_coast_relax=state.pv_coast_relax,
+                comfort_enabled=state.comfort_enabled, comfort_relax=z.comfort_relax,
+                precool=state.precool, precool_offset=state.precool_offset,
+                duty_enabled=state.duty_enabled,
+                comfort_ceiling=state.duty_comfort_max,
+                comfort_floor=state.comfort_floor,
+            )
+            out[z.zone_id] = {
+                "center": round(comp.center, 2), "base": round(comp.base, 2),
+                "source": comp.source, "floored": comp.floored,
+            }
+        return out
 
     def _regime_step(self, state: HouseState) -> tuple[dict[str, str], str | None]:
         """F3c: classify the regime and, if coalescing is enabled + MEDIUM, advance

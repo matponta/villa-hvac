@@ -86,26 +86,100 @@ async def _select_mode(hass, mode):
 
 
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
+    """C1: camere silenziose now flows through the arbiter — silence = manuale on
+    + fan set_percentage 0 (was a direct fan.turn_off); waking releases manuale."""
     await _setup(hass)
     await enable_supervisor(hass)
     seed_thermostats(hass)
+    # Seed the bedroom fan + manuale states so the arbiter's reconcile has a live
+    # value to diff against (routing through the engine, not direct writes).
+    for fan, man in (
+        ("fan.fancoil_camera_padronale", "switch.fancoil_camera_padronale_manuale"),
+        ("fan.fancoil_camera_gabriele", "switch.fancoil_camera_gabriele_manuale"),
+    ):
+        hass.states.async_set(fan, "on", {"percentage": 100})
+        hass.states.async_set(man, "off")
     async_mock_service(hass, "climate", "set_preset_mode")
     async_mock_service(hass, "climate", "set_temperature")
     sw_on = async_mock_service(hass, "switch", "turn_on")
     sw_off = async_mock_service(hass, "switch", "turn_off")
-    fan_off = async_mock_service(hass, "fan", "turn_off")
+    fan_pct = async_mock_service(hass, "fan", "set_percentage")
 
     await _select_mode(hass, "Notte")
 
     on_targets = {c.data["entity_id"] for c in sw_on}
-    fan_targets = {c.data["entity_id"] for c in fan_off}
     assert "switch.fancoil_camera_padronale_manuale" in on_targets
     assert "switch.fancoil_camera_gabriele_manuale" in on_targets
-    assert "fan.fancoil_camera_padronale" in fan_targets
-    assert "fan.fancoil_camera_gabriele" in fan_targets
+    silenced = {c.data["entity_id"] for c in fan_pct if c.data.get("percentage") == 0}
+    assert "fan.fancoil_camera_padronale" in silenced
+    assert "fan.fancoil_camera_gabriele" in silenced
+
+    # Simulate the manuale writes landing (mocked services don't update state), so
+    # the wake cycle sees "on" and writes the release.
+    hass.states.async_set("switch.fancoil_camera_padronale_manuale", "on")
+    hass.states.async_set("switch.fancoil_camera_gabriele_manuale", "on")
 
     await _select_mode(hass, "Casa")
 
     off_targets = {c.data["entity_id"] for c in sw_off}
     assert "switch.fancoil_camera_padronale_manuale" in off_targets
     assert "switch.fancoil_camera_gabriele_manuale" in off_targets
+
+
+# --- C1: NightSilenceController as a merge controller ------------------------
+
+def _night_state(*, mode="Notte", night_active=True, temps=None, now=T0):
+    from custom_components.villa_hvac.supervisor import HouseState, ZoneSnapshot
+
+    temps = temps or {}
+    zones = {}
+    for zid, zone in bedrooms():
+        zones[zid] = ZoneSnapshot(
+            zone_id=zid, name=zone["name"], climate=zone.get("climate"),
+            emitter="fancoil", temp=temps.get(zid), bedroom=True,
+            fancoil_units=((zone["fancoils"][0], zone["manuale_switch"]),),
+        )
+    return HouseState(now=now, zones=zones, house_mode=mode, night_active=night_active)
+
+
+def _night_ctrl():
+    from custom_components.villa_hvac.night import NightSilenceController
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    return NightSilenceController(None, entry, None)  # hass/coordinator unused in __call__
+
+
+def test_night_controller_silences_when_active():
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    out = _night_ctrl()(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}))
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "on"
+        assert out[fan_lever(zone["fancoils"][0])] == 0  # silence
+
+
+def test_night_controller_heat_guard_runs_fan():
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    c = _night_ctrl()
+    hot = {"main_bedroom": 28.0, "gabriroom": 28.0}  # > 26 threshold
+    c(_night_state(temps=hot, now=T0))                       # starts the above-timer
+    out = c(_night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH))  # sustained -> cool
+    assert out[fan_lever("fan.fancoil_camera_padronale")] == NIGHT_GUARD_FAN_PCT
+
+
+def test_night_controller_releases_once_on_exit():
+    from custom_components.villa_hvac.supervisor import switch_lever
+
+    c = _night_ctrl()
+    c(_night_state(night_active=True))                       # manage the bedrooms
+    out = c(_night_state(mode="Casa", night_active=False))   # left Notte -> release
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+    # one-shot: a second inactive cycle has no opinion (nothing left to hand back).
+    assert c(_night_state(mode="Casa", night_active=False)) == {}
+
+
+def test_night_controller_yields_when_inactive_and_unmanaged():
+    # Never entered Notte -> no opinion at all (doesn't fight FanBand for bedrooms).
+    assert _night_ctrl()(_night_state(mode="Casa", night_active=False)) == {}

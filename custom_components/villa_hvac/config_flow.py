@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_COMFORT_DAY_TO,
     DEFAULT_COMFORT_ENABLED,
     DEFAULT_COMFORT_NIGHT_FROM,
+    DEFAULT_COMFORT_FLOOR,
     DEFAULT_COMFORT_NIGHT_TO,
     DEFAULT_COMFORT_RELAX,
     DEFAULT_FAN_MIN,
@@ -60,6 +61,7 @@ from .const import (
     OPT_COMFORT_DAY_FROM,
     OPT_COMFORT_DAY_TO,
     OPT_COMFORT_ENABLED,
+    OPT_COMFORT_FLOOR,
     OPT_COMFORT_NIGHT_FROM,
     OPT_COMFORT_NIGHT_TO,
     OPT_COMFORT_RELAX,
@@ -231,6 +233,13 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=24, max=42)),
+                # F4c comfort FLOOR: the lower bound on the band center (symmetric to
+                # duty_comfort_max). Default 22 (= the default setpoint 24 − 2); until
+                # pinned here it tracks house_setpoint − 2 dynamically.
+                vol.Optional(
+                    OPT_COMFORT_FLOOR,
+                    default=options.get(OPT_COMFORT_FLOOR, DEFAULT_COMFORT_FLOOR),
+                ): vol.All(vol.Coerce(float), vol.Range(min=16, max=26)),
                 vol.Optional(
                     OPT_WEATHER_ENTITY,
                     default=options.get(OPT_WEATHER_ENTITY, WEATHER_ENTITY_DEFAULT),

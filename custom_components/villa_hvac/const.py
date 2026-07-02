@@ -496,6 +496,20 @@ DEFAULT_DUTY_COOLOFF = 30
 DEFAULT_DUTY_COMFORT_MAX = 27.0
 DEFAULT_DUTY_PEAK_OUTDOOR = 30.0  # duty-adaptive: above this, let the PdC run
 
+# --- Comfort FLOOR (F4c Phase 1) ---------------------------------------------
+# A lower bound on the band center, symmetric to duty_comfort_max (the ceiling):
+# no center-LOWERING feature (#9 pre-cool, PV bank) may drive a cooling zone's
+# center below it — preventing over-pre-cool (cold occupied rooms + wasted
+# energy). First-class + a prerequisite for the unified planner (which can drive
+# the center down). Owner decision: an explicit option, default = house_setpoint −
+# COMFORT_FLOOR_OFFSET when unset, clamped to a sane absolute range. It bounds only
+# LOWERING; it never raises a legitimately-high Via/Notte setback center.
+OPT_COMFORT_FLOOR = "comfort_floor"
+COMFORT_FLOOR_OFFSET = 2.0     # dynamic default = house_setpoint − this
+DEFAULT_COMFORT_FLOOR = 22.0   # options-flow default (= the default setpoint 24 − 2)
+COMFORT_FLOOR_MIN = 16.0       # clamp: never bank below this
+COMFORT_FLOOR_MAX = 26.0       # clamp: a floor above this would fight normal cooling
+
 # --- #3 v2: comfort-band control + capacity-matched fan (F1) ------------------
 # The KNX thermostat's internal hysteresis is too narrow -> the valve bang-bangs
 # every ~2 min near setpoint. We impose our OWN wide hysteresis by slamming the

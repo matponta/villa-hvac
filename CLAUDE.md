@@ -125,9 +125,19 @@ do local bang-bang regulation.
   releases BLOCCO on unload.
 - `policies.py` — pure preset policies (`disabled_zones` #10 > `window_pause` #4 >
   `house_mode` #2a), priority-merged. `PRESET_POLICIES` registered in `__init__`.
-- `controller.py`/`window.py`/`switch.py`/`night.py`/`away.py` — now **triggers**:
-  they update state (paused set, #10 flag, mode) and call `engine.request_run()`;
-  the engine is the single writer. (#2b night fan/manuale still direct, master-gated.)
+- `controller.py`/`window.py`/`switch.py`/`away.py` — **triggers**: they update
+  state (paused set, #10 flag, mode) and call `engine.request_run()`; the engine is
+  the single writer. `night.py` #2b is now **`NightSilenceController`, a merge
+  controller** (C1, v0.33.0) emitting `{switch:manuale, fan:pct}` opinions through
+  the arbiter — no more direct writes; `active` is derived from Notte+setback+wake
+  latch (`state.night_active`), so a reboot-in-Notte re-silences via the controller.
+- **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
+  composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
+  ONE feature (PV bank/coast XOR #9 pre-cool + F4b relax), bounded by a first-class
+  **comfort FLOOR** (`OPT_COMFORT_FLOOR`, default house_setpoint−2) symmetric to the
+  `duty_comfort_max` ceiling. Named ladder = `COMPOSITION_ORDER` (policies.py);
+  per-leader composition on `sensor.hvac_plan.center_compositions` (read-only, incl.
+  deploy-dark). The drop-in point the unified planner (Phase 6) replaces.
 - `__init__.py` — wires coordinator + engine (policies=PRESET_POLICIES) + the
   legacy controllers; `async_unload_entry`.
 - `sensor.py` — diagnostics: `Cooling demand zones`, `hvac_plan` (#11), per-zone
