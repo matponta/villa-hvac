@@ -78,7 +78,7 @@ lives inside the cost function.
 | **C3** `SupervisorConfig` parsed-once dataclass | **Prerequisite** | The planner adds many options; parse+clamp them once instead of scattering more `float(entry.options.get(...))`. Also splits `HouseState` into measured-state vs config — the planner needs the measured half clean. |
 | **C4** explicit opt-in dependency graph | **Co-requisite** | The planner adds `switch.unified_planner` with real deps (needs fan_pacing + comfort_floor + per-room k) and **retires** the "don't co-enable pv_bias + regime" caveat (one scheduler owns the center). C4 *is* the resolution of that caveat. |
 | **D1** thermal identifiability gating | **Safety gate** | The planner's schedule is only trustworthy when the model is identified. D1 (trust `abc` only when solar range was excited; `k` as night-calibrated lower bound; hard-room advisory) is the gate that decides *when the reference may drive control*. |
-| **C1** NightController → arbiter controller | **Strong fold-in** | #2b camere-silenziose is the last direct writer bypassing the arbiter. The Phase-1 composition contract is *incomplete* while a second writer exists. Fold it onto the arbiter so ALL center/lever writes go through one place. |
+| **C1** NightController → arbiter controller | **IN → Phase 1** (owner) | #2b camere-silenziose is the last direct writer bypassing the arbiter. The Phase-1 composition contract is *incomplete* while a second writer exists. Fold it onto the arbiter so ALL center/lever writes go through one place. |
 | **B4** state-robustness leftovers | **Fold-in (input trust)** | consenso `unavailable` → freeze duty timer / skip learning window; sort `_cloud` before `_forecast_cloud_at` early-break; legacy `"closed"` vs numeric cover position; stale-fused-temp diagnostic. These harden the *inputs* the planner keys off. Do before trusting the planner. |
 | **C5** perf/robustness nits | **Fold-in (cheap)** | cache `shadeable_covers` (full registry scan every 30 s) + registry-updated listener; wrap each lever `_call` in `asyncio.wait_for` (one wedged KNX write can't stall a cycle — matters more once the planner adds work); hoist the `astral` import. Slot into Phase 0. |
 | knx.yaml salotto duplicate-ID | **Fold-in (live wart)** | Not repo code — the KNX config defines the salotto fancoil twice (`5/2/1`, `5/4/1`). Clean it so #3's salotto entities are unambiguous. Do opportunistically. |
@@ -107,7 +107,7 @@ shippable and safe after every phase.
   the KNX yaml + reload, verify no dup-ID ERROR at boot.
 - Deliverable: hardened inputs; no behavior change to actuation. Ship deploy-dark-safe.
 
-### Phase 1 — Composition contract + comfort floor + observability  *(Track A, foundation)*
+### Phase 1 — Composition contract + comfort floor + observability + unify writers  *(Track A, foundation)*
 - **Named composition order.** Extract the implicit `_cycle` order into a documented
   `COMPOSITION_ORDER` table/constant + a module docstring invariant: *"no feature may raise a
   center above `duty_comfort_max`; only `disabled`/`window`/`free_cool` policies may drive
@@ -124,8 +124,14 @@ shippable and safe after every phase.
   behavior-preserving when the planner is off.
 - **Observability**: a diagnostic sensor (extend the `hvac_levers` idea) showing each feature's
   contribution to the final center per cycle.
+- **C1 — NightController → arbiter (fold in, owner: IN).** Convert #2b camere-silenziose from the
+  last *direct* writer into a `night_silence` controller emitting `{switch:manuale, fan:pct}`
+  lever opinions merged like the others, so ALL writes flow through the one arbiter and the
+  composition contract above is actually complete. Then simplify `_startup_resync` (drop its
+  `apply_house_mode` night branch). Tests: #2b still fires the Padronale/Gabriele night burst +
+  heat-guard, and a reboot-in-Notte re-enters silence via the controller (not the resync).
 - Deliverable: the real defect (myopic, comment-only composition) fixed + regression-proofed;
-  the comfort floor closed. **Valuable even if Track B never ships.**
+  the comfort floor closed; every writer through the arbiter. **Valuable even if Track B never ships.**
 
 ### Phase 2 — Split `supervisor.py`  *(C2, scaffolding)*
 - Pure package: `arbiter` (LeverState/reconcile/merge/lever-keys), `thermal` (RLS/blend/estimator),
@@ -207,9 +213,8 @@ characterization tests pin the ladder; per-room k converged for the target rooms
 
 1. **#8 vs planner precedence** — RESOLVE as in Phase 6: #8 = mode gate, planner = ramp shape.
    Add a test asserting a single center source per zone.
-2. **Comfort floor source** — RECOMMEND an explicit `OPT_COMFORT_FLOOR` (per-house, default e.g.
-   house_setpoint − 2 °C or an absolute like 21 °C summer) over deriving it, so it's legible +
-   tunable. Confirm with owner.
+2. **Comfort floor source** — DECIDED (owner, §7): explicit `OPT_COMFORT_FLOOR`, default
+   house_setpoint − 2 °C, options-flow tunable, clamped to a sane absolute range.
 3. **Planner cadence** — RECOMMEND the forecast-refresh cadence (30 min), NOT every 30 s. The
    reactive loop stays 30 s; the reference is a slow-moving schedule.
 4. **Eligibility gating granularity** — per-room planner-eligible flag (Phase 4), not a global
@@ -250,10 +255,15 @@ characterization tests pin the ladder; per-room k converged for the target rooms
    never in the diff except to *preserve* them.
 5. ASK before any live HVAC write; deploy each release via HACS + restart only with owner OK.
 
-## 7. Open questions for the owner
+## 7. Owner decisions (RESOLVED 2026-07-02 — build to these)
 
-- Comfort floor value/mechanism (decision #2 above)?
-- OK to fold C1 (NightController → arbiter) into this build, or keep #2b as-is for now? (It's the
-  last direct writer; folding it completes the composition contract but touches the camere-
-  silenziose behavior — mild risk.)
-- Confirm Phase 8 (true F4c, comfort-in-optimizer) stays a NON-GOAL / owner-gated, per §0.
+1. **Comfort floor** — DECIDED: explicit `OPT_COMFORT_FLOOR`, default **house_setpoint − 2 °C**
+   (options-flow tunable, clamped to a sane absolute range). Enforced symmetrically to
+   `duty_comfort_max` in Phase 1; prerequisite for Phase 6.
+2. **C1 (NightController → arbiter)** — DECIDED: **IN.** Fold it into Phase 1 so ALL center/lever
+   writes go through the one arbiter and the composition contract is complete (no bypassing
+   direct writer). Accept the mild camere-silenziose behavior touch; cover it with tests +
+   a startup-resync simplification, and validate #2b (Padronale/Gabriele night burst) still fires.
+3. **Phase 8 (true comfort-in-optimizer F4c)** — DECIDED: stays a **NON-GOAL / owner-gated.** The
+   planner emits a reference only; the reactive band keeps the model-free comfort guarantee. Do
+   not build Phase 8 in this program.
