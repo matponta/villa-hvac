@@ -139,6 +139,15 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 | C5 | **Perf/robustness nits** | refactor | cache `shadeable_covers` (full registry scan every 30 s) + refresh on a registry-updated listener; wrap each lever `_call` in `asyncio.wait_for` so one wedged KNX write can't stall a cycle; hoist the `astral` import. |
 | D1 | **Thermal identifiability gating** (`abc-convergence-summer-scarcity`) | research | only raise `abc` confidence when the fed windows spanned a real solar range (don't trust a `b` never excited); document hard-room `k` as a night-calibrated lower bound; deliberate daytime valve-close probing = research task (fights peak comfort). Model degrades safe (prior blend + band guarantees comfort) — no code change required for safety. |
 
+> **NOTE (2026-07-02):** B4/C1–C5/D1 are now **sequenced into the F4c unified-planner build** —
+> see [`STORY_F4C_UNIFIED_PLANNER.md`](./STORY_F4C_UNIFIED_PLANNER.md). Owner decided (after a
+> design judge-panel) to build the unified 12 h forecast planner (Track A composition-contract +
+> Track B reference-schedule) as ONE program, folding these hardening items in as prerequisites
+> (C2 planner module, C3 config, C4 opt-in graph, D1 identifiability gate, C1 unify-writers,
+> B4/C5 input hardening). The planner emits a **reference only**; the reactive band keeps the
+> model-free comfort guarantee. TRUE F4c (comfort inside the optimizer) stays a gated **non-goal**.
+> A fresh session executes the build; this session only produced the plan.
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve
