@@ -579,3 +579,48 @@ validation** (Phase-7 mild-weather checklist, alongside `unified_planner`).
 6. ASK before any live HVAC write; deploy each release via HACS + restart only
    with owner OK, then verify (integration loaded, zero villa_hvac errors,
    BLOCCO off, `sensor.hvac_levers` healthy, engine ticking).
+
+---
+
+## 8. Build log — deviations recorded at P1/P2 (2026-07-03; do NOT "fix" these)
+
+Both releases were adversarially reviewed pre-tag (3 independent lenses each;
+P1: 0 critical/major; P2: 0 critical, majors resolved before tagging).
+
+1. **`__call__` inserts BLOCCO FIRST, then the band levers** — the §1.2
+   pseudocode (`out = dict(band_pass(...))` then `out[BLOCCO_LEVER] = …`) would
+   have appended BLOCCO LAST and silently flipped the per-cycle KNX write order
+   (the engine writes levers in dict order; the old merge always inserted BLOCCO
+   first). The implementation deviates from the sketch DELIBERATELY; the key
+   order is pinned per cycle by the identity harness. A later cleanup "aligning
+   the code to the spec" would be a regression.
+2. **TWO allowlisted deviations, not one:** (a) snapshot-consistent gate reads
+   (§5.6, pinned by `test_gate_reads_are_snapshot_consistent` — mid-cycle
+   switch flip follows the snapshot); (b) `regime_pass` treats
+   `state.config is None` as gate-off where the old `engine._regime_step` would
+   have raised — production-unreachable, needed for bare test states.
+3. **Gate (b) as shipped:** the A/B engine oracle runs BOTH wirings through the
+   NEW engine's `_cycle` (the old `_cycle` no longer exists post-swap), with
+   `OldPipeline` (the REAL byte-identical trio + ~50 transliterated wiring
+   lines) as the old arm. The transliteration-bias-free evidence for the
+   identity claim is the 526-test pre-fold suite passing UNCHANGED through the
+   swapped engine + the byte-identical trio — the A/B adds engine-level ordered
+   service-call stream equality on top. (Its recorder is `@callback`-decorated;
+   a bare listener races off-loop and shuffles the captured order.)
+4. **P2 commit sequencing:** the trio stayed WIRED through the add-alongside
+   commit (unwiring in the swap commit) — wiring the fold in commit 1 would
+   have double-driven the levers; the v0.40.0 end state matches the spec.
+5. **`regime_driving` is surfaced as a named controller attribute only** at P2;
+   putting it on `sensor.hvac_plan` lands with the P4 `feature_graph` (the plan
+   view stays byte-untouched until P6 per §5.5).
+6. **`band_pass` must never opine on BLOCCO** — `__call__` composes with
+   `dict.update` (last-wins) where the old merge was first-wins; guarded by an
+   assert so an R2/R5 edit can't silently invert the BLOCCO precedence after
+   the P3 oracle deletion.
+7. **Known harness limits (accepted):** the lattice's `at_peak×free_cool=True`
+   cells alias to outdoor 20 °C (at-peak label dead there; enabled-but-inactive
+   free-cool covered by a dedicated test instead); expiry/breach are crossed
+   with the regime path by dedicated differentials
+   (`test_medium_breach_forces_run_differential`,
+   `test_medium_release_beats_duty_block_and_duty_still_advances`), not inside
+   the lattice product.

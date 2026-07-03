@@ -14,11 +14,26 @@ cycle over multi-cycle scripted sequences:
 The trio stays in the repo UNWIRED through the v0.40.0 soak as this oracle;
 this file's old-pipeline arm is deleted at P3.
 
-ALLOWLISTED DEVIATION (STORY §4 risk 4 / §5.6): gate reads are snapshot-
-consistent (state.duty_enabled / state.fan_pacing_enabled) in BOTH arms — the
-old engine re-read the live switches mid-cycle; applying the snapshot to both
-arms isolates the FOLD as the only difference under test. The deviation itself
-is exercised end-to-end by the A/B engine tests (test_engine.py).
+ALLOWLISTED DEVIATIONS (both applied to BOTH arms, so the differential
+isolates the FOLD as the only thing under test):
+  1. (STORY §4 risk 4 / §5.6) gate reads are snapshot-consistent
+     (state.duty_enabled / state.fan_pacing_enabled); the old engine re-read
+     the live switches mid-cycle. Pinned by the dedicated
+     test_gate_reads_are_snapshot_consistent (mid-cycle switch flip: the fold
+     follows the snapshot; the old code would have reset).
+  2. regime_pass guards `state.config is None` as gate-off; the old
+     engine._regime_step would have raised on a config-less state.
+     Production-unreachable (build_house_state always attaches config).
+
+ORACLE HONESTY (review 2026-07-03): OldPipeline's ~50 wiring lines are a
+same-author transliteration of the old engine code — a shared misreading would
+pass both it and the fold. The transliteration-bias-FREE evidence for the
+identity claim is: (a) the trio classes inside OldPipeline are the REAL,
+byte-identical v0.38/v0.39 classes; (b) the entire 526-test pre-fold suite —
+including the three seam tests — passes UNCHANGED through the swapped engine.
+The test_ab_* engine A/B below additionally pins engine-level equal ORDERED
+service-call streams between the two wirings (both run through the new
+engine's _cycle; it does not re-create the deleted v0.39 _cycle).
 """
 from __future__ import annotations
 
@@ -459,6 +474,124 @@ def test_medium_coalescing_differential():
     assert new.regime_driving == "medium"
 
 
+def test_medium_breach_forces_run_differential():
+    """Invariant 1 on the regime path (mutation-proven hole from the adversarial
+    review): comfort-breach-forces-RUN INSIDE MEDIUM coalescing. The sequence
+    pins the breach specifically — at the breach cycle the REST is younger than
+    min_off (10 min), so the enter-threshold path is blocked and ONLY the breach
+    can force the RUN. A fold typo dropping comfort_breach from the
+    coalesce_phase call fails here and nowhere else."""
+    cfg = _cfg(regime=True)
+    old, new = OldPipeline(), CoolingController()
+
+    # c1: hot -> coalescing RUN (run_started = T0).
+    c1 = _hs({"lr": 25.5, "sg": 25.0, "bed": 25.0}, cfg=cfg, solar=200.0)
+    # c2 (T0+15, min_on elapsed): all cold -> REST (rest_started = T0+15).
+    c2 = _hs({"lr": 23.2, "sg": 23.2, "bed": 23.2},
+             now=T0 + timedelta(minutes=15), cfg=cfg, solar=200.0)
+    # c3 (T0+20, REST only 5 min old < min_off): lr breaches comfort (28 > 27)
+    # -> RUN forced by the BREACH alone (the threshold path is timer-blocked).
+    c3 = _hs({"lr": 28.0, "sg": 23.2, "bed": 23.2},
+             now=T0 + timedelta(minutes=20), cfg=cfg, solar=200.0)
+
+    for i, s in enumerate((c1, c2, c3)):
+        out_old, out_new = old(s), new(s)
+        assert out_new == out_old, f"cycle {i}"
+        assert _post_new(new) == _post_old(old), f"cycle {i}"
+    assert new._rs.house_phase == "run"                    # breach forced RUN
+    assert new._duty == DutyState()                        # duty saw the breach too
+    assert out_new[BLOCCO_LEVER] == BLOCCO_RELEASE
+    assert out_new[temperature_lever("climate.lr")] == 23.25  # RUN slam, not 24.75
+
+
+def test_medium_release_beats_duty_block_and_duty_still_advances():
+    """Timer expiry CROSSED with the regime path: a stint expiring while MEDIUM-
+    coalescing — the duty wants BLOCK, the coalescing RELEASE wins the merge,
+    AND the duty timers still advanced (duty_pass ALWAYS runs; its cooloff is
+    armed even while overridden — exactly the old engine's semantics)."""
+    cfg = _cfg(regime=True, stint_min=15, cooloff_min=30)
+    old, new = OldPipeline(), CoolingController()
+    seed = DutyState(stint_start=T0 - timedelta(minutes=20))  # stint exceeded
+    old.duty._duty = seed
+    new._duty = seed
+
+    s = _hs({"lr": 25.5, "sg": 25.0, "bed": 25.0}, cfg=cfg, solar=200.0)
+    out_old, out_new = old(s), new(s)
+
+    assert out_new == out_old
+    assert out_new[BLOCCO_LEVER] == BLOCCO_RELEASE     # coalescing RELEASE won
+    assert new._duty.cooloff_until is not None         # ...but duty ADVANCED
+    assert new._rs.house_phase == "run"
+    assert _post_new(new) == _post_old(old)
+
+
+def test_free_cool_enabled_but_inactive_differential():
+    """Lattice de-aliasing (review finding): free_cool ENABLED with the outdoor
+    ABOVE the threshold (enabled-but-inactive) never appears in the lattice,
+    whose free_cool axis couples enablement with a 20 °C outdoor. Cover it."""
+    cfg = _cfg()
+    states = [
+        replace(
+            _hs({"lr": _LR_SCRIPT[i], "sg": _SG_SCRIPT[i], "bed": _BED_SCRIPT[i]},
+                now=T0 + timedelta(minutes=10 * i), cfg=cfg, annotate=False),
+            free_cool_enabled=True,   # enabled...
+            outdoor_temp=26.0,        # ...but NOT active (26 > threshold 22)
+        )
+        for i in range(len(_LR_SCRIPT))
+    ]
+    states = [annotate_centers(s, max_age=SCHEDULE_MAX_AGE) for s in states]
+    _run_differential(states)
+
+
+async def test_gate_reads_are_snapshot_consistent(hass):
+    """THE allowlisted deviation, pinned (STORY §4 risk 4): the fold's regime
+    gating reads the SNAPSHOT (state.duty_enabled / state.fan_pacing_enabled),
+    not the live switches. Build the state with the gates ON, then flip the live
+    switches OFF before the controller runs: the fold still coalesces per the
+    snapshot. The old engine._regime_step re-read the live switches mid-cycle
+    and would have RESET here — that one-cycle divergence on a mid-cycle flip is
+    the entire declared deviation."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.villa_hvac.const import DOMAIN, OPT_REGIME_ENABLED as ORE
+    from custom_components.villa_hvac.engine import build_house_state
+
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "cool",
+        {"preset_mode": "comfort", "temperature": 24.0},
+    )
+    hass.states.async_set("sensor.clima_salotto", "25.0")
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "26.0")
+    hass.states.async_set("sensor.gw3000a_solar_radiation", "200")
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={}, options={ORE: True}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    engine = entry.runtime_data.engine
+    # converged k for living_room so the load ratio classifies MEDIUM.
+    engine.thermal.load({
+        "living_room": {"a": 0.03, "b": 0.0008, "c": 0.0, "k": 1.2, "p": [0.0] * 9,
+                        "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0},
+    })
+    await entry.runtime_data.async_refresh()
+    hass.states.async_set("switch.duty_cycle", "on")
+    hass.states.async_set("switch.fan_pacing", "on")
+
+    state = build_house_state(hass, entry, entry.runtime_data)
+    assert state.duty_enabled is True and state.fan_pacing_enabled is True
+
+    # the mid-cycle flip: live switches go OFF after the snapshot was built.
+    hass.states.async_set("switch.duty_cycle", "off")
+    hass.states.async_set("switch.fan_pacing", "off")
+
+    override, blocco = engine._cooling.regime_pass(state)
+    assert override.get("living_room") in ("run", "rest")  # coalesced per SNAPSHOT
+    assert blocco == BLOCCO_RELEASE
+    assert engine._cooling.regime_driving == "medium"
+
+
 # --- (d) __call__-level BLOCCO pins --------------------------------------------
 
 
@@ -569,6 +702,7 @@ async def _run_wired_engine(hass, entry, controller):
     """One fresh SupervisorEngine wired with `controller`, one actuating pass;
     returns the ordered (domain, service, data) stream it emitted."""
     from homeassistant.const import EVENT_CALL_SERVICE
+    from homeassistant.core import callback
     from homeassistant.util import dt as dt_util
 
     from custom_components.villa_hvac.engine import SupervisorEngine
@@ -580,13 +714,19 @@ async def _run_wired_engine(hass, entry, controller):
     )
     engine._forecast_ts = dt_util.utcnow()  # skip the live forecast fetch
     stream: list = []
-    unsub = hass.bus.async_listen(
-        EVENT_CALL_SERVICE,
-        lambda e: stream.append((
+
+    # @callback so HA dispatches the recorder ON the event loop — a bare lambda
+    # is run as an executor job, and adjacent events' appends then race across
+    # worker threads, shuffling the captured ORDER nondeterministically (found
+    # by the adversarial review: same 3 events, switch/fan swapped ~1-in-3 runs).
+    @callback
+    def _record(e):
+        stream.append((
             e.data.get("domain"), e.data.get("service"),
             tuple(sorted((e.data.get("service_data") or {}).items())),
-        )),
-    )
+        ))
+
+    unsub = hass.bus.async_listen(EVENT_CALL_SERVICE, _record)
     try:
         await engine._run()
         await hass.async_block_till_done()
@@ -725,13 +865,20 @@ async def test_differential_on_real_build_house_state(hass):
     hass.states.async_set("switch.duty_cycle", "on")
 
     old, new = OldPipeline(), CoolingController()
-    for _ in range(3):
+    # gate switches VARIED per cycle (asymmetric: on/on, on/off, off/on) so a
+    # duty<->fan_pacing gate-SOURCE cross-swap in build_house_state cannot pass
+    # (review finding: identical all-on cycles were blind to it).
+    gate_script = (("on", "on"), ("on", "off"), ("off", "on"), ("on", "on"))
+    for duty_sw, fan_sw in gate_script:
+        hass.states.async_set("switch.duty_cycle", duty_sw)
+        hass.states.async_set("switch.fan_pacing", fan_sw)
         raw = build_house_state(hass, entry, entry.runtime_data)
         state = annotate_centers(raw, max_age=SCHEDULE_MAX_AGE)
-        assert state.duty_enabled is True and state.fan_pacing_enabled is True
+        assert state.duty_enabled is (duty_sw == "on")
+        assert state.fan_pacing_enabled is (fan_sw == "on")
         out_old, out_new = old(state), new(state)
-        assert out_new == out_old
-        assert list(out_new.keys()) == list(out_old.keys())
-        assert _post_new(new) == _post_old(old)
+        assert out_new == out_old, (duty_sw, fan_sw)
+        assert list(out_new.keys()) == list(out_old.keys()), (duty_sw, fan_sw)
+        assert _post_new(new) == _post_old(old), (duty_sw, fan_sw)
     # sanity: the live combo actually produced band writes, not just BLOCCO.
     assert temperature_lever("climate.salotto_termostato_2") in out_new

@@ -787,12 +787,15 @@ class CoolingController:
     returned dict keeps BLOCCO FIRST so the engine's per-lever write order is
     byte-identical to the old [regime?, duty, band] merge.
 
-    Gate reads are SNAPSHOT-CONSISTENT (`state.duty_enabled` /
-    `state.fan_pacing_enabled`) — the ONE declared deviation from the old
-    `engine._regime_step`, which re-read the live switches mid-cycle (a
-    mid-cycle switch flip could diverge for one cycle across the engine's
-    awaits). Documented in STORY_TIER1_COOLING_CONTROLLER §4/§5.6; pinned by
-    tests/test_cooling_identity.py.
+    TWO declared deviations from the old code (both documented in
+    STORY_TIER1_COOLING_CONTROLLER §4/§5.6 + §8, pinned by
+    tests/test_cooling_identity.py): (1) gate reads are SNAPSHOT-CONSISTENT
+    (`state.duty_enabled` / `state.fan_pacing_enabled`) — the old
+    `engine._regime_step` re-read the live switches mid-cycle, so a mid-cycle
+    switch flip could diverge for one cycle across the engine's awaits;
+    (2) `state.config is None` counts as gate-off — the old code would have
+    raised on a config-less state (production-unreachable: build_house_state
+    always attaches config).
 
     `regime_driving` is the regime the coalescing actually USED this pass
     ("low" whenever any gate is off) — named so it can never be conflated with
@@ -1062,7 +1065,15 @@ class CoolingController:
             else duty_out.get(BLOCCO_LEVER)
         )
         # BLOCCO FIRST: preserves the old [regime?, duty, band] merge's key order,
-        # so the engine's per-lever write ORDER stays byte-identical.
+        # so the engine's per-lever write ORDER stays byte-identical. (The STORY
+        # §1.2 pseudocode assigned BLOCCO last — that would have flipped the
+        # write stream; do NOT "align to spec" here. See STORY §8 build log.)
         out: Desired = {BLOCCO_LEVER: blocco}
-        out.update(self.band_pass(state, phase_override=override))
+        band_out = self.band_pass(state, phase_override=override)
+        # dict.update is LAST-wins where the old merge_desired was FIRST-wins:
+        # band_pass must therefore never opine on BLOCCO (it owns setpoint/fan/
+        # manuale levers only). Guarded loudly so an R2/R3 edit can't silently
+        # invert the precedence after the P3 oracle deletion.
+        assert BLOCCO_LEVER not in band_out
+        out.update(band_out)
         return out
