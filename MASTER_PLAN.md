@@ -165,7 +165,7 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 > | Phase | Content | Release |
 > |---|---|---|
 > | P1 | R1 `resolve_center`/`annotate_centers` (planner ▸ ladder ▸ base, ONE per-leader resolved center on `ZoneSnapshot.resolved_center`; band + `_center_compositions` read it; loud WARN-once fallback; golden matrix + engine ordering/pre-cool pins) | **DONE v0.39.0** |
-> | P2 | M1 fold: `CoolingController` (regime_pass/duty_pass/band_pass verbatim + composing `__call__`) alongside → swap; per-lever epoch check; differential identity harness | v0.40.0 |
+> | P2 | M1 fold: `CoolingController` (regime_pass/duty_pass/band_pass verbatim + composing `__call__`) alongside → swap → per-lever epoch check. Differential identity harness (768-combo lattice + 4 mandatory sequences + timer expiries), end-to-end A/B engine oracle (equal ordered service-call streams), wiring-types pin, fail-safe sha256 grep-gate. Trio retained UNWIRED as the oracle through the soak. Allowlisted deviation: snapshot-consistent gate reads. | **DONE v0.40.0 — SOAK live before P3** |
 > | P3 | delete the trio + mechanical test port (AFTER the v0.40.0 live soak) | v0.40.1 |
 > | P4 | R4 `feature_graph` on `sensor.hvac_plan` | v0.41.0 |
 > | P5 | R2 deviation-space coalescing (ANCHOR/BANK, crossing cap, relax single-count) | v0.42.0 |

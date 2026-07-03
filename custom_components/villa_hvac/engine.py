@@ -772,9 +772,15 @@ class SupervisorEngine:
                 ctrl_outputs = [c(state) for c in self.controllers]
                 desired = merge_desired([*ctrl_outputs, *pure_outputs])
                 for lever, target in desired.items():
-                    # Bail the moment teardown begins (stop()) so a fail-safe
-                    # hand-back is never chased by more lever writes mid-loop.
-                    if self._stopped:
+                    # Bail the moment teardown begins (stop()) OR a fail-safe
+                    # hand-back invalidates this cycle mid-loop (epoch bump): a
+                    # wedged KNX write (LEVER_CALL_TIMEOUT 10 s) can outlive the
+                    # fail-safe's bounded lock wait (_FAILSAFE_LOCK_TIMEOUT 5 s),
+                    # and the resuming loop must never chase the hand-back with
+                    # more lever writes — on master-off nothing would ever clear
+                    # a re-asserted block. Behavior-identical in normal operation
+                    # (the epoch only moves on a hand-back).
+                    if self._stopped or epoch != self._epoch:
                         break
                     await self._reconcile_lever(lever, target, state)
                 # B2: drop decisions for levers no longer opined on (so the

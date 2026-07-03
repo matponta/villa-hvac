@@ -995,6 +995,36 @@ async def test_unified_planner_switch_defaults_off(hass):
     assert hass.states.get("switch.unified_planner").state == "off"
 
 
+async def test_failsafe_mid_loop_epoch_bump_stops_lever_writes(hass):
+    """(P2 hardening) A fail-safe firing while the reconcile loop is mid-flight
+    (epoch bumped after its bounded lock wait expired) must stop any FURTHER
+    lever writes from that stale cycle — a wedged KNX write (10 s lever timeout)
+    can outlive the fail-safe's 5 s lock wait, and the resuming loop must not
+    chase the hand-back (a re-asserted block on master-off would never clear)."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    second = "climate.studio_termostato_2"
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
+    hass.states.async_set(second, "cool", {"preset_mode": "comfort"})
+
+    def policy(_state):
+        return {preset_lever(CLIMATE): "economy", preset_lever(second): "economy"}
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[policy])
+    writes = []
+
+    async def _handler(call):
+        writes.append(call.data["entity_id"])
+        engine._epoch += 1  # the fail-safe hand-back lands mid-loop
+
+    hass.services.async_register("climate", "set_preset_mode", _handler)
+
+    await engine._run()
+
+    # the first lever wrote; the epoch bump aborted the rest of the loop.
+    assert writes == [CLIMATE]
+
+
 # --- Tier-1 M1: fold wiring + fail-safe byte-gate ------------------------------
 
 async def test_controllers_are_exactly_cooling_then_night(hass):
