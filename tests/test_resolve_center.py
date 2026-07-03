@@ -244,7 +244,7 @@ async def test_precool_drives_band_setpoint_end_to_end(hass):
     engine._forecast = [(dt_util.utcnow() + timedelta(hours=1), 33.0)]  # hot peak
     engine._forecast_ts = dt_util.utcnow()
     temps = async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
@@ -267,7 +267,7 @@ async def test_annotate_runs_after_pv_bias(hass):
         state, pv_mode="bank", pv_floor=22.0
     )
     temps = async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
@@ -297,7 +297,7 @@ async def test_annotate_runs_after_schedule_attach(hass):
         state, center_schedule=sched, unified_planner_enabled=True
     )
     temps = async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
@@ -323,7 +323,7 @@ async def test_annotate_runs_after_away_return_override(hass):
     )
     temps = async_mock_service(hass, "climate", "set_temperature")
     async_mock_service(hass, "climate", "set_preset_mode")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
@@ -346,7 +346,7 @@ async def test_cycle_invokes_unresolved_center_check(hass, caplog, monkeypatch):
         engine_mod, "annotate_centers", lambda state, *, max_age: state
     )
     async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
@@ -362,7 +362,7 @@ async def test_actuating_pass_resolves_every_eligible_leader(hass, caplog):
     entry = await _setup_band_engine(hass)
     engine = entry.runtime_data.engine
     async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 

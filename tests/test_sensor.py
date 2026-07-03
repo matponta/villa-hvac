@@ -86,3 +86,23 @@ async def test_plan_sensor_surfaces_precool_window(hass):
     assert state.attributes["precool"] is True
     assert state.attributes["forecast_peak"] == 34.0
     assert state.attributes["peak_eta_minutes"] == 240.0
+
+
+async def test_coordinator_fan_pct_reflects_off_state(hass):
+    """The Phase-0 demand diagnostic must not count an OFF fan as cooling: an
+    off fan delivers 0% regardless of the retained bus % (the padronale
+    blindness, 2026-07-02/03); unavailable stays None (transient)."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+
+    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 33})
+    hass.states.async_set("fan.fancoil_cucina", "on", {"percentage": 33})
+    data = await coordinator._async_update_data()
+    assert data["speeds"]["fan.fancoil_salotto"] == 0
+    assert data["speeds"]["fan.fancoil_cucina"] == 33
+    assert "fan.fancoil_salotto" not in data["cooling_zones"]
+    assert "fan.fancoil_cucina" in data["cooling_zones"]
+
+    hass.states.async_set("fan.fancoil_salotto", "unavailable")
+    data = await coordinator._async_update_data()
+    assert data["speeds"]["fan.fancoil_salotto"] is None

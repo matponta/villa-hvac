@@ -138,7 +138,10 @@ OUTDOOR_TEMP = "sensor.gw3000a_outdoor_temperature"
 OUTDOOR_TEMP_FALLBACK = "sensor.s5a_temperatura_esterna"
 SOLAR_RADIATION = "sensor.gw3000a_solar_radiation"
 
-# Cooling demand of a zone == its fancoil fan percentage > 0.
+# The fancoil fan entities (Phase-0 diagnostic speeds). NB: fan % is NOT the
+# demand signal — true per-zone cooling demand is the EV valve state
+# (binary_sensor.fancoil_*_valvola, ETS-verified 2026-06-24); an OFF fan reads
+# as 0% regardless of the retained bus % (see coordinator._fan_pct).
 FANCOILS: list[str] = [
     "fan.fancoil_salotto",
     "fan.fancoil_cucina",
@@ -389,6 +392,12 @@ TEMP_STALE_AFTER = timedelta(minutes=30)
 # consecutive engine cycles (≈5 min at 30 s) has silently dropped out of band
 # control — the engine logs a WARNING once and surfaces it on sensor.hvac_plan.
 STALE_TEMP_CYCLES = 10
+
+# Watchdog (proven live 2026-07-02/03): a fan commanded >0% that stays OFF for
+# this many consecutive actuating cycles (≈5 min at 30 s) means the zone is NOT
+# cooling — the KNX fancoil controller holds the EV valve closed while the fan
+# is off — even though the band thinks it is RUNning. WARN once per fan.
+RUN_FAN_OFF_WARN_CYCLES = 10
 
 # Measured EP-vs-thermostat offsets (offset = thermostat - EP), live 2026-06-23.
 # UNUSED today: #1 is thermostat-primary, so EP is not the absolute source.

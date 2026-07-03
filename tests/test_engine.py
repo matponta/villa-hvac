@@ -298,15 +298,170 @@ async def test_fan_pacing_holds_manuale_and_fan_via_engine(hass):
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.fan_pacing", "on")
-    fan_calls = async_mock_service(hass, "fan", "set_percentage")
+    # The fan lever asserts STATE + % together: a >0% command is fan.turn_on
+    # (with percentage), never a bare set_percentage.
+    fan_calls = async_mock_service(hass, "fan", "turn_on")
     on_calls = async_mock_service(hass, "switch", "turn_on")
 
     await entry.runtime_data.engine.request_run()
 
-    assert any(c.data["entity_id"] == "fan.fancoil_salotto" for c in fan_calls)
+    assert any(
+        c.data["entity_id"] == "fan.fancoil_salotto"
+        and c.data.get("percentage", 0) > 0
+        for c in fan_calls
+    )
     assert any(
         c.data["entity_id"] == "switch.fancoil_salotto_manuale" for c in on_calls
     )
+
+
+async def test_fan_read_reflects_delivered_airflow(hass):
+    """The fan lever compares on the DELIVERED airflow: an OFF fan reads 0
+    regardless of the retained bus % (the 2026-07-02/03 padronale blindness);
+    unavailable/unknown stays None so reconcile treats it as transient."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    lever = "fan:fan.fancoil_salotto"
+    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 60})
+    assert engine._read_current(lever) == 0
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 60})
+    assert engine._read_current(lever) == 60
+    hass.states.async_set("fan.fancoil_salotto", "unavailable", {"percentage": 60})
+    assert engine._read_current(lever) is None
+
+
+async def test_fan_dispatch_asserts_state(hass):
+    """A >0% fan write is fan.turn_on WITH the percentage (asserts state + %
+    together). A 0 write is fan.turn_off PLUS set_percentage(0): these KNX fans
+    have separate switch/speed group objects and turn_off writes only the switch
+    GA — the explicit 0% disarms the retained speed so an external wall-press ON
+    resumes silent, not at the last RUN %."""
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    on_calls = async_mock_service(hass, "fan", "turn_on")
+    off_calls = async_mock_service(hass, "fan", "turn_off")
+    pct_calls = async_mock_service(hass, "fan", "set_percentage")
+
+    await engine._dispatch_write("fan:fan.fancoil_salotto", "60")
+    await engine._dispatch_write("fan:fan.fancoil_salotto", "0")
+
+    assert on_calls[0].data == {"entity_id": "fan.fancoil_salotto", "percentage": 60}
+    assert len(pct_calls) == 1  # never used for the >0 write
+    assert off_calls[0].data == {"entity_id": "fan.fancoil_salotto"}
+    assert pct_calls[0].data == {"entity_id": "fan.fancoil_salotto", "percentage": 0}
+
+
+async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass):
+    """THE padronale regression (proven live 2026-07-02/03): the fan is OFF while
+    the bus retains EXACTLY the commanded % (a night silence left it there). The
+    %-only read said "satisfied" -> zero writes -> the KNX interlock kept the EV
+    valve closed and the zone never cooled. The state-aware lever must re-assert
+    fan.turn_on."""
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
+    hass.states.async_set("switch.fancoil_salotto_manuale", "off")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.fan_pacing", "on")
+    on_calls = async_mock_service(hass, "fan", "turn_on")
+    async_mock_service(hass, "switch", "turn_on")
+    engine = entry.runtime_data.engine
+
+    # First pass captures whatever % the band sizes for this scenario, so the
+    # regression stays valid if the sizing law changes.
+    await engine.request_run()
+    sized = [c for c in on_calls if c.data["entity_id"] == "fan.fancoil_salotto"]
+    assert sized and sized[-1].data["percentage"] > 0
+    pct = sized[-1].data["percentage"]
+    before = len(sized)
+
+    # The morning-after state: fan OFF, % retained on the bus == the command.
+    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": pct})
+    await engine.request_run()
+
+    after = [c for c in on_calls if c.data["entity_id"] == "fan.fancoil_salotto"]
+    # A %-only read would have said "satisfied" here and written nothing.
+    assert len(after) > before
+    assert after[-1].data["percentage"] == pct
+
+
+async def test_run_fan_off_watchdog_warns_once(hass, caplog):
+    """A fan commanded >0% that keeps reading OFF trips ONE warning at the
+    threshold (not one per cycle); recovery clears the counter."""
+    from custom_components.villa_hvac.const import RUN_FAN_OFF_WARN_CYCLES
+
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    lever = "fan:fan.fancoil_salotto"
+
+    for _ in range(RUN_FAN_OFF_WARN_CYCLES):
+        engine._track_fan_off(lever, 60, 0)
+    assert caplog.text.count("but has read OFF") == 1
+    for _ in range(5):
+        engine._track_fan_off(lever, 60, 0)  # still off -> no re-warn
+    assert caplog.text.count("but has read OFF") == 1
+
+    engine._track_fan_off(lever, 60, 60)  # recovered -> cleared
+    assert lever not in engine._fan_off
+    engine._track_fan_off(lever, 0, 0)  # commanded off -> never counted
+    assert lever not in engine._fan_off
+
+
+async def test_run_fan_off_watchdog_fires_through_engine_cycles(hass, caplog):
+    """WIRING pin (mutation-proven hole): the watchdog must fire through REAL
+    engine cycles — deleting the _track_fan_off hook in _reconcile_lever kept
+    every other test green. A fan stuck OFF under a RUN command warns exactly
+    once at the threshold, counting through the reconcile's manual-override
+    concession (which is exactly when the watchdog is the only alarm)."""
+    from custom_components.villa_hvac.const import RUN_FAN_OFF_WARN_CYCLES
+
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
+    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
+    # Stuck OFF with a retained % — the mocked services never change the state.
+    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 20})
+    hass.states.async_set("switch.fancoil_salotto_manuale", "on")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.fan_pacing", "on")
+    async_mock_service(hass, "fan", "turn_on")
+    async_mock_service(hass, "switch", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(RUN_FAN_OFF_WARN_CYCLES - 1):
+        await engine.request_run()
+    assert caplog.text.count("but has read OFF") == 0  # below threshold
+    assert "fan:fan.fancoil_salotto" in engine._fan_off  # wiring is counting
+
+    await engine.request_run()  # the threshold crossing
+    assert caplog.text.count("but has read OFF") == 1
+
+    await engine.request_run()  # past it -> still once
+    assert caplog.text.count("but has read OFF") == 1
+
+
+async def test_build_house_state_fan_pct_reflects_off_state(hass):
+    """F2 guard: the snapshot fan_pct fed to the capacity learner is 0 for an
+    OFF fan (never the retained %), the live % when on, None when unavailable."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+
+    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 60})
+    assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct == 0
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 60})
+    assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct == 60
+    hass.states.async_set("fan.fancoil_salotto", "unavailable")
+    assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct is None
 
 
 async def test_forecast_precool_nudges_setpoint_via_engine(hass):
@@ -358,7 +513,7 @@ async def test_band_setpoint_beats_house_mode_via_engine(hass):
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.fan_pacing", "on")
     temps = async_mock_service(hass, "climate", "set_temperature")
-    async_mock_service(hass, "fan", "set_percentage")
+    async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
 
     await entry.runtime_data.engine.request_run()

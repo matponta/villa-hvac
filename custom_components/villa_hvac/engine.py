@@ -82,6 +82,7 @@ from .const import (
     PRESET_AUTO,
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
+    RUN_FAN_OFF_WARN_CYCLES,
     SHADE_POSITION_TOLERANCE,
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
@@ -393,10 +394,17 @@ def build_house_state(
         if emitter == "fancoil" and fancoils:
             fs = hass.states.get(fancoils[0])
             if fs is not None:
-                try:
-                    fan_pct = int(float(fs.attributes.get(ATTR_PERCENTAGE)))
-                except (TypeError, ValueError):
-                    fan_pct = None
+                # An OFF fan delivers 0% regardless of the retained % attribute
+                # (same blindness as the engine's fan-lever read): feeding the
+                # retained % into the F2 capacity learner would credit cooling
+                # effort that never happened. unavailable/unknown stays None.
+                if fs.state == STATE_OFF:
+                    fan_pct = 0
+                elif fs.state == STATE_ON:
+                    try:
+                        fan_pct = int(float(fs.attributes.get(ATTR_PERCENTAGE)))
+                    except (TypeError, ValueError):
+                        fan_pct = None
             for f in fancoils:
                 ms = hass.states.get(_manuale_switch(f))
                 if ms is not None and ms.state == STATE_ON:
@@ -564,6 +572,10 @@ class SupervisorEngine:
         # B4 diagnostic: consecutive cycles a controlled cooling leader has had no
         # fused temperature (it silently drops out of band control).
         self._stale_temp: dict[str, int] = {}
+        # Watchdog: consecutive actuating cycles a fan lever is commanded >0%
+        # while the fan reads OFF (delivered 0) — the KNX interlock keeps that
+        # zone's valve closed, so it is not cooling despite a RUN command.
+        self._fan_off: dict[str, int] = {}
         # R1 loud fallback: leaders already warned about reaching an actuating
         # pass with no resolved band center (annotate_centers lost/misordered).
         self._unresolved_center: set[str] = set()
@@ -788,6 +800,17 @@ class SupervisorEngine:
                 self._lever_decisions = {
                     k: v for k, v in self._lever_decisions.items() if k in desired
                 }
+                # The fan-off watchdog counts one CONTINUOUS commanded-on episode:
+                # a lever that left the merge (zone released/disabled/season flip)
+                # must forget its count, or a later episode resumes past the
+                # threshold and the == crossing never fires again (disarmed).
+                self._fan_off = {
+                    k: v for k, v in self._fan_off.items() if k in desired
+                }
+            else:
+                # No actuating pass -> no episode continuity either (master-off /
+                # deploy-dark gaps would otherwise freeze a stale count).
+                self._fan_off.clear()
         finally:
             self._lock.release()
 
@@ -1105,8 +1128,33 @@ class SupervisorEngine:
             pv_coast_relax=state.config.pv_coast_relax,
         )
 
+    def _track_fan_off(self, lever: str, desired, current) -> None:
+        """Watchdog: count consecutive actuating cycles a fan is commanded >0%
+        but reads OFF (delivered 0). The reconcile re-asserts on its own; this
+        exists because the failure mode is INVISIBLE comfort loss — the valve
+        interlock keeps the zone from cooling while every setpoint looks right
+        (padronale 2026-07-02/03). WARN once on the crossing; recovery clears."""
+        try:
+            want_on = desired is not None and float(desired) > 0
+        except (TypeError, ValueError):
+            want_on = False
+        if not want_on or current != 0:
+            self._fan_off.pop(lever, None)
+            return
+        n = self._fan_off.get(lever, 0) + 1
+        self._fan_off[lever] = n
+        if n == RUN_FAN_OFF_WARN_CYCLES:  # log once, on the crossing
+            _LOGGER.warning(
+                "Fan %s has been commanded to %s%% but has read OFF for %d "
+                "consecutive cycles — its zone is NOT cooling (the KNX fancoil "
+                "interlock holds the valve closed while the fan is off)",
+                lever.partition(":")[2], desired, n,
+            )
+
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)
+        if lever.startswith("fan:"):
+            self._track_fan_off(lever, target, current)
         # Cover position is numeric and never lands exactly on the commanded value,
         # so it gets a wider tolerance than a setpoint.
         tolerance = (
@@ -1158,7 +1206,18 @@ class SupervisorEngine:
         if kind == "temperature":
             return s.attributes.get(ATTR_TEMPERATURE)
         if kind == "fan":
-            return s.attributes.get(ATTR_PERCENTAGE)
+            # Compare on the DELIVERED airflow, not the retained % attribute: an
+            # OFF fan still reports the last bus percentage, so a fan silenced
+            # overnight read "satisfied" against a RUN command with the same %
+            # and was never turned back on — and the KNX fancoil controller
+            # holds the EV valve CLOSED while the fan is off, so the zone never
+            # cooled (padronale, proven live 2026-07-02/03). OFF delivers 0%;
+            # anything not on/off stays None → reconcile treats it as transient.
+            if s.state == STATE_OFF:
+                return 0
+            if s.state == STATE_ON:
+                return s.attributes.get(ATTR_PERCENTAGE)
+            return None
         if kind == "cover":
             # position-controlled shading: compare on current_position (0-100).
             pos = s.attributes.get(ATTR_CURRENT_POSITION)
@@ -1192,10 +1251,29 @@ class SupervisorEngine:
                 {ATTR_ENTITY_ID: entity, ATTR_TEMPERATURE: float(value)},
             )
         elif kind == "fan":
-            await self._call(
-                FAN_DOMAIN, SERVICE_SET_PERCENTAGE,
-                {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: int(float(value))},
-            )
+            # Assert the on/off STATE together with the % — set_percentage alone
+            # left an off fan off when the bus already held the commanded %
+            # (the read-side blindness above), and the KNX valve interlock then
+            # kept the zone from cooling. These fans have SEPARATE switch and
+            # speed group objects (knx_fancoil_all.yaml: switch 5/0/x, speed
+            # 5/4/x; xknx turn_off writes ONLY the switch GA), so a 0-command
+            # dispatches BOTH: turn_off asserts the verifiable OFF state, then
+            # set_percentage(0) disarms the retained speed so an external ON
+            # (wall press) resumes silent, not at the last RUN %.
+            pct = int(float(value))
+            if pct > 0:
+                await self._call(
+                    FAN_DOMAIN, SERVICE_TURN_ON,
+                    {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: pct},
+                )
+            else:
+                await self._call(
+                    FAN_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: entity}
+                )
+                await self._call(
+                    FAN_DOMAIN, SERVICE_SET_PERCENTAGE,
+                    {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: 0},
+                )
         elif kind == "cover":
             # Numeric target -> drive to that position; legacy "closed" -> close.
             if str(value) == STATE_CLOSED:

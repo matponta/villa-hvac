@@ -74,6 +74,7 @@ async def test_selecting_night_applies_economy_to_all_controllable(hass):
     # Notte also triggers the camere-silenziose overlay (#2b) on the bedrooms.
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "fan", "turn_off")
+    async_mock_service(hass, "fan", "set_percentage")  # paired 0% disarm
 
     await _select_mode(hass, "Notte")
 

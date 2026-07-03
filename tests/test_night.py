@@ -86,8 +86,9 @@ async def _select_mode(hass, mode):
 
 
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
-    """C1: camere silenziose now flows through the arbiter — silence = manuale on
-    + fan set_percentage 0 (was a direct fan.turn_off); waking releases manuale."""
+    """C1: camere silenziose flows through the arbiter — silence = manuale on
+    + a fan.turn_off dispatched by the fan lever (a 0% opinion asserts the OFF
+    state); waking releases manuale."""
     await _setup(hass)
     await enable_supervisor(hass)
     seed_thermostats(hass)
@@ -103,6 +104,11 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     async_mock_service(hass, "climate", "set_temperature")
     sw_on = async_mock_service(hass, "switch", "turn_on")
     sw_off = async_mock_service(hass, "switch", "turn_off")
+    # A 0% fan opinion dispatches fan.turn_off (asserts the verifiable OFF
+    # state) PLUS set_percentage(0): these KNX fans have separate switch/speed
+    # group objects and turn_off writes only the switch GA — the 0% disarms the
+    # retained speed so a wall-press ON resumes silent.
+    fan_off = async_mock_service(hass, "fan", "turn_off")
     fan_pct = async_mock_service(hass, "fan", "set_percentage")
 
     await _select_mode(hass, "Notte")
@@ -110,9 +116,11 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     on_targets = {c.data["entity_id"] for c in sw_on}
     assert "switch.fancoil_camera_padronale_manuale" in on_targets
     assert "switch.fancoil_camera_gabriele_manuale" in on_targets
-    silenced = {c.data["entity_id"] for c in fan_pct if c.data.get("percentage") == 0}
+    silenced = {c.data["entity_id"] for c in fan_off}
     assert "fan.fancoil_camera_padronale" in silenced
     assert "fan.fancoil_camera_gabriele" in silenced
+    disarmed = {c.data["entity_id"] for c in fan_pct if c.data.get("percentage") == 0}
+    assert disarmed == silenced  # every turn_off is paired with a 0% disarm
 
     # Simulate the manuale writes landing (mocked services don't update state), so
     # the wake cycle sees "on" and writes the release.

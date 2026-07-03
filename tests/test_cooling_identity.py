@@ -692,7 +692,8 @@ async def _setup_ab_entry(hass, options=None):
     hass.states.async_set("switch.supervisor", "on")
     for domain, service in (
         ("climate", "set_preset_mode"), ("climate", "set_temperature"),
-        ("fan", "set_percentage"), ("switch", "turn_on"), ("switch", "turn_off"),
+        ("fan", "turn_on"), ("fan", "turn_off"), ("fan", "set_percentage"),
+        ("switch", "turn_on"), ("switch", "turn_off"),
     ):
         async_mock_service(hass, domain, service)
     return entry

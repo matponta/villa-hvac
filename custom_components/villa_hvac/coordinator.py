@@ -45,6 +45,11 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         state = self.hass.states.get(entity_id)
         if state is None or state.state in ("unavailable", "unknown"):
             return None
+        # An OFF fan delivers 0% regardless of the % attribute the bus retains
+        # (the switch GA and the speed GA are separate objects; proven live
+        # 2026-07-02/03) — without this an off zone shows up in cooling_zones.
+        if state.state == "off":
+            return 0
         try:
             return int(float(state.attributes.get("percentage") or 0))
         except (TypeError, ValueError):
