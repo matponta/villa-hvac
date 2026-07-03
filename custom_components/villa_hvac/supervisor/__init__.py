@@ -71,6 +71,7 @@ from .control_law import (
     energy_precool_decision,
     fan_level,
     in_window,
+    peak_latch,
     run_fan_pct,
     run_rest_durations,
 )
@@ -197,6 +198,7 @@ __all__ = [
     "in_window",
     "k_confidence",
     "merge_desired",
+    "peak_latch",
     "peak_window",
     "plan_run",
     "preset_lever",

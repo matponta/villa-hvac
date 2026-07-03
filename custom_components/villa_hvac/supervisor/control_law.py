@@ -186,6 +186,29 @@ def effective_pulldown(
 
 
 
+def peak_latch(
+    prev: bool,
+    outdoor: float | None,
+    threshold: float | None,
+    *,
+    exit_margin: float = 0.5,
+) -> bool:
+    """Deadbanded "at outdoor peak" latch for the RUN-fan 100% backstop: enters
+    at outdoor ≥ threshold, exits only below threshold − exit_margin. A raw ≥
+    comparison flip-flopped on ±0.1–0.3 °C sensor jitter while the outdoor
+    hovered at the threshold, hunting the fan 100% ↔ law-sized every 30 s cycle
+    (adversarial review 2026-07-04). Unknown outdoor/threshold → False (never
+    latch on missing data)."""
+    if outdoor is None or threshold is None:
+        return False
+    if outdoor >= threshold:
+        return True
+    if outdoor < threshold - exit_margin:
+        return False
+    return prev
+
+
+
 def run_fan_pct(
     *,
     temp: float | None,

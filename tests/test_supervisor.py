@@ -31,6 +31,7 @@ from custom_components.villa_hvac.supervisor import (
     effective_pulldown,
     estimate_rate,
     fan_level,
+    peak_latch,
     run_fan_pct,
     k_confidence,
     merge_desired,
@@ -460,6 +461,18 @@ def test_run_fan_steady_state_matches_capacity_law():
     assert run_fan_pct(
         temp=24.0, outdoor=34.0, solar=0.0, center=24.0, band=1.5, **_LAW
     ) == capacity_fan(0.3, pulldown=0.3, capacity=1.2, fan_min_pct=20) == 50
+
+
+def test_peak_latch_deadband():
+    """The 100% backstop's at-peak signal is a LATCH: enters at the threshold,
+    exits only exit_margin below it — outdoor sensor jitter around the
+    threshold must not flip the fan 100 <-> law-sized every cycle."""
+    assert peak_latch(False, 30.1, 30.0) is True    # enter at/above threshold
+    assert peak_latch(True, 29.9, 30.0) is True     # jitter below -> HELD
+    assert peak_latch(True, 29.4, 30.0) is False    # below threshold-0.5 -> exit
+    assert peak_latch(False, 29.9, 30.0) is False   # never enters below threshold
+    assert peak_latch(True, None, 30.0) is False    # missing data never latches
+    assert peak_latch(True, 34.0, None) is False
 
 
 # --- build_plan (#11 plan view) ----------------------------------------------

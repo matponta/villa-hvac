@@ -114,6 +114,7 @@ from .supervisor import (
     fan_lever,
     k_confidence,
     planner_eligible,
+    peak_latch,
     preset_lever,
     rls_capacity_update,
     rls_passive_update,
@@ -457,6 +458,7 @@ class FanBandController:
     def __init__(self) -> None:
         self._states: dict[str, BandState] = {}
         self._last_fan: dict[str, int] = {}
+        self._at_peak = False  # deadbanded peak latch (see peak_latch)
 
     def _release_all(self, state: HouseState) -> Desired:
         """Hand every fan we were holding back to AUTO (manuale off), once. Levers
@@ -535,10 +537,10 @@ class FanBandController:
                 b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
                 c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
                 k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
-                at_peak = (
-                    state.outdoor_temp is not None
-                    and state.duty_peak_outdoor is not None
-                    and state.outdoor_temp >= state.duty_peak_outdoor
+                # Deadbanded house-level peak latch: outdoor jitter around the
+                # threshold must not flip the 100% backstop every cycle.
+                self._at_peak = peak_latch(
+                    self._at_peak, state.outdoor_temp, state.duty_peak_outdoor
                 )
                 # 2026-07-04 sizing law: envelope gain + stored-heat extraction
                 # (temp excess over the center), RUN-floored, peak-backstopped —
@@ -549,7 +551,7 @@ class FanBandController:
                     a=a, b=b, c=c, k=k,
                     pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,
                     run_floor=COOL_RUN_FAN_FLOOR, fan_min_pct=z.fan_min,
-                    at_peak=at_peak, step=FAN_LEVEL_STEP,
+                    at_peak=self._at_peak, step=FAN_LEVEL_STEP,
                     last_level=self._last_fan.get(z.zone_id),
                     hysteresis=FAN_LEVEL_HYSTERESIS,
                 )
@@ -840,6 +842,7 @@ class CoolingController:
     def __init__(self) -> None:
         self._states: dict[str, BandState] = {}
         self._last_fan: dict[str, int] = {}
+        self._at_peak = False  # deadbanded peak latch (see peak_latch)
         self._duty = DutyState()
         self._rs = RegimeState()
         self.regime_driving: str = "low"
@@ -1064,10 +1067,10 @@ class CoolingController:
                 b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
                 c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
                 k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
-                at_peak = (
-                    state.outdoor_temp is not None
-                    and state.duty_peak_outdoor is not None
-                    and state.outdoor_temp >= state.duty_peak_outdoor
+                # Deadbanded house-level peak latch: outdoor jitter around the
+                # threshold must not flip the 100% backstop every cycle.
+                self._at_peak = peak_latch(
+                    self._at_peak, state.outdoor_temp, state.duty_peak_outdoor
                 )
                 # 2026-07-04 sizing law: envelope gain + stored-heat extraction
                 # (temp excess over the center), RUN-floored, peak-backstopped —
@@ -1078,7 +1081,7 @@ class CoolingController:
                     a=a, b=b, c=c, k=k,
                     pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,
                     run_floor=COOL_RUN_FAN_FLOOR, fan_min_pct=z.fan_min,
-                    at_peak=at_peak, step=FAN_LEVEL_STEP,
+                    at_peak=self._at_peak, step=FAN_LEVEL_STEP,
                     last_level=self._last_fan.get(z.zone_id),
                     hysteresis=FAN_LEVEL_HYSTERESIS,
                 )

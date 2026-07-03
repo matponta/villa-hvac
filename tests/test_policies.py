@@ -1,14 +1,19 @@
 """Unit tests for the pure preset policies (Phase A3)."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
+import pytest
+
 from custom_components.villa_hvac.const import (
+    COOL_RUN_FAN_FLOOR,
     PRESET_BUILDING_PROTECTION,
     SEASON_SUMMER,
 )
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
+    CoolingController,
     FanBandController,
     _azimuth_in_band,
     disabled_zones_policy,
@@ -291,14 +296,18 @@ def test_shading_away_closes_everything():
     blocked = CoverInfo(
         entity_id="cover.b", orientation="south", blocked=True, current_position=100
     )
+    # unknown position: the never-raise skip does NOT apply here — commanding 0
+    # can never raise, and a vacation must not leave an unreadable cover open.
+    unknown = CoverInfo(entity_id="cover.u", orientation="west")
     for away_mode in ("Via", "Vacanza"):
         out = shading_policy(_state(
-            [], covers=[_SOUTH, _WEST, blocked], mode=away_mode,
+            [], covers=[_SOUTH, _WEST, blocked, unknown], mode=away_mode,
             **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
         ))
         assert out == {
             cover_lever("cover.s"): 0,
             cover_lever("cover.w"): 0,
+            cover_lever("cover.u"): 0,
         }, away_mode
     # at home the same low-sun conditions release (no opinion)
     out = shading_policy(_state(
@@ -457,6 +466,47 @@ def test_band_releases_manuale_when_disabled():
     c(_state([_fanzone("a", temp=26.0)], **_BAND))      # managed (manuale on)
     out = c(_state([_fanzone("a", temp=26.0)]))          # fan_pacing now off
     assert out["switch:switch.a_man"] == "off"           # handed back to AUTO
+
+
+# --- 2026-07-04 sizing-law WIRING pins (mutation-proven holes: the pure-law
+# tests pass their own run_floor/at_peak, so a controller call site dropping
+# either kwarg kept the whole suite green) ------------------------------------
+
+@pytest.mark.parametrize("ctrl_cls", [FanBandController, CoolingController])
+def test_run_fan_floor_wired_through_controller(ctrl_cls):
+    """Low load (room at center, cold outdoor -> law sizes ~0%): the emitted
+    RUN fan must hold COOL_RUN_FAN_FLOOR — through the real controller, pinning
+    the run_floor kwarg at the call site (a 0% RUN cools nothing: the KNX
+    interlock holds the valve closed while the fan is off)."""
+    out = ctrl_cls()(_state([_fanzone("a", temp=24.0)], outdoor=15.0, **_BAND))
+    assert out["fan:fan.a"] == COOL_RUN_FAN_FLOOR
+
+
+@pytest.mark.parametrize("ctrl_cls", [FanBandController, CoolingController])
+def test_peak_backstop_wired_through_controller(ctrl_cls):
+    """A room just above the band top at the outdoor peak goes to 100% even
+    when the law sizes less — pinning the at_peak kwarg at the call site. The
+    same room without the peak stays law-sized (<100)."""
+    def st(outdoor):
+        s = _state([_fanzone("a", temp=24.9)], outdoor=outdoor, **_BAND)
+        return replace(s, duty_peak_outdoor=30.0)
+
+    assert ctrl_cls()(st(34.0))["fan:fan.a"] == 100   # backstopped
+    assert ctrl_cls()(st(29.0))["fan:fan.a"] < 100    # law-sized off-peak
+
+
+def test_peak_latch_deadband_through_controller():
+    """Outdoor jitter around the threshold must not flip the backstop: 30.1
+    enters, 29.9 HOLDS (within the exit deadband), 29.4 exits to law-sized."""
+    c = CoolingController()
+
+    def st(outdoor):
+        s = _state([_fanzone("a", temp=24.9)], outdoor=outdoor, **_BAND)
+        return replace(s, duty_peak_outdoor=30.0)
+
+    assert c(st(30.1))["fan:fan.a"] == 100
+    assert c(st(29.9))["fan:fan.a"] == 100  # held by the latch, no hunting
+    assert c(st(29.4))["fan:fan.a"] < 100   # clean exit below the deadband
 
 
 def test_band_skips_followers():

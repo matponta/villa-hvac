@@ -450,6 +450,32 @@ async def test_run_fan_off_watchdog_fires_through_engine_cycles(hass, caplog):
     assert caplog.text.count("but has read OFF") == 1
 
 
+async def test_room_params_mirror_live_sizing_law(hass):
+    """Parity pin (mutation-proven hole): the planner sim must run the SAME
+    RUN-fan law as the live band — _room_params must pass the live constants,
+    not fall back to RoomParams' back-compat defaults (run_floor=0,
+    peak_outdoor=None), or plan trajectories silently diverge from actuation."""
+    from dataclasses import replace
+
+    from custom_components.villa_hvac.const import (
+        COOL_PULLDOWN_HOURS,
+        COOL_RUN_FAN_FLOOR,
+    )
+
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    state = build_house_state(hass, entry, entry.runtime_data)
+    # distinguishable from both the None default and the 30.0 option default
+    state = replace(state, duty_peak_outdoor=31.5)
+
+    params = engine._room_params(state)
+    assert params  # the fancoil leaders are present
+    for rp in params.values():
+        assert rp.run_floor == COOL_RUN_FAN_FLOOR
+        assert rp.pulldown_hours == COOL_PULLDOWN_HOURS
+        assert rp.peak_outdoor == 31.5
+
+
 async def test_build_house_state_fan_pct_reflects_off_state(hass):
     """F2 guard: the snapshot fan_pct fed to the capacity learner is 0 for an
     OFF fan (never the retained %), the live % when on, None when unavailable."""
