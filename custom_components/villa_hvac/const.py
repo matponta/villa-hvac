@@ -427,6 +427,12 @@ NIGHT_GUARD_HIGH = timedelta(minutes=3)   # above threshold this long -> low coo
 NIGHT_GUARD_LOW = timedelta(minutes=10)   # below threshold this long -> silence
 NIGHT_GUARD_FAN_PCT = 33                  # lowest fancoil stage
 
+# #2b clock-derived wake: within [wake_time, wake_time + this) the night silence
+# is lifted even if the in-memory wake latch was lost to a reboot/reload in
+# Notte (a restart after 08:00 must NOT re-silence the bedrooms until the mode
+# leaves Notte). 12 h = the "day"; an early-evening Notte re-silences normally.
+NIGHT_WAKE_DAY_MINUTES = 720
+
 # Options-flow tunables (entry.options) + defaults.
 OPT_NIGHT_THRESHOLD = "night_heat_threshold"
 OPT_AUTO_WAKE_TIME = "auto_wake_time"

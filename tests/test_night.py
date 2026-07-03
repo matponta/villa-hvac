@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from freezegun import freeze_time
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_mock_service,
@@ -85,10 +86,14 @@ async def _select_mode(hass, mode):
     await hass.async_block_till_done()
 
 
+@freeze_time("2026-07-04 23:30:00")
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
     """C1: camere silenziose flows through the arbiter — silence = manuale on
     + a fan.turn_off dispatched by the fan lever (a 0% opinion asserts the OFF
-    state); waking releases manuale."""
+    state); waking releases manuale. Frozen to a night hour (tz pinned UTC):
+    since the wake is clock-derived, a daytime run would legitimately not
+    silence."""
+    await hass.config.async_set_time_zone("UTC")
     await _setup(hass)
     await enable_supervisor(hass)
     seed_thermostats(hass)
@@ -191,3 +196,44 @@ def test_night_controller_releases_once_on_exit():
 def test_night_controller_yields_when_inactive_and_unmanaged():
     # Never entered Notte -> no opinion at all (doesn't fight FanBand for bedrooms).
     assert _night_ctrl()(_night_state(mode="Casa", night_active=False)) == {}
+
+
+# --- Fix 1b (2026-07-04): the wake is clock-derived, not latch-only ----------
+
+async def test_woken_derives_from_clock_after_wake_time(hass):
+    """A reboot/reload in Notte AFTER the wake time loses the in-memory latch;
+    `woken` must derive from the clock so the bedrooms are not re-silenced
+    until the mode leaves Notte (the 3/7 morning: deploy restart at 10:09)."""
+    await hass.config.async_set_time_zone("UTC")
+    ctrl = _night_ctrl()
+    assert ctrl._woken is False  # fresh controller == post-reboot state
+
+    with freeze_time("2026-07-04 10:30:00"):
+        assert ctrl.woken is True  # inside [08:00, 20:00) -> silence lifted
+    with freeze_time("2026-07-04 03:00:00"):
+        assert ctrl.woken is False  # night proper -> silence active
+    with freeze_time("2026-07-04 21:30:00"):
+        assert ctrl.woken is False  # early-evening Notte -> silence engages
+
+    ctrl._woken = True  # the explicit 08:00 latch still wins at any hour
+    with freeze_time("2026-07-04 03:00:00"):
+        assert ctrl.woken is True
+
+
+async def test_reboot_in_notte_after_wake_does_not_resilence(hass):
+    """End-to-end derivation: a FRESH controller (post-restart, no latch) with
+    the house still in Notte must yield night_active False during the day
+    window and True at night — build_house_state reads the clock-aware woken."""
+    from custom_components.villa_hvac.engine import build_house_state
+
+    await hass.config.async_set_time_zone("UTC")
+    entry = await _setup(hass)  # fresh NightSilenceController: no wake latch
+    hass.states.async_set("select.house_mode", "Notte")
+
+    with freeze_time("2026-07-04 10:30:00"):
+        state = build_house_state(hass, entry, entry.runtime_data)
+        assert state.house_mode == "Notte"
+        assert state.night_active is False  # clock says woken -> band keeps control
+    with freeze_time("2026-07-04 03:00:00"):
+        state = build_house_state(hass, entry, entry.runtime_data)
+        assert state.night_active is True  # night proper -> silence re-derives

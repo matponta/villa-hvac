@@ -24,6 +24,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.util import dt as dt_util
 
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
@@ -32,12 +33,13 @@ from .const import (
     NIGHT_GUARD_FAN_PCT,
     NIGHT_GUARD_HIGH,
     NIGHT_GUARD_LOW,
+    NIGHT_WAKE_DAY_MINUTES,
     OPT_AUTO_WAKE_TIME,
     OPT_NIGHT_THRESHOLD,
     ZONES,
 )
 from .controller import current_house_mode
-from .supervisor import fan_lever, switch_lever
+from .supervisor import fan_lever, in_window, switch_lever
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -114,10 +116,41 @@ class NightSilenceController:
         self._woken = False
         self._unsub_wake = None
 
+    def _wake_hms(self) -> tuple[int, int, int]:
+        """Parse the configured auto-wake time ('HH:MM[:SS]'); 08:00 on garbage."""
+        raw = str(self.entry.options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME))
+        parts = raw.split(":")
+        try:
+            hour = int(parts[0])
+            minute = int(parts[1]) if len(parts) > 1 else 0
+            second = int(parts[2]) if len(parts) > 2 else 0
+        except (ValueError, IndexError):
+            hour, minute, second = 8, 0, 0
+        return hour, minute, second
+
     @property
     def woken(self) -> bool:
-        """The auto-wake latch (build_house_state reads it to gate night_active)."""
-        return self._woken
+        """Is the silence lifted? (build_house_state reads this into night_active.)
+
+        The event latch alone is NOT enough: it lives in memory, so a reboot or
+        reload while the house is still in Notte AFTER the wake time would lose
+        it — night_active would re-derive True and re-silence the bedrooms until
+        the mode finally leaves Notte (a fan-dead morning; the C1 reboot
+        re-silence feature working against us). So the wake is ALSO derived from
+        the clock: within [wake_time, wake_time + 12 h) the silence is lifted
+        regardless of the latch. Outside that day window (an early-evening
+        Notte) the latch alone decides, so going to bed re-silences normally.
+        """
+        if self._woken:
+            return True
+        hour, minute, _ = self._wake_hms()
+        wake_min = (hour % 24) * 60 + minute % 60
+        local = dt_util.now()
+        return in_window(
+            local.hour * 60 + local.minute,
+            wake_min,
+            (wake_min + NIGHT_WAKE_DAY_MINUTES) % 1440,
+        )
 
     def start(self) -> None:
         self._schedule_wake()
@@ -168,14 +201,7 @@ class NightSilenceController:
         return out
 
     def _schedule_wake(self) -> None:
-        raw = str(self.entry.options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME))
-        parts = raw.split(":")
-        try:
-            hour = int(parts[0])
-            minute = int(parts[1]) if len(parts) > 1 else 0
-            second = int(parts[2]) if len(parts) > 2 else 0
-        except (ValueError, IndexError):
-            hour, minute, second = 8, 0, 0
+        hour, minute, second = self._wake_hms()
         self._unsub_wake = async_track_time_change(
             self.hass, self._on_wake, hour=hour, minute=minute, second=second
         )
