@@ -65,6 +65,8 @@ from .const import (
     COOL_GAIN_SOLAR,
     CLEAR_SKY_GHI,
     COOL_PULLDOWN,
+    COOL_PULLDOWN_HOURS,
+    COOL_RUN_FAN_FLOOR,
     FORECASTSOLAR_GHI_FACTOR,
     FORECASTSOLAR_POWER,
     PV_BIAS_MIN_DWELL,
@@ -991,6 +993,10 @@ class SupervisorEngine:
                 c=z.model_c if z.model_c is not None else COOL_GAIN_BASE,
                 k=z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY,
                 pulldown=COOL_PULLDOWN, fan_min=z.fan_min,
+                # mirror the live RUN-fan sizing law so plan == actuation
+                pulldown_hours=COOL_PULLDOWN_HOURS,
+                run_floor=COOL_RUN_FAN_FLOOR,
+                peak_outdoor=state.duty_peak_outdoor,
             )
         return out
 

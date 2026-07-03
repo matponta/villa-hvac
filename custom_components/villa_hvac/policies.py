@@ -47,6 +47,8 @@ from .const import (
     COOL_GAIN_OUTDOOR,
     COOL_GAIN_SOLAR,
     COOL_PULLDOWN,
+    COOL_PULLDOWN_HOURS,
+    COOL_RUN_FAN_FLOOR,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
     FAN_LEVEL_HYSTERESIS,
@@ -102,8 +104,6 @@ from .supervisor import (
     abc_identified,
     band_step,
     blend_params,
-    capacity_fan,
-    cooling_load,
     house_load_index,
     select_regime,
     cover_lever,
@@ -115,6 +115,7 @@ from .supervisor import (
     preset_lever,
     rls_capacity_update,
     rls_passive_update,
+    run_fan_pct,
     seed_params,
     switch_lever,
     temperature_lever,
@@ -517,10 +518,21 @@ class FanBandController:
                 b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
                 c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
                 k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
-                load = cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c)
-                pct = capacity_fan(
-                    load, pulldown=COOL_PULLDOWN, capacity=k,
-                    fan_min_pct=z.fan_min, step=FAN_LEVEL_STEP,
+                at_peak = (
+                    state.outdoor_temp is not None
+                    and state.duty_peak_outdoor is not None
+                    and state.outdoor_temp >= state.duty_peak_outdoor
+                )
+                # 2026-07-04 sizing law: envelope gain + stored-heat extraction
+                # (temp excess over the center), RUN-floored, peak-backstopped —
+                # the one law shared with the planner sim (run_fan_pct).
+                pct = run_fan_pct(
+                    temp=z.temp, outdoor=state.outdoor_temp, solar=state.solar,
+                    center=center, band=band,
+                    a=a, b=b, c=c, k=k,
+                    pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,
+                    run_floor=COOL_RUN_FAN_FLOOR, fan_min_pct=z.fan_min,
+                    at_peak=at_peak, step=FAN_LEVEL_STEP,
                     last_level=self._last_fan.get(z.zone_id),
                     hysteresis=FAN_LEVEL_HYSTERESIS,
                 )
@@ -1035,10 +1047,21 @@ class CoolingController:
                 b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
                 c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
                 k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
-                load = cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c)
-                pct = capacity_fan(
-                    load, pulldown=COOL_PULLDOWN, capacity=k,
-                    fan_min_pct=z.fan_min, step=FAN_LEVEL_STEP,
+                at_peak = (
+                    state.outdoor_temp is not None
+                    and state.duty_peak_outdoor is not None
+                    and state.outdoor_temp >= state.duty_peak_outdoor
+                )
+                # 2026-07-04 sizing law: envelope gain + stored-heat extraction
+                # (temp excess over the center), RUN-floored, peak-backstopped —
+                # the one law shared with the planner sim (run_fan_pct).
+                pct = run_fan_pct(
+                    temp=z.temp, outdoor=state.outdoor_temp, solar=state.solar,
+                    center=center, band=band,
+                    a=a, b=b, c=c, k=k,
+                    pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,
+                    run_floor=COOL_RUN_FAN_FLOOR, fan_min_pct=z.fan_min,
+                    at_peak=at_peak, step=FAN_LEVEL_STEP,
                     last_level=self._last_fan.get(z.zone_id),
                     hysteresis=FAN_LEVEL_HYSTERESIS,
                 )

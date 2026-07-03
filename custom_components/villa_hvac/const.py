@@ -550,7 +550,15 @@ COOL_CAPACITY = 1.2          # k: °C/h of cooling at 100% fan (measured best ~0
 COOL_GAIN_OUTDOOR = 0.03     # a: °C/h per °C of (T_out - T_in)
 COOL_GAIN_SOLAR = 0.0008     # b: °C/h per W/m² of solar radiation
 COOL_GAIN_BASE = 0.0         # c: baseline internal-gain °C/h
-COOL_PULLDOWN = 0.3          # r: target pull-down rate during a RUN (°C/h)
+COOL_PULLDOWN = 0.3          # r: base pull-down rate during a RUN (°C/h)
+# Stored-heat extraction horizon: a RUN fan is sized to also remove the room's
+# excess over the band center within this many hours (2026-07-04 sizing law —
+# the constant rate alone read ~0 demand when outdoor < room; see
+# supervisor/control_law.effective_pulldown).
+COOL_PULLDOWN_HOURS = 2.0
+# A RUN fan may never be sized to 0%: the KNX fancoil interlock holds the EV
+# valve closed while the fan is off, so a 0% RUN cools nothing by construction.
+COOL_RUN_FAN_FLOOR = 20
 
 # --- F2: online self-refining per-room thermal model (RLS) --------------------
 # Learn dT/dt = a(T_out-T) + b*S + c - k*u_eff per room from live data.

@@ -28,8 +28,10 @@ from custom_components.villa_hvac.supervisor import (
     cooling_load,
     cover_lever,
     duty_decision,
+    effective_pulldown,
     estimate_rate,
     fan_level,
+    run_fan_pct,
     k_confidence,
     merge_desired,
     plan_run,
@@ -388,6 +390,76 @@ def test_capacity_fan_matches_load():
 
 def test_capacity_fan_zero_capacity_is_full():
     assert capacity_fan(0.5, pulldown=0.3, capacity=0.0, fan_min_pct=0) == 100
+
+
+# --- run_fan_pct: the 2026-07-04 RUN sizing law -------------------------------
+
+_LAW = dict(
+    a=0.03, b=0.0008, c=0.0, k=1.2,
+    pulldown=0.3, pulldown_hours=2.0, run_floor=20, fan_min_pct=0,
+)
+
+
+def test_effective_pulldown_adds_stored_heat_term():
+    assert effective_pulldown(24.0, 24.0, base=0.3, hours=2.0) == 0.3  # at center
+    assert effective_pulldown(26.0, 24.0, base=0.3, hours=2.0) == 1.3  # +2°C -> +1°C/h
+    assert effective_pulldown(23.0, 24.0, base=0.3, hours=2.0) == 0.3  # never below base
+    assert effective_pulldown(None, 24.0, base=0.3, hours=2.0) == 0.3
+    assert effective_pulldown(26.0, None, base=0.3, hours=2.0) == 0.3
+
+
+def test_run_fan_saturates_for_hot_room_by_law():
+    """The 2026-07-02 padronale failure: room 30.2 vs center 24 sized only ~60%
+    while the room climbed. The stored-heat term saturates the LAW itself:
+    (30.2-24)/2 = 3.1 °C/h demanded >> k=1.2 -> 100%, no clamp involved."""
+    pct = run_fan_pct(
+        temp=30.2, outdoor=34.0, solar=300.0, center=24.0, band=1.5, **_LAW
+    )
+    assert pct == 100
+
+
+def test_run_fan_extracts_stored_heat_when_outdoor_cooler():
+    """The 2026-07-03 08:25 failure: outdoor cooler than the room -> envelope
+    gain ~0 -> the old constant-rate law sized 0% with the room at 27.5 vs
+    center 22. The extraction term (5.5/2 = 2.75 °C/h) saturates instead."""
+    pct = run_fan_pct(
+        temp=27.5, outdoor=25.0, solar=50.0, center=22.0, band=1.5, **_LAW
+    )
+    assert pct == 100
+
+
+def test_run_fan_floor_never_zero_in_run():
+    """A RUN with the fan at 0% is self-defeating (the KNX interlock holds the
+    valve closed while the fan is off): near-zero computed demand still holds
+    the RUN floor."""
+    pct = run_fan_pct(
+        temp=24.0, outdoor=15.0, solar=0.0, center=24.0, band=1.5, **_LAW
+    )
+    assert pct == 20  # raw ~2.5% -> level 0 -> floored
+
+
+def test_run_fan_peak_backstop_clamps_above_band():
+    """At the verified ~0-net outdoor peak the gain estimate cannot be trusted:
+    a room at/above the band top goes all-in regardless of the model; a room
+    still inside the band stays law-sized."""
+    bad_model = dict(_LAW, a=0.001, b=0.0, k=5.0)  # badly underestimates the gain
+    assert run_fan_pct(
+        temp=25.0, outdoor=34.0, solar=100.0, center=24.0, band=1.5,
+        at_peak=True, **bad_model
+    ) == 100
+    assert run_fan_pct(
+        temp=24.5, outdoor=34.0, solar=100.0, center=24.0, band=1.5,
+        at_peak=True, **bad_model
+    ) == 20  # inside the band -> sized (floored), not forced
+
+
+def test_run_fan_steady_state_matches_capacity_law():
+    """With the room AT the center the stored-heat term vanishes: the sizing
+    equals the plain capacity law — quiet fans at low load are preserved."""
+    # load = 0.03*(34-24) = 0.3 -> (0.3+0.3)/1.2 = 50% in both laws
+    assert run_fan_pct(
+        temp=24.0, outdoor=34.0, solar=0.0, center=24.0, band=1.5, **_LAW
+    ) == capacity_fan(0.3, pulldown=0.3, capacity=1.2, fan_min_pct=20) == 50
 
 
 # --- build_plan (#11 plan view) ----------------------------------------------

@@ -13,11 +13,12 @@ from .control_law import (
     PRECOOL_COAST,
     DutyState,
     band_step,
-    capacity_fan,
     compose_center,
     cooling_effectiveness,
     cooling_load,
+    effective_pulldown,
     energy_precool_decision,
+    run_fan_pct,
     run_rest_durations,
 )
 from .model import (
@@ -388,7 +389,11 @@ def build_plan(
 
 @dataclass(frozen=True)
 class RoomParams:
-    """Thermal model + control params for one room's simulation."""
+    """Thermal model + control params for one room's simulation.
+
+    `pulldown_hours` / `run_floor` / `peak_outdoor` mirror the live RUN-fan
+    sizing law (control_law.run_fan_pct) so the simulated fan matches what the
+    band would actually command; the defaults keep older constructors valid."""
 
     a: float
     b: float
@@ -397,6 +402,9 @@ class RoomParams:
     pulldown: float
     fan_min: int
     fan_step: int = 10
+    pulldown_hours: float = 2.0
+    run_floor: int = 0
+    peak_outdoor: float | None = None
 
 
 
@@ -490,10 +498,20 @@ def simulate_room(
         )
         if phase == "run":
             load = cooling_load(temp, t_out, s, a=params.a, b=params.b, c=params.c)
-            u_needed = (load + params.pulldown) / params.k if params.k > 0 else 1.0
-            fan = capacity_fan(
-                load, pulldown=params.pulldown, capacity=params.k,
-                fan_min_pct=params.fan_min, step=params.fan_step,
+            pull = effective_pulldown(
+                temp, eff_center, base=params.pulldown, hours=params.pulldown_hours
+            )
+            u_needed = (load + pull) / params.k if params.k > 0 else 1.0
+            fan = run_fan_pct(
+                temp=temp, outdoor=t_out, solar=s, center=eff_center, band=band,
+                a=params.a, b=params.b, c=params.c, k=params.k,
+                pulldown=params.pulldown, pulldown_hours=params.pulldown_hours,
+                run_floor=params.run_floor, fan_min_pct=params.fan_min,
+                at_peak=(
+                    params.peak_outdoor is not None and t_out is not None
+                    and t_out >= params.peak_outdoor
+                ),
+                step=params.fan_step,
             )
         else:
             u_needed = 0.0

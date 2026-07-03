@@ -165,6 +165,71 @@ def capacity_fan(
 
 
 
+def effective_pulldown(
+    temp: float | None,
+    center: float | None,
+    *,
+    base: float,
+    hours: float,
+) -> float:
+    """Required extraction rate (°C/h) during a RUN: the base pull-down rate plus
+    the STORED-HEAT term — the room's excess over the band center spread over
+    `hours`. The constant-rate law alone sized the fan for the instantaneous
+    envelope gain only, which reads ~0 when the outdoor is cooler than the room:
+    proven live 2026-07-03 08:25 (fan 0% in RUN, room 27.5 vs center 22) and
+    2026-07-02 (fan 60% while padronale climbed to 30.2). A room 2 °C above
+    center now demands base + 1 °C/h; far-above-center rooms saturate to 100%
+    BY THE LAW, no clamp needed."""
+    if temp is None or center is None or hours <= 0:
+        return base
+    return base + max(0.0, temp - center) / hours
+
+
+
+def run_fan_pct(
+    *,
+    temp: float | None,
+    outdoor: float | None,
+    solar: float | None,
+    center: float | None,
+    band: float,
+    a: float,
+    b: float,
+    c: float,
+    k: float,
+    pulldown: float,
+    pulldown_hours: float,
+    run_floor: int,
+    fan_min_pct: int,
+    at_peak: bool = False,
+    step: int = 10,
+    last_level: int | None = None,
+    hysteresis: int = 0,
+) -> int:
+    """The ONE RUN-fan sizing law (2026-07-04): capacity-match the envelope gain
+    PLUS the stored-heat extraction (`effective_pulldown`), floored at
+    `run_floor` — a RUN with the fan at 0% is self-defeating (the KNX fancoil
+    interlock holds the EV valve closed while the fan is off) — and clamped to
+    100% when a room is losing ground above the band at the verified ~0-net
+    outdoor peak, where the model's gain estimate cannot be trusted (the one
+    place a guardrail backstops the law). Shared verbatim by the live band
+    (trio + fold) and the planner room sim so plan and actuation never drift."""
+    load = cooling_load(temp, outdoor, solar, a=a, b=b, c=c)
+    pull = effective_pulldown(temp, center, base=pulldown, hours=pulldown_hours)
+    pct = capacity_fan(
+        load, pulldown=pull, capacity=k,
+        fan_min_pct=max(fan_min_pct, run_floor), step=step,
+        last_level=last_level, hysteresis=hysteresis,
+    )
+    if (
+        at_peak and temp is not None and center is not None
+        and temp >= center + band / 2.0
+    ):
+        return 100
+    return pct
+
+
+
 # --- Band-center composition (F4c Phase 1, pure) -----------------------------
 # The band `center` for a cooling leader is composed from the base mode center
 # (house_setpoint + mode_offset, incl. the #8 override) plus at most one feature

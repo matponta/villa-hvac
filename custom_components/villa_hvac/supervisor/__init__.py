@@ -67,9 +67,11 @@ from .control_law import (
     cooling_effectiveness,
     cooling_load,
     duty_decision,
+    effective_pulldown,
     energy_precool_decision,
     fan_level,
     in_window,
+    run_fan_pct,
     run_rest_durations,
 )
 from .model import (
@@ -186,6 +188,7 @@ __all__ = [
     "cooling_load",
     "cover_lever",
     "duty_decision",
+    "effective_pulldown",
     "energy_precool_decision",
     "estimate_rate",
     "fan_level",
@@ -203,6 +206,7 @@ __all__ = [
     "return_lead_time",
     "rls_capacity_update",
     "rls_passive_update",
+    "run_fan_pct",
     "run_rest_durations",
     "schedule_precool",
     "seed_params",

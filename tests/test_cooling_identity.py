@@ -311,10 +311,13 @@ def test_seq1_night_toggle_hysteresis_adjacent_fan():
     asymmetry: the night pop clears _states only). Drift here shifts the morning
     fan a level AND fragments F2b k-windows."""
     cfg = _cfg()
-    s_run = _hs({"lr": 25.0, "sg": 24.0, "bed": 26.0}, cfg=cfg)
+    # bed 24.3 (just above center 24 -> RUN): load = 0.03*(26-24.3) + 0.0008*100
+    # = 0.131; effective pulldown = 0.3 + (24.3-24)/2 = 0.45; raw = 100*(0.131+
+    # 0.45)/1.2 = 48.4 -> level 50 (2026-07-04 sizing law).
+    s_run = _hs({"lr": 25.0, "sg": 24.0, "bed": 24.3}, cfg=cfg)
     old, new = _run_differential([s_run])
     fan_l = new._last_fan["bed"]
-    assert fan_l == 30  # load 0.08+0.3 pulldown over k=1.2 → raw 31.7 → level 30
+    assert fan_l == 50
 
     night_states = [
         _hs({"lr": 25.0, "sg": 24.0, "bed": 25.0},
@@ -325,14 +328,15 @@ def test_seq1_night_toggle_hysteresis_adjacent_fan():
     assert "bed" in new._last_fan and new._last_fan["bed"] == fan_l  # survived
     assert "bed" in old.band._last_fan  # the oracle agrees it's an asymmetry
 
-    # wake: bed 24.0 → raw fan 36.7 (level 40 from scratch) but |36.7-30| < 10
-    # (step/2 + hysteresis) → HELD at 30 iff _last_fan survived the night.
-    s_wake = _hs({"lr": 25.0, "sg": 24.0, "bed": 24.0},
+    # wake: bed 24.2 → load = 0.03*1.8+0.08 = 0.134; pull = 0.3+0.1 = 0.4;
+    # raw = 100*0.534/1.2 = 44.5 (level 40 from scratch) but |44.5-50| < 10
+    # (step/2 + hysteresis) → HELD at 50 iff _last_fan survived the night.
+    s_wake = _hs({"lr": 25.0, "sg": 24.0, "bed": 24.2},
                  now=T0 + timedelta(minutes=40), cfg=cfg, night=False)
     out_old = old(s_wake)
     out_new = new(s_wake)
     assert out_new == out_old
-    assert out_new[fan_lever("fan.bed")] == fan_l  # 30, not the from-scratch 40
+    assert out_new[fan_lever("fan.bed")] == fan_l  # 50, not the from-scratch 40
     assert _post_new(new) == _post_old(old)
 
 
