@@ -11,7 +11,7 @@ from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import RoomModelStore, SupervisorEngine
 from .night import NightSilenceController
-from .policies import POLICIES, DutyController, FanBandController
+from .policies import POLICIES, CoolingController
 from .returnhome import ReturnHomeManager
 from .window import WindowController
 
@@ -61,9 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     engine = SupervisorEngine(
         hass, entry, coordinator,
         policies=POLICIES,
+        # Tier-1 M1: ONE CoolingController (regime + duty + band folded).
         # NightSilenceController LAST: on the Notte-exit cycle its one-shot manuale
-        # release must yield to FanBandController re-taking a bedroom for pacing.
-        controllers=(DutyController(), FanBandController(), night),
+        # release must yield to the band re-taking a bedroom for pacing.
+        controllers=(CoolingController(), night),
         model_store=model_store,
     )
     engine.thermal.load(model_data)

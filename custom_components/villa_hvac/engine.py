@@ -108,9 +108,7 @@ from .controller import (
     unified_planner_enabled,
 )
 from .policies import (
-    DutyController,
-    FanBandController,
-    RegimeCoordinator,
+    CoolingController,
     ThermalEstimator,
 )
 from .returnhome import AwayReturnController
@@ -537,23 +535,18 @@ class SupervisorEngine:
         # building it never advances those timers — safe to compute while dark.
         self.policies = list(policies or [])
         self.controllers = list(controllers or [])
-        self._duty_controller = next(
-            (c for c in self.controllers if isinstance(c, DutyController)), None
+        # Tier-1 M1: the ONE cooling organism (regime coalescing + duty BLOCCO +
+        # band slam/fan, folded). The #11 plan view reads its .duty read-only.
+        self._cooling = next(
+            (c for c in self.controllers if isinstance(c, CoolingController)), None
         )
         # F2: the online thermal-model OBSERVER. NOT a merge controller — it never
         # actuates; the engine ticks it every cycle (even deploy-dark) so passive
         # params converge before actuation lights up.
         self.thermal = ThermalEstimator()
-        # F3c: the coalescing coordinator. Driven explicitly (needs regime+center);
-        # emits a per-leader phase_override + a BLOCCO opinion. Placed BEFORE the
-        # DutyController in the merge so its BLOCCO wins when it's coalescing.
-        self.regime = RegimeCoordinator()
         # #8: overrides the effective house mode while Via+armed (deep setback ->
         # pre-cond ramp). Applied to the state before policies run. Holds the latch.
         self.away_return = AwayReturnController()
-        self._fan_controller = next(
-            (c for c in self.controllers if isinstance(c, FanBandController)), None
-        )
         self._model_store = model_store
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
@@ -769,23 +762,14 @@ class SupervisorEngine:
             self._plan_view = self._build_plan_view(state, pure_outputs)
             if actuate:
                 self._check_unresolved_centers(state)
-                # F3c: advance the coalescing coordinator first (it owns BLOCCO +
-                # the per-leader phase_override when MEDIUM-coalescing). Its BLOCCO
-                # opinion is merged BEFORE the DutyController so it wins; when it
-                # yields, the legacy duty BLOCCO survives.
-                phase_override, regime_blocco = self._regime_step(state)
-                ctrl_outputs: list = []
-                if regime_blocco is not None:
-                    ctrl_outputs.append({BLOCCO_LEVER: regime_blocco})
-                for c in self.controllers:
-                    if c is self._fan_controller:
-                        ctrl_outputs.append(c(state, phase_override=phase_override))
-                    else:
-                        ctrl_outputs.append(c(state))
-                # Controllers first: the #3 band controller's setpoint must win
-                # over house_mode for the cooling zones it actively manages. It
-                # already yields (no opinion) on disabled/paused/free-cool zones,
-                # so the higher-priority preset policies still own those.
+                # Tier-1 M1: the regime/duty/band composition (BLOCCO precedence,
+                # phase_override handoff, duty-always-advances) now lives INSIDE
+                # CoolingController.__call__ — no more load-bearing list-ordering
+                # here. Controllers first: the #3 band setpoint must win over
+                # house_mode for the cooling zones it actively manages; it already
+                # yields (no opinion) on disabled/paused/free-cool zones, so the
+                # higher-priority preset policies still own those.
+                ctrl_outputs = [c(state) for c in self.controllers]
                 desired = merge_desired([*ctrl_outputs, *pure_outputs])
                 for lever, target in desired.items():
                     # Bail the moment teardown begins (stop()) so a fail-safe
@@ -824,9 +808,7 @@ class SupervisorEngine:
         cfg = state.config
         desired = merge_desired(pure_outputs)
         run_plan = _make_run_plan(cfg, self._forecast, state.now, state.outdoor_temp)
-        duty_state = (
-            self._duty_controller.duty if self._duty_controller else DutyState()
-        )
+        duty_state = self._cooling.duty if self._cooling else DutyState()
         plan = build_plan(
             state, run_plan, desired, duty_state,
             list(self._forecast), cfg.lookahead,
@@ -966,46 +948,6 @@ class SupervisorEngine:
                     "_cycle; band control is degrading to the base center",
                     z.zone_id,
                 )
-
-    def _regime_step(self, state: HouseState) -> tuple[dict[str, str], str | None]:
-        """F3c: classify the regime and, if coalescing is enabled + MEDIUM, advance
-        the coordinator and return (phase_override, BLOCCO opinion). Gated by
-        regime_enabled AND duty_cycle AND fan_pacing; otherwise resets + yields."""
-        cfg = state.config
-        coalescing = (
-            cfg.regime_enabled
-            and duty_cycle_enabled(self.hass, self.entry)
-            and fan_pacing_enabled(self.hass, self.entry)
-        )
-        if not coalescing:
-            return self.regime.step(state, regime="low", center=None, min_on=None, min_off=None)
-        load = house_load_index(
-            state, default_a=COOL_GAIN_OUTDOOR, default_b=COOL_GAIN_SOLAR,
-            default_c=COOL_GAIN_BASE, default_capacity=COOL_CAPACITY,
-            k_conf_min=REGIME_K_CONF_MIN,
-        )
-        at_peak = (
-            state.outdoor_temp is not None and state.duty_peak_outdoor is not None
-            and state.outdoor_temp >= state.duty_peak_outdoor
-        )
-        free_cool = (
-            state.free_cool_enabled and state.season == SEASON_SUMMER
-            and state.outdoor_temp is not None and state.free_cool_threshold is not None
-            and state.outdoor_temp < state.free_cool_threshold
-        )
-        regime = select_regime(
-            load, at_peak=at_peak, free_cool=free_cool,
-            peak_ratio=cfg.regime_peak_ratio, medium_ratio=cfg.regime_medium_ratio,
-        )
-        center = (
-            state.house_setpoint + state.mode_offset
-            if (state.house_setpoint is not None and state.mode_offset is not None)
-            else None
-        )
-        return self.regime.step(
-            state, regime=regime, center=center,
-            min_on=cfg.min_compressor_on, min_off=cfg.min_compressor_off,
-        )
 
     def _room_params(self, state: HouseState) -> dict[str, RoomParams]:
         """Per-leader RoomParams from the blended model on each ZoneSnapshot (prior

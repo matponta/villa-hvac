@@ -535,6 +535,171 @@ def test_gate_off_resets_regime_state_and_reenable_starts_fresh():
 # --- (c) harness rows via the REAL build_house_state ----------------------------
 
 
+# --- (b) end-to-end A/B: old-wired vs new-wired ENGINES ------------------------
+# The one oracle that cannot share transliteration bias with the fold: two REAL
+# SupervisorEngines over identical scripted hass state — one wired with
+# CoolingController, one with the trio composed the old way — must emit EQUAL
+# ORDERED service-call streams.
+
+
+async def _setup_ab_entry(hass, options=None):
+    from pytest_homeassistant_custom_component.common import (
+        MockConfigEntry,
+        async_mock_service,
+    )
+
+    from custom_components.villa_hvac.const import DOMAIN
+
+    entry = MockConfigEntry(
+        domain=DOMAIN, unique_id=DOMAIN, data={}, options=options or {}
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    for domain, service in (
+        ("climate", "set_preset_mode"), ("climate", "set_temperature"),
+        ("fan", "set_percentage"), ("switch", "turn_on"), ("switch", "turn_off"),
+    ):
+        async_mock_service(hass, domain, service)
+    return entry
+
+
+async def _run_wired_engine(hass, entry, controller):
+    """One fresh SupervisorEngine wired with `controller`, one actuating pass;
+    returns the ordered (domain, service, data) stream it emitted."""
+    from homeassistant.const import EVENT_CALL_SERVICE
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.villa_hvac.engine import SupervisorEngine
+    from custom_components.villa_hvac.policies import POLICIES
+
+    engine = SupervisorEngine(
+        hass, entry, entry.runtime_data, policies=POLICIES,
+        controllers=(controller,),
+    )
+    engine._forecast_ts = dt_util.utcnow()  # skip the live forecast fetch
+    stream: list = []
+    unsub = hass.bus.async_listen(
+        EVENT_CALL_SERVICE,
+        lambda e: stream.append((
+            e.data.get("domain"), e.data.get("service"),
+            tuple(sorted((e.data.get("service_data") or {}).items())),
+        )),
+    )
+    try:
+        await engine._run()
+        await hass.async_block_till_done()
+    finally:
+        unsub()
+    return stream
+
+
+async def _ab_streams(hass, entry, *, seed_duty=None):
+    new_ctrl = CoolingController()
+    old_ctrl = OldPipeline()
+    if seed_duty is not None:
+        new_ctrl._duty = seed_duty
+        old_ctrl.duty._duty = seed_duty
+    stream_new = await _run_wired_engine(hass, entry, new_ctrl)
+    stream_old = await _run_wired_engine(hass, entry, old_ctrl)
+    return stream_new, stream_old
+
+
+async def test_ab_live_combo_band_run(hass):
+    """A/B: the live combo (fan_pacing+duty ON) driving a warm Salotto — band
+    setpoint/fan/manuale + duty BLOCCO, identical ordered streams."""
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "cool",
+        {"preset_mode": "comfort", "temperature": 24.0},
+    )
+    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
+    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
+    hass.states.async_set("switch.fancoil_salotto_manuale", "off")
+    entry = await _setup_ab_entry(hass)
+    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.duty_cycle", "on")
+
+    stream_new, stream_old = await _ab_streams(hass, entry)
+
+    assert stream_new == stream_old
+    assert any(s == "set_temperature" for _, s, _ in stream_new)  # band actually wrote
+
+
+async def test_ab_duty_blocks_after_stint(hass):
+    """A/B: stint exceeded ⇒ both wirings assert BLOCCO in the same stream slot."""
+    from datetime import timedelta as td
+
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.villa_hvac.const import (
+        CONSENSO_BLOCCO,
+        OPT_DUTY_COOLOFF as OC,
+        OPT_DUTY_MAX_STINT as OS,
+    )
+
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "cool", {"preset_mode": "comfort"}
+    )
+    hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
+    hass.states.async_set(CONSENSO_BLOCCO, "off")
+    entry = await _setup_ab_entry(hass, options={OS: 15, OC: 30})
+    hass.states.async_set("switch.duty_cycle", "on")
+
+    seed = DutyState(stint_start=dt_util.utcnow() - td(minutes=20))
+    stream_new, stream_old = await _ab_streams(hass, entry, seed_duty=seed)
+
+    assert stream_new == stream_old
+    assert any(
+        s == "turn_on" and dict(d).get("entity_id") == CONSENSO_BLOCCO
+        for _, s, d in stream_new
+    )
+
+
+async def test_ab_duty_off_releases_blocked_villa(hass):
+    """A/B: duty OFF + a live block ⇒ both wirings actively clear it."""
+    from custom_components.villa_hvac.const import CONSENSO_BLOCCO
+
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "cool", {"preset_mode": "comfort"}
+    )
+    hass.states.async_set(CONSENSO_BLOCCO, "on")
+    entry = await _setup_ab_entry(hass)  # duty defaults OFF
+
+    stream_new, stream_old = await _ab_streams(hass, entry)
+
+    assert stream_new == stream_old
+    assert any(
+        s == "turn_off" and dict(d).get("entity_id") == CONSENSO_BLOCCO
+        for _, s, d in stream_new
+    )
+
+
+async def test_ab_free_cool_bp_and_band_yields(hass):
+    """A/B: free-cool forces BP and the band yields — no setpoint pushed onto
+    the BP zone in either wiring."""
+    hass.states.async_set(
+        "climate.salotto_termostato_2", "cool",
+        {"preset_mode": "comfort", "temperature": 24.0},
+    )
+    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22
+    entry = await _setup_ab_entry(hass)
+    hass.states.async_set("switch.fan_pacing", "on")
+
+    stream_new, stream_old = await _ab_streams(hass, entry)
+
+    assert stream_new == stream_old
+    assert any(
+        s == "set_preset_mode"
+        and dict(d).get("preset_mode") == "building_protection"
+        for _, s, d in stream_new
+    )
+    assert not any(s == "set_temperature" for _, s, _ in stream_new)
+
+
 async def test_differential_on_real_build_house_state(hass):
     """A subset of rows built by the real build_house_state (catches a gate-source
     swap: duty_enabled/fan_pacing_enabled must come from the same switches the

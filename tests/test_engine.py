@@ -252,7 +252,6 @@ async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
     from homeassistant.util import dt as dt_util
 
     from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
-    from custom_components.villa_hvac.policies import DutyController
     from custom_components.villa_hvac.supervisor import DutyState
 
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
@@ -269,10 +268,10 @@ async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.duty_cycle", "on")
     on_calls = async_mock_service(hass, "switch", "turn_on")
-    # Force the stint to already exceed the (clamped) 15-min cap.
+    # Force the stint to already exceed the (clamped) 15-min cap. (M1: the duty
+    # state lives on the folded CoolingController; field name _duty preserved.)
     engine = entry.runtime_data.engine
-    duty = next(c for c in engine.controllers if isinstance(c, DutyController))
-    duty._duty = DutyState(stint_start=dt_util.utcnow() - timedelta(minutes=20))
+    engine._cooling._duty = DutyState(stint_start=dt_util.utcnow() - timedelta(minutes=20))
 
     await engine.request_run()
 
@@ -402,10 +401,10 @@ async def test_free_cool_forces_bp_and_band_yields_via_engine(hass):
 
 
 async def test_regime_release_beats_duty_block_via_engine(hass):
-    """B3 seam: the regime coordinator's BLOCCO opinion is merged BEFORE the
-    DutyController, so a coalescing RELEASE overrides a duty BLOCK. (The regime
-    derivation itself is covered by the pure select_regime tests; here we lock only
-    the _cycle wiring — regime opinion prepended ahead of duty.)"""
+    """B3 seam (M1: now INSIDE CoolingController.__call__): the coalescing
+    BLOCCO opinion takes precedence over the duty one, so a coalescing RELEASE
+    overrides a duty BLOCK. (The regime derivation itself is covered by the pure
+    select_regime tests; here we lock only the composed precedence.)"""
     from custom_components.villa_hvac.const import OPT_DUTY_COOLOFF, OPT_DUTY_MAX_STINT
     from custom_components.villa_hvac.supervisor import BLOCCO_RELEASE
 
@@ -422,7 +421,8 @@ async def test_regime_release_beats_duty_block_via_engine(hass):
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.duty_cycle", "on")
     engine = entry.runtime_data.engine
-    engine._regime_step = lambda state: ({}, BLOCCO_RELEASE)  # force coalescing RELEASE
+    # force a coalescing RELEASE opinion
+    engine._cooling.regime_pass = lambda state: ({}, BLOCCO_RELEASE)
     off_calls = async_mock_service(hass, "switch", "turn_off")
     on_calls = async_mock_service(hass, "switch", "turn_on")
 
@@ -993,6 +993,53 @@ async def test_plan_view_surfaces_center_schedule(hass):
 async def test_unified_planner_switch_defaults_off(hass):
     await _setup(hass)
     assert hass.states.get("switch.unified_planner").state == "off"
+
+
+# --- Tier-1 M1: fold wiring + fail-safe byte-gate ------------------------------
+
+async def test_controllers_are_exactly_cooling_then_night(hass):
+    """(P2 gate g) The production controllers tuple is EXACTLY
+    (CoolingController, NightSilenceController) — the oracle trio cannot stay
+    silently wired, and Night stays LAST (its Notte-exit one-shot manuale
+    release must yield to the band re-taking a bedroom on the same cycle)."""
+    from custom_components.villa_hvac.night import NightSilenceController
+    from custom_components.villa_hvac.policies import CoolingController
+
+    entry = await _setup(hass)
+    engine = entry.runtime_data.engine
+    assert [type(c) for c in engine.controllers] == [
+        CoolingController, NightSilenceController,
+    ]
+    assert engine._cooling is engine.controllers[0]
+
+
+def test_failsafe_functions_byte_identical():
+    """(P2 gate h) The fail-safe cluster is byte-identical to the v0.38.0
+    baseline — the Tier-1 tier preserves it verbatim (STORY §6). The ONLY
+    allowed changes are the two pinned hardening commits (P2 per-lever epoch
+    check in _cycle, P6 boot manuale sweep in async_release_blocco) — neither
+    touches these three functions. If this fails, either the change is
+    unintended (revert it) or it is a NEW deliberate hardening: own commit, own
+    pin, update the hash here in that same commit."""
+    import hashlib
+    import inspect
+
+    from custom_components.villa_hvac.engine import SupervisorEngine
+
+    pins = {
+        "async_fail_safe":
+            "bd60c3863bc5430fe925bd9df7fdd99dc374df91e1975ceeaf4bdb3378c4dfce",
+        "_restore_presets":
+            "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
+        "_release_blocco":
+            "0c54ed2fd9c5e233b3816101c77f4ba48d73da8ac10662a6dd0fe843740b8d22",
+    }
+    for name, expected in pins.items():
+        src = inspect.getsource(getattr(SupervisorEngine, name))
+        actual = hashlib.sha256(src.encode()).hexdigest()
+        assert actual == expected, (
+            f"{name} changed (sha256 {actual}) — the fail-safe is grep-gated"
+        )
 
 
 async def test_center_schedule_cached_not_recomputed_each_tick(hass):
