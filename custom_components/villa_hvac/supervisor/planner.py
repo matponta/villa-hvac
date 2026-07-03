@@ -14,6 +14,7 @@ from .control_law import (
     DutyState,
     band_step,
     capacity_fan,
+    compose_center,
     cooling_effectiveness,
     cooling_load,
     energy_precool_decision,
@@ -21,6 +22,7 @@ from .control_law import (
 )
 from .model import (
     HouseState,
+    ZoneSnapshot,
     _SEASON_SUMMER,
     _is_cooling_leader,
     _is_free_cooling,
@@ -794,6 +796,101 @@ def planner_ref(
     if comfort_ceiling is not None:
         ref = min(ref, comfort_ceiling)
     return ref
+
+
+# --- R1 (Tier-1): the ONE resolved band center --------------------------------
+# resolve_center is the SINGLE site composing a leader's band center — planner
+# reference ▸ compose_center ladder ▸ base — and annotate_centers writes it onto
+# each eligible leader's ZoneSnapshot once per cycle, so every consumer (the
+# FanBandController slam, the coalescing coordinator, sensor.hvac_plan) reads the
+# SAME center. This kills the base-vs-shifted mismatch (the coordinator deciding
+# RUN/REST off the base center while the band slams the PV/planner-shifted one)
+# that blocked the pv_bias × regime co-enable.
+
+
+@dataclass(frozen=True)
+class CenterResolution:
+    """How one leader's band center resolved this cycle."""
+
+    center: float          # the resolved center every consumer reads
+    base: float            # house_setpoint + mode_offset (the mode's center)
+    source: str            # planner | base | pv_bank | pv_coast | precool | comfort_relax
+    floored: bool          # the LADDER's comfort floor clamped a lowering feature
+    planner_driven: bool   # the unified planner reference drove the center
+
+
+def resolve_center(
+    zone: ZoneSnapshot, state: HouseState, *, max_age: timedelta
+) -> CenterResolution | None:
+    """Resolve a leader's band center. Precedence: `planner_ref` (already clamped
+    into [comfort_floor, duty_comfort_max] — the one clamp site) when the unified
+    planner drives, else the reactive `compose_center` ladder (base + at most one
+    feature, bounded by the floor/ceiling per its own contract). A verbatim
+    relocation of the wiring formerly inline in FanBandController and duplicated
+    in engine._center_compositions. None when there is no base center.
+
+    `floored` is always the LADDER's flag (what the comfort floor did to the
+    composed center), even when the planner drives — matching the pre-R1
+    sensor semantics; the planner reference carries its own clamp."""
+    if state.house_setpoint is None or state.mode_offset is None:
+        return None
+    base = state.house_setpoint + state.mode_offset
+    comp = compose_center(
+        base=base,
+        pv_mode=state.pv_mode, pv_floor=state.pv_floor,
+        pv_coast_relax=state.pv_coast_relax,
+        comfort_enabled=state.comfort_enabled, comfort_relax=zone.comfort_relax,
+        precool=state.precool, precool_offset=state.precool_offset,
+        duty_enabled=state.duty_enabled,
+        comfort_ceiling=state.duty_comfort_max,
+        comfort_floor=state.comfort_floor,
+    )
+    ref = planner_ref(
+        state.center_schedule, zone_id=zone.zone_id, now=state.now,
+        planner_eligible=zone.model_planner_eligible,
+        unified_enabled=state.unified_planner_enabled,
+        center_base=base, comfort_floor=state.comfort_floor,
+        comfort_ceiling=state.duty_comfort_max, max_age=max_age,
+    )
+    if ref is not None:
+        return CenterResolution(
+            center=ref, base=base, source="planner",
+            floored=comp.floored, planner_driven=True,
+        )
+    return CenterResolution(
+        center=comp.center, base=base, source=comp.source,
+        floored=comp.floored, planner_driven=False,
+    )
+
+
+def annotate_centers(state: HouseState, *, max_age: timedelta) -> HouseState:
+    """Write the resolved center onto every eligible cooling leader's snapshot.
+
+    Eligibility mirrors the FanBandController's: a cooling leader, enabled, not
+    paused, not free-cooling, not a bedroom owned by camere silenziose (#2b), with
+    a base center. Ineligible zones keep the ZoneSnapshot defaults
+    (None/"none"/False/False). Called by the engine ONCE per cycle, AFTER the #8
+    effective-mode override, _pv_bias_apply and the schedule attach — they feed
+    the resolution (see the ordering comment in engine._cycle)."""
+    if state.house_setpoint is None or state.mode_offset is None:
+        return state
+    free = _is_free_cooling(state)
+    zones = dict(state.zones)
+    changed = False
+    for zid, z in state.zones.items():
+        if not _is_cooling_leader(z) or not z.enabled or z.paused or free:
+            continue
+        if z.bedroom and state.night_active:
+            continue
+        res = resolve_center(z, state, max_age=max_age)
+        if res is None:
+            continue
+        zones[zid] = replace(
+            z, resolved_center=res.center, center_source=res.source,
+            center_floored=res.floored, planner_driven=res.planner_driven,
+        )
+        changed = True
+    return replace(state, zones=zones) if changed else state
 
 
 def plan_center_schedule(

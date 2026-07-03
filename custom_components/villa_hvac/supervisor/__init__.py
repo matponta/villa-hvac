@@ -83,6 +83,7 @@ from .model import (
 )
 from .planner import (
     CenterPoint,
+    CenterResolution,
     CenterSchedule,
     HouseLoad,
     PlanView,
@@ -99,7 +100,9 @@ from .planner import (
     _forecast_temp_at,
     _plan_summary,
     _solar_at,
+    annotate_centers,
     build_plan,
+    resolve_center,
     build_room_plans,
     clear_sky_solar,
     house_load_index,
@@ -117,10 +120,13 @@ from .planner import (
 
 __all__ = [
     "CenterPoint",
+    "CenterResolution",
     "CenterSchedule",
     "ZoneCenterSchedule",
+    "annotate_centers",
     "plan_center_schedule",
     "planner_ref",
+    "resolve_center",
     "BLOCCO_BLOCK",
     "BLOCCO_LEVER",
     "BLOCCO_RELEASE",

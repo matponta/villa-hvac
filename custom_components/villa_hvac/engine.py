@@ -128,14 +128,13 @@ from .supervisor import (
     RoomParams,
     _is_cooling_leader,
     _is_free_cooling,
+    annotate_centers,
     build_plan,
     build_room_plans,
-    compose_center,
     house_load_index,
     in_window,
     merge_desired,
     plan_center_schedule,
-    planner_ref,
     plan_run,
     reconcile,
     select_regime,
@@ -572,6 +571,9 @@ class SupervisorEngine:
         # B4 diagnostic: consecutive cycles a controlled cooling leader has had no
         # fused temperature (it silently drops out of band control).
         self._stale_temp: dict[str, int] = {}
+        # R1 loud fallback: leaders already warned about reaching an actuating
+        # pass with no resolved band center (annotate_centers lost/misordered).
+        self._unresolved_center: set[str] = set()
         # One lock serialises every cycle (a scheduled tick + an awaited
         # request_run can otherwise interleave over the shared lever/forecast/
         # controller state). `_stopped` short-circuits any pass that is scheduled
@@ -753,11 +755,20 @@ class SupervisorEngine:
             # planner-drive gate to the state, so BOTH the plan view and the
             # FanBandController see the same slow-moving reference.
             state = self._maybe_refresh_schedule(state)
+            # R1: resolve the ONE per-leader band center onto the snapshots.
+            # ORDER IS LOAD-BEARING — this must run AFTER the #8 mode override
+            # (which rewrites house_mode/mode_offset and therefore the base
+            # center), AFTER _pv_bias_apply (which attaches pv_mode/pv_floor),
+            # and AFTER the schedule attach above. A wrong slot silently loses
+            # PV/planner/precool in the resolution (no failure, just a warmer
+            # house) — pinned by tests/test_resolve_center.py.
+            state = annotate_centers(state, max_age=SCHEDULE_MAX_AGE)
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
             self._plan_view = self._build_plan_view(state, pure_outputs)
             if actuate:
+                self._check_unresolved_centers(state)
                 # F3c: advance the coalescing coordinator first (it owns BLOCCO +
                 # the per-leader phase_override when MEDIUM-coalescing). Its BLOCCO
                 # opinion is merged BEFORE the DutyController so it wins; when it
@@ -909,48 +920,52 @@ class SupervisorEngine:
             return None
 
     def _center_compositions(self, state: HouseState) -> dict:
-        """F4c Phase 1 observability: the composed band center per eligible cooling
-        leader (base + the active feature + comfort floor), computed read-only via
-        the same pure `compose_center` the FanBandController uses. Visible even
+        """F4c Phase 1 observability: the resolved band center per eligible cooling
+        leader. R1: read from the annotated ZoneSnapshot fields — the SAME
+        resolution the FanBandController slams — instead of a second copy of the
+        eligibility + compose logic (the drift hazard R1 kills). Visible even
         deploy-dark, so each feature's contribution to the center is inspectable
-        before actuation lights up. Mirrors the controller's eligibility."""
+        before actuation lights up."""
         if state.house_setpoint is None or state.mode_offset is None:
             return {}
         base = state.house_setpoint + state.mode_offset
-        free = _is_free_cooling(state)
-        out: dict = {}
-        for z in state.zones.values():
-            if not (_is_cooling_leader(z) and z.enabled and not z.paused) or free:
-                continue
-            if z.bedroom and state.night_active:
-                continue
-            comp = compose_center(
-                base=base,
-                pv_mode=state.pv_mode, pv_floor=state.pv_floor,
-                pv_coast_relax=state.pv_coast_relax,
-                comfort_enabled=state.comfort_enabled, comfort_relax=z.comfort_relax,
-                precool=state.precool, precool_offset=state.precool_offset,
-                duty_enabled=state.duty_enabled,
-                comfort_ceiling=state.duty_comfort_max,
-                comfort_floor=state.comfort_floor,
-            )
-            # F4c Phase 6: is the planner actually DRIVING this room this cycle (vs.
-            # the ladder)? Same gate the FanBandController uses (observability).
-            ref = planner_ref(
-                state.center_schedule, zone_id=z.zone_id, now=state.now,
-                planner_eligible=z.model_planner_eligible,
-                unified_enabled=state.unified_planner_enabled,
-                center_base=base, comfort_floor=state.comfort_floor,
-                comfort_ceiling=state.duty_comfort_max, max_age=SCHEDULE_MAX_AGE,
-            )
-            out[z.zone_id] = {
-                "center": round(ref if ref is not None else comp.center, 2),
-                "base": round(comp.base, 2),
-                "source": "planner" if ref is not None else comp.source,
-                "floored": comp.floored,
-                "planner_driven": ref is not None,
+        return {
+            z.zone_id: {
+                "center": round(z.resolved_center, 2),
+                "base": round(base, 2),
+                "source": z.center_source,
+                "floored": z.center_floored,
+                "planner_driven": z.planner_driven,
             }
-        return out
+            for z in state.zones.values()
+            if z.resolved_center is not None
+        }
+
+    def _check_unresolved_centers(self, state: HouseState) -> None:
+        """R1 loud fallback: an eligible cooling leader reaching an ACTUATING pass
+        with no resolved_center means the annotate_centers call in _cycle was lost
+        or misordered — the band would silently degrade to the base center (erasing
+        a live pre-cool/PV shift without failing anything). WARN once per zone on
+        the transition (pattern of _track_stale_temp); a resolved cycle clears it."""
+        if state.house_setpoint is None or state.mode_offset is None:
+            return
+        free = _is_free_cooling(state)
+        for z in state.zones.values():
+            eligible = (
+                _is_cooling_leader(z) and z.enabled and not z.paused and not free
+                and not (z.bedroom and state.night_active)
+            )
+            if not eligible or z.resolved_center is not None:
+                self._unresolved_center.discard(z.zone_id)
+                continue
+            if z.zone_id not in self._unresolved_center:
+                self._unresolved_center.add(z.zone_id)
+                _LOGGER.warning(
+                    "Cooling leader %s reached an actuating pass with no resolved "
+                    "band center — annotate_centers is missing/misordered in "
+                    "_cycle; band control is degrading to the base center",
+                    z.zone_id,
+                )
 
     def _regime_step(self, state: HouseState) -> tuple[dict[str, str], str | None]:
         """F3c: classify the regime and, if coalescing is enabled + MEDIUM, advance

@@ -57,6 +57,15 @@ class ZoneSnapshot:
     # F4b: °C to add to this zone's band center right now (outside its comfort
     # window). Capped by the engine so center+relax never exceeds duty_comfort_max.
     comfort_relax: float = 0.0
+    # R1 (Tier-1): the ONE resolved band center every consumer reads — planner
+    # reference ▸ compose_center ladder ▸ base — written once per cycle by the
+    # engine's annotate_centers call (planner.resolve_center). Zones outside the
+    # band eligibility (not a leader / disabled / paused / free-cool / bedroom
+    # under camere silenziose / no base center) keep these defaults.
+    resolved_center: float | None = None
+    center_source: str = "none"      # planner|base|pv_bank|pv_coast|precool|comfort_relax
+    center_floored: bool = False     # the ladder's comfort floor clamped a lowering feature
+    planner_driven: bool = False     # the unified planner reference drove the center
 
 
 

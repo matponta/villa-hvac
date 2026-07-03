@@ -160,6 +160,16 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 > v0.40.0 (the fold) live before P3 deletes the trio. Design locked 2026-07-02 via 2
 > adversarial workflows (composition investigation + Tier-1 judge panel); implementation is a
 > fresh session.
+>
+> **Tier-1 build progress:**
+> | Phase | Content | Release |
+> |---|---|---|
+> | P1 | R1 `resolve_center`/`annotate_centers` (planner ▸ ladder ▸ base, ONE per-leader resolved center on `ZoneSnapshot.resolved_center`; band + `_center_compositions` read it; loud WARN-once fallback; golden matrix + engine ordering/pre-cool pins) | **DONE v0.39.0** |
+> | P2 | M1 fold: `CoolingController` (regime_pass/duty_pass/band_pass verbatim + composing `__call__`) alongside → swap; per-lever epoch check; differential identity harness | v0.40.0 |
+> | P3 | delete the trio + mechanical test port (AFTER the v0.40.0 live soak) | v0.40.1 |
+> | P4 | R4 `feature_graph` on `sensor.hvac_plan` | v0.41.0 |
+> | P5 | R2 deviation-space coalescing (ANCHOR/BANK, crossing cap, relax single-count) | v0.42.0 |
+> | P6 | R3 REST-quorum + plan-view classification unification + boot manuale sweep | v0.43.0 |
 
 ## Live-verify gates (supervised, at deploy — never headless)
 

@@ -411,13 +411,23 @@ def test_band_skips_followers():
 
 from dataclasses import replace as _replace  # noqa: E402
 
+from custom_components.villa_hvac.const import SCHEDULE_MAX_AGE  # noqa: E402
+from custom_components.villa_hvac.supervisor import annotate_centers  # noqa: E402
+
+
+def _annotated(state):
+    """R1: in production the engine resolves the band center onto the snapshots
+    (annotate_centers) before the controllers run; direct FanBandController tests
+    exercising a center FEATURE (PV/relax/planner) must do the same."""
+    return annotate_centers(state, max_age=SCHEDULE_MAX_AGE)
+
 
 def test_band_pv_bank_drives_center_to_floor():
     # BANK: center pulled to the floor (22) -> RUN slam = 22 - A(0.75).
     s = _replace(
         _state([_fanzone("a", temp=26.0)], **_BAND), pv_mode="bank", pv_floor=22.0
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 21.25
 
 
@@ -429,7 +439,7 @@ def test_band_pv_bank_never_raises_center():
         }),
         pv_mode="bank", pv_floor=22.0,
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 20.25  # 21 - A, floor ignored (higher)
 
 
@@ -439,7 +449,7 @@ def test_band_pv_coast_defers_within_comfort():
         _state([_fanzone("a", temp=23.0)], **_BAND),
         pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 26.25  # (24+1.5) + A(0.75)
 
 
@@ -449,13 +459,13 @@ def test_band_pv_coast_capped_at_comfort_max():
         _state([_fanzone("a", temp=23.0)], **_BAND),
         pv_mode="coast", pv_coast_relax=5.0, duty_comfort_max=25.0,
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 25.75  # min(24+5, 25) + A
 
 
 def test_band_pv_hold_is_normal_band():
     s = _replace(_state([_fanzone("a", temp=26.0)], **_BAND), pv_mode="hold")
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 23.25  # unchanged from no-PV RUN
 
 
@@ -466,7 +476,7 @@ def test_band_pv_coast_respects_comfort_window():
         pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
         comfort_enabled=True,
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 24.75  # tight REST, not deferred
 
 
@@ -482,7 +492,7 @@ def test_band_pv_coast_defers_outside_comfort_window():
         pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
         comfort_enabled=True,
     )
-    out = FanBandController()(s)
+    out = FanBandController()(_annotated(s))
     assert out[temperature_lever("climate.a")] == 26.25  # (24 + max(1.5,1.0)) + A
 
 
@@ -634,7 +644,7 @@ def test_band_comfort_relax_raises_center_to_rest():
     z = _fanzone("a", temp=25.0)
     relaxed = _replace(z, comfort_relax=2.0)
     # relax raises center 24 -> 26; temp 25 < 26-0.75 -> REST (setpoint 26+0.75).
-    out = FanBandController()(_state([relaxed], **_BAND))
+    out = FanBandController()(_annotated(_state([relaxed], **_BAND)))
     assert out[temperature_lever("climate.a")] == 26.75
     # no relax -> center 24, temp 25 >= 24.75 -> RUN (setpoint 24-0.75).
     out0 = FanBandController()(_state([z], **_BAND))
@@ -838,7 +848,7 @@ def test_band_planner_drives_eligible_zone():
         _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=True,
         comfort_floor=22.0, duty_comfort_max=27.0,
     )
-    out = FanBandController()(st)
+    out = FanBandController()(_annotated(st))
     assert out[temperature_lever("climate.a")] == 22.25   # 23 (ref) - 0.75
 
 
@@ -852,7 +862,7 @@ def test_band_uses_ladder_when_planner_switch_off():
         _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=False,
         comfort_floor=22.0, duty_comfort_max=27.0,
     )
-    out = FanBandController()(st)
+    out = FanBandController()(_annotated(st))
     assert out[temperature_lever("climate.a")] == 23.25   # ladder base 24 - 0.75
 
 
@@ -866,5 +876,5 @@ def test_band_uses_ladder_when_zone_not_planner_eligible():
         _state([z], **_BAND), center_schedule=sched, unified_planner_enabled=True,
         comfort_floor=22.0, duty_comfort_max=27.0,
     )
-    out = FanBandController()(st)
+    out = FanBandController()(_annotated(st))
     assert out[temperature_lever("climate.a")] == 23.25   # advisory -> ladder
