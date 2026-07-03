@@ -210,6 +210,9 @@ def test_merged_priority_overrides():
 
 def test_azimuth_in_band():
     assert _azimuth_in_band(180, "south") and not _azimuth_in_band(130, "south")
+    # the "south" label is the real SW facade (~225°): the band extends to 270
+    # so the afternoon SW sun stays covered (was released at 225 — studio_v 3/7)
+    assert _azimuth_in_band(250, "south") and not _azimuth_in_band(275, "south")
     assert _azimuth_in_band(270, "west") and not _azimuth_in_band(200, "west")
     assert _azimuth_in_band(90, "east")
     # north wraps through 0/360
@@ -217,8 +220,10 @@ def test_azimuth_in_band():
     assert not _azimuth_in_band(90, "north")
 
 
-_SOUTH = CoverInfo(entity_id="cover.s", orientation="south")
-_WEST = CoverInfo(entity_id="cover.w", orientation="west")
+# open (100) unless a test says otherwise — the never-raise min() needs a live
+# position; an unknown position is skipped.
+_SOUTH = CoverInfo(entity_id="cover.s", orientation="south", current_position=100)
+_WEST = CoverInfo(entity_id="cover.w", orientation="west", current_position=100)
 _SHADE = dict(
     season=SEASON_SUMMER, azimuth=180.0, elevation=30.0, solar=500.0,
     shading=True, shading_solar=200.0, shading_default=50,
@@ -231,14 +236,18 @@ def test_shading_drives_sunlit_facade_to_default_position():
 
 
 def test_shading_uses_per_room_target_position():
-    south = CoverInfo(entity_id="cover.s", orientation="south", target_position=30)
+    south = CoverInfo(
+        entity_id="cover.s", orientation="south", target_position=30,
+        current_position=100,
+    )
     out = shading_policy(_state([], covers=[south], **_SHADE))
     assert out == {cover_lever("cover.s"): 30}  # per-room override beats default
 
 
 def test_shading_skips_blocked_room():
     south = CoverInfo(
-        entity_id="cover.s", orientation="south", target_position=30, blocked=True
+        entity_id="cover.s", orientation="south", target_position=30, blocked=True,
+        current_position=100,
     )
     assert shading_policy(_state([], covers=[south], **_SHADE)) == {}
 
@@ -248,6 +257,54 @@ def test_shading_skips_when_no_position_resolved():
     out = shading_policy(
         _state([], covers=[_SOUTH], **{**_SHADE, "shading_default": None})
     )
+    assert out == {}
+
+
+def test_shading_never_raises_a_cover():
+    """THE 2/7 18:13 + 3/7 noon regression: a cover already DEEPER than the
+    computed target must not be raised — the command is min(current, target).
+    (Live: the policy opened a closed grande_camera to 80% / studio_v at noon,
+    solar-loading the room to 27.6 despite a 90% fan.)"""
+    closed = CoverInfo(entity_id="cover.s", orientation="south", current_position=0)
+    out = shading_policy(_state([], covers=[closed], **_SHADE))
+    assert out == {cover_lever("cover.s"): 0}  # held down, not raised to 50
+
+    partial = CoverInfo(entity_id="cover.s", orientation="south", current_position=20)
+    out = shading_policy(_state([], covers=[partial], **_SHADE))
+    assert out == {cover_lever("cover.s"): 20}  # min(50, 20)
+
+    open_ = CoverInfo(entity_id="cover.s", orientation="south", current_position=100)
+    out = shading_policy(_state([], covers=[open_], **_SHADE))
+    assert out == {cover_lever("cover.s"): 50}  # deepening is still allowed
+
+
+def test_shading_skips_unknown_position():
+    # a cover whose live position is unknown this cycle could be anywhere below
+    # the target — a raise cannot be ruled out, so it is skipped.
+    unknown = CoverInfo(entity_id="cover.s", orientation="south")
+    assert shading_policy(_state([], covers=[unknown], **_SHADE)) == {}
+
+
+def test_shading_away_closes_everything():
+    """Via/Vacanza = empty house: every unblocked shadeable cover is driven to
+    0 (full close), regardless of azimuth band, brightness, or sun elevation."""
+    blocked = CoverInfo(
+        entity_id="cover.b", orientation="south", blocked=True, current_position=100
+    )
+    for away_mode in ("Via", "Vacanza"):
+        out = shading_policy(_state(
+            [], covers=[_SOUTH, _WEST, blocked], mode=away_mode,
+            **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
+        ))
+        assert out == {
+            cover_lever("cover.s"): 0,
+            cover_lever("cover.w"): 0,
+        }, away_mode
+    # at home the same low-sun conditions release (no opinion)
+    out = shading_policy(_state(
+        [], covers=[_SOUTH], mode="Casa",
+        **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
+    ))
     assert out == {}
 
 
@@ -295,7 +352,10 @@ def test_shading_proportional_uses_scaled_position():
 
 
 def test_shading_proportional_per_room_override_still_wins():
-    south = CoverInfo(entity_id="cover.s", orientation="south", target_position=30)
+    south = CoverInfo(
+        entity_id="cover.s", orientation="south", target_position=30,
+        current_position=100,
+    )
     out = shading_policy(
         _state([], covers=[south], **{**_SHADE, "shading_proportional": True})
     )

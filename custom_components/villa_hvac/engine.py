@@ -196,6 +196,27 @@ def _manuale_switch(fan_entity: str) -> str:
     return "switch." + fan_entity.removeprefix("fan.") + "_manuale"
 
 
+def _cover_position(hass: HomeAssistant, entity_id: str) -> int | None:
+    """Live cover position (0 = down, 100 = open); closed/open states map to
+    0/100 for covers without position support; None when unknown. Mirrors the
+    engine's cover-lever read so the shading policy's never-raise min() and the
+    reconcile compare the same value."""
+    s = hass.states.get(entity_id)
+    if s is None:
+        return None
+    pos = s.attributes.get(ATTR_CURRENT_POSITION)
+    if pos is not None:
+        try:
+            return int(float(pos))
+        except (TypeError, ValueError):
+            return None
+    if s.state == STATE_CLOSED:
+        return 0
+    if s.state == STATE_OPEN:
+        return 100
+    return None
+
+
 def _forecast_cloud_at(cloud: list, when) -> float | None:
     """The cloud fraction at/before `when` from the cached (when, cloud) list."""
     best = None
@@ -454,13 +475,15 @@ def build_house_state(
             comfort_relax=comfort_relax,
         )
 
-    # #6: enrich each shadeable cover with its room's shade target + block flag.
+    # #6: enrich each shadeable cover with its room's shade target + block flag
+    # + the live position (the shading policy's never-raise min() reads it).
     resolved_covers = base_covers if base_covers is not None else shadeable_covers(hass)
     covers = tuple(
         replace(
             c,
             target_position=shade_position(hass, entry, c.zone) if c.zone else None,
             blocked=shade_blocked(hass, entry, c.zone) if c.zone else False,
+            current_position=_cover_position(hass, c.entity_id),
         )
         for c in resolved_covers
     )

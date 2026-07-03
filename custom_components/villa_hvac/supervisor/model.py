@@ -85,6 +85,9 @@ class CoverInfo:
     floor: str | None = None    # area.floor_id
     target_position: int | None = None  # per-room shade target (HA position)
     blocked: bool = False       # per-room manual override -> skip shading
+    # Live position (0 = down, 100 = open); None = unknown this cycle. The
+    # never-raise invariant needs it: shading commands min(current, target).
+    current_position: int | None = None
 
 
 

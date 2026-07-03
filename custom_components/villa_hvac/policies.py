@@ -53,6 +53,8 @@ from .const import (
     DEFAULT_BAND_WIDTH,
     FAN_LEVEL_HYSTERESIS,
     FAN_LEVEL_STEP,
+    HOUSE_MODE_AWAY,
+    HOUSE_MODE_VACATION,
     MODE_PRESET,
     MODEL_ABC_CONF_MIN,
     MODEL_CAP_FAN_STABILITY,
@@ -283,9 +285,22 @@ def shading_policy(state: HouseState) -> Desired:
     lever (independent of the preset levers). Releases (no opinion) otherwise — we
     don't force-reopen, so existing morning/dusk cover automations and the user
     keep control.
+
+    NEVER-RAISE INVARIANT (2026-07-04; proven live 2/7 18:13 + 3/7 noon: the
+    policy OPENED closed covers to its shallower target, solar-loading studio_v
+    to 27.6): shading may only DEEPEN — the command is min(current, target), and
+    a cover whose position is unknown this cycle is skipped (a raise cannot be
+    ruled out). In Via/Vacanza the empty house closes fully: every unblocked
+    shadeable cover is driven to 0, regardless of sun angle or brightness.
     """
     if not state.shading_enabled or state.season != SEASON_SUMMER:
         return {}
+    if state.house_mode in (HOUSE_MODE_AWAY, HOUSE_MODE_VACATION):
+        # Empty house: no sun on the glass, nobody needing the light/view.
+        # 0 can never raise, so the unknown-position skip doesn't apply.
+        return {
+            cover_lever(c.entity_id): 0 for c in state.covers if not c.blocked
+        }
     if state.sun_elevation is None or state.sun_elevation <= SHADING_MIN_ELEVATION:
         return {}
     if state.sun_azimuth is None:
@@ -309,9 +324,11 @@ def shading_policy(state: HouseState) -> Desired:
             )
         else:
             position = state.shading_default_position
-        if position is None:
+        if position is None or cover.current_position is None:
             continue
-        out[cover_lever(cover.entity_id)] = int(position)
+        out[cover_lever(cover.entity_id)] = min(
+            int(position), int(cover.current_position)
+        )
     return out
 
 

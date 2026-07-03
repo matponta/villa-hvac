@@ -489,10 +489,16 @@ SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't lan
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")
 # Compass azimuth band per facade (deg); north wraps through 0/360.
+# NB the villa is rotated ~45°: the "south" label = the real SW facade (~225°),
+# "west" = WNW (~292°). The naive south band (135, 225) RELEASED exactly as the
+# afternoon sun peaked on the SW glass (proven live 3/7: studio_v solar-loaded
+# to 27.6 °C) — widened to (135, 270) so SW stays covered; west (225, 315)
+# already covers WNW, and the 225-270 overlap is harmless (a cover matches only
+# its own label's band).
 SHADING_AZIMUTH_BANDS: dict[str, tuple[float, float]] = {
     "north": (315.0, 45.0),
     "east": (45.0, 135.0),
-    "south": (135.0, 225.0),
+    "south": (135.0, 270.0),
     "west": (225.0, 315.0),
 }
 # Area ids that mean "unassigned" -> skip the cover (e.g. the orphan tapparella).
