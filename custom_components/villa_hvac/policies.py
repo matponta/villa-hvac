@@ -104,6 +104,8 @@ from .supervisor import (
     blend_params,
     capacity_fan,
     cooling_load,
+    house_load_index,
+    select_regime,
     cover_lever,
     duty_decision,
     estimate_rate,
@@ -767,3 +769,300 @@ class RegimeCoordinator:
         )
         override = {z.zone_id: house_phase for z in leaders}
         return override, BLOCCO_RELEASE
+
+
+class CoolingController:
+    """The one cooling organism (Tier-1 M1): regime coalescing + duty BLOCCO +
+    band slam/fan, folded from RegimeCoordinator + DutyController +
+    FanBandController — the composition that used to live as engine
+    list-ordering (regime BLOCCO prepended before duty, engine.py; controllers
+    merged before pure policies) made EXPLICIT, internal, and unit-testable.
+    Called ONLY on actuating passes (the stateful timers advance there and
+    nowhere else); the #11 plan view reads `.duty` / `.regime_state` read-only.
+
+    BLOCCO precedence is the ONE explicit line in `__call__`: a coalescing
+    RELEASE beats the duty opinion. `duty_pass` ALWAYS runs — its timers must
+    advance even while the regime overrides (identical to the old engine, where
+    DutyController ran every actuating cycle and merely lost the merge). The
+    returned dict keeps BLOCCO FIRST so the engine's per-lever write order is
+    byte-identical to the old [regime?, duty, band] merge.
+
+    Gate reads are SNAPSHOT-CONSISTENT (`state.duty_enabled` /
+    `state.fan_pacing_enabled`) — the ONE declared deviation from the old
+    `engine._regime_step`, which re-read the live switches mid-cycle (a
+    mid-cycle switch flip could diverge for one cycle across the engine's
+    awaits). Documented in STORY_TIER1_COOLING_CONTROLLER §4/§5.6; pinned by
+    tests/test_cooling_identity.py.
+
+    `regime_driving` is the regime the coalescing actually USED this pass
+    ("low" whenever any gate is off) — named so it can never be conflated with
+    the plan view's always-on `regime` classification (which stays a separate,
+    byte-untouched computation until P6).
+
+    Sub-pass bodies are moved VERBATIM from the trio (unit tests port as
+    renames at P3); `_duty` / `_states` / `_last_fan` / `_rs` keep their names
+    (test-visible surface). The trio remains in this module UNWIRED through the
+    v0.40.0 soak as the differential identity oracle; deleted at P3.
+    """
+
+    def __init__(self) -> None:
+        self._states: dict[str, BandState] = {}
+        self._last_fan: dict[str, int] = {}
+        self._duty = DutyState()
+        self._rs = RegimeState()
+        self.regime_driving: str = "low"
+
+    @property
+    def duty(self) -> DutyState:
+        """The live cross-cycle duty state (read by the #11 plan view)."""
+        return self._duty
+
+    @property
+    def regime_state(self) -> RegimeState:
+        return self._rs
+
+    # ---- public sub-passes: bodies moved VERBATIM from the trio --------------
+
+    def regime_pass(self, state: HouseState) -> tuple[dict[str, str], str | None]:
+        """F3c: classify the regime and, if coalescing is enabled + MEDIUM,
+        advance the coordinator; returns (phase_override, BLOCCO opinion).
+        Gated by regime_enabled AND duty AND fan_pacing; when any gate is off
+        this is a RESET pass (regime "low" flows through and clears the
+        coalescing state) — NEVER a skip, so re-enabling starts fresh.
+        = engine._regime_step + RegimeCoordinator.step, folded. `state.config`
+        None (bare test states) counts as gate-off (production always builds it).
+        """
+        cfg = state.config
+        coalescing = (
+            cfg is not None
+            and cfg.regime_enabled
+            and state.duty_enabled
+            and state.fan_pacing_enabled
+        )
+        if not coalescing:
+            self.regime_driving = "low"
+            return self._coalesce_step(
+                state, regime="low", center=None, min_on=None, min_off=None
+            )
+        load = house_load_index(
+            state, default_a=COOL_GAIN_OUTDOOR, default_b=COOL_GAIN_SOLAR,
+            default_c=COOL_GAIN_BASE, default_capacity=COOL_CAPACITY,
+            k_conf_min=REGIME_K_CONF_MIN,
+        )
+        at_peak = (
+            state.outdoor_temp is not None and state.duty_peak_outdoor is not None
+            and state.outdoor_temp >= state.duty_peak_outdoor
+        )
+        free_cool = (
+            state.free_cool_enabled and state.season == SEASON_SUMMER
+            and state.outdoor_temp is not None and state.free_cool_threshold is not None
+            and state.outdoor_temp < state.free_cool_threshold
+        )
+        regime = select_regime(
+            load, at_peak=at_peak, free_cool=free_cool,
+            peak_ratio=cfg.regime_peak_ratio, medium_ratio=cfg.regime_medium_ratio,
+        )
+        center = (
+            state.house_setpoint + state.mode_offset
+            if (state.house_setpoint is not None and state.mode_offset is not None)
+            else None
+        )
+        self.regime_driving = regime
+        return self._coalesce_step(
+            state, regime=regime, center=center,
+            min_on=cfg.min_compressor_on, min_off=cfg.min_compressor_off,
+        )
+
+    def _coalesce_step(
+        self, state: HouseState, *,
+        regime: str, center: float | None, min_on, min_off,
+    ) -> tuple[dict[str, str], str | None]:
+        """RegimeCoordinator.step VERBATIM (holds self._rs): advance coalescing;
+        resets and yields ({}, None) when not MEDIUM / no leaders / free-cool.
+        NOTE (R2 seam): still driven by the scalar center the caller computed —
+        R1's resolved per-zone centers land here at P5 (deviation space)."""
+        if regime != REGIME_MEDIUM or center is None or _free_cooling(state):
+            self._rs = RegimeState()
+            return {}, None
+        # Same leader set as the duty comfort-breach (shared helper) so the two
+        # never disagree on which rooms count.
+        leaders = active_cooling_leaders(state)
+        if not leaders:
+            self._rs = RegimeState()
+            return {}, None
+        band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
+        # comfort_relax lowers a room's effective temp (it's allowed to drift warm).
+        room_temps = {z.zone_id: z.temp - z.comfort_relax for z in leaders}
+        breach = state.duty_comfort_max is not None and any(
+            z.temp > state.duty_comfort_max for z in leaders
+        )
+        self._rs, house_phase = coalesce_phase(
+            self._rs, room_temps=room_temps, center=center, band=band, now=state.now,
+            min_on=min_on, min_off=min_off,
+            enter_frac=COALESCE_ENTER_FRACTION, exit_frac=COALESCE_EXIT_FRACTION,
+            comfort_breach=breach,
+        )
+        override = {z.zone_id: house_phase for z in leaders}
+        return override, BLOCCO_RELEASE
+
+    def duty_pass(self, state: HouseState) -> Desired:
+        """#9 duty BLOCCO. = DutyController.__call__ VERBATIM (holds self._duty):
+        explicit {BLOCCO: RELEASE} on disable, B4 transient-consenso FREEZE,
+        duty_decision advance."""
+        if (
+            not state.duty_enabled
+            or state.duty_max_stint is None
+            or state.duty_cooloff is None
+        ):
+            self._duty = DutyState()  # forget timers while disabled
+            # Explicit RELEASE, not a silent {}: an empty dict drops the lever
+            # from `desired`, so a block asserted just before disable would never
+            # be actively cleared (merge only releases on a *present* None). The
+            # only writer of BLOCCO is duty/regime, and RELEASE is idempotent, so
+            # opining "off" whenever duty is off is always the safe baseline.
+            return {BLOCCO_LEVER: BLOCCO_RELEASE}
+        at_peak = (
+            state.outdoor_temp is not None
+            and state.duty_peak_outdoor is not None
+            and state.outdoor_temp >= state.duty_peak_outdoor
+        )
+        # B4: a transient consenso read (a dropped KNX telegram) must NOT be read
+        # as "not cooling" — that would reset the stint timer, letting the villa
+        # re-accrue a fresh full stint after every dropout. FREEZE the DutyState
+        # and re-emit the cooloff-consistent BLOCCO opinion instead. (at_peak /
+        # precool still force a release below, since neither depends on consenso.)
+        if state.consenso_freddo in TRANSIENT_STATES and not at_peak and not state.precool:
+            return {
+                BLOCCO_LEVER: (
+                    BLOCCO_BLOCK if self._duty.cooloff_until is not None
+                    else BLOCCO_RELEASE
+                )
+            }
+        cooling = state.consenso_freddo == "on"
+        self._duty, blocco = duty_decision(
+            cooling,
+            _comfort_breach(state),
+            state.now,
+            self._duty,
+            state.duty_max_stint,
+            state.duty_cooloff,
+            at_peak=at_peak,
+            precool=state.precool,
+        )
+        return {BLOCCO_LEVER: blocco}
+
+    def _release_all(self, state: HouseState) -> Desired:
+        """Hand every fan we were holding back to AUTO (manuale off), once. Levers
+        not present in `desired` are NOT auto-released by the engine, so on
+        disable/season-flip we must emit the releases explicitly."""
+        if not self._states:
+            return {}
+        out: Desired = {}
+        for zid in self._states:
+            z = state.zones.get(zid)
+            if z:
+                for _fan, manuale in z.fancoil_units:
+                    out[switch_lever(manuale)] = "off"
+        self._states.clear()
+        self._last_fan.clear()
+        return out
+
+    def band_pass(
+        self, state: HouseState, phase_override: dict[str, str] | None = None
+    ) -> Desired:
+        """#3 v2 comfort-band + capacity fan. = FanBandController.__call__
+        VERBATIM (holds self._states / self._last_fan), incl. the R1 resolved
+        center read, the night-bedroom pop, the released-zone bookkeeping and
+        the _last_fan hysteresis asymmetries (all load-bearing — see STORY §4)."""
+        if not state.fan_pacing_enabled or state.season != SEASON_SUMMER:
+            return self._release_all(state)
+        override = phase_override or {}
+        center_base = None
+        if state.house_setpoint is not None and state.mode_offset is not None:
+            center_base = state.house_setpoint + state.mode_offset
+        free_cool = _free_cooling(state)
+        band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
+        slam = state.band_slam if state.band_slam is not None else DEFAULT_BAND_SLAM
+        out: Desired = {}
+        for z in state.zones.values():
+            if not _is_cooling_leader(z):
+                continue  # followers + non-fancoil are not leaders
+            if z.bedroom and state.night_active:
+                self._states.pop(z.zone_id, None)  # #2b camere silenziose owns it
+                continue
+            eligible = (
+                center_base is not None
+                and z.enabled and not z.paused and not free_cool
+            )
+            # The band center (R1): resolved ONCE per cycle by the engine's
+            # annotate_centers — planner reference ▸ compose_center ladder ▸ base,
+            # clamped/floored at the single resolve_center site — so the band, the
+            # coalescing coordinator and sensor.hvac_plan all read the SAME center.
+            # A None on an eligible leader means the annotate call is missing or
+            # misordered: the engine WARNs loudly (_check_unresolved_centers) and
+            # the band degrades to the base center meanwhile.
+            center = center_base
+            if eligible and z.resolved_center is not None:
+                center = z.resolved_center
+            # F3c: when the regime coordinator coalesces, it dictates the phase;
+            # the band controller still slams the setpoint + sizes the fan exactly
+            # as usual, so exactly ONE component decides the phase per zone.
+            if eligible and z.zone_id in override:
+                phase = override[z.zone_id]
+                setpoint = round((center - slam) if phase == "run" else (center + slam), 2)
+            else:
+                phase, setpoint = band_step(
+                    self._states.get(z.zone_id, BandState()).phase,
+                    eligible=bool(eligible),
+                    temp=z.temp,
+                    center=center if eligible else None,
+                    band=band,
+                    slam=slam,
+                )
+            self._states[z.zone_id] = BandState(phase=phase)
+            if phase == "released":
+                self._last_fan.pop(z.zone_id, None)
+                for _fan, manuale in z.fancoil_units:
+                    out[switch_lever(manuale)] = "off"  # hand back to AUTO
+                continue
+            out[temperature_lever(z.climate)] = setpoint
+            if phase == "run":
+                # F2: use the learned (blended) model where available, else priors.
+                a = z.model_a if z.model_a is not None else COOL_GAIN_OUTDOOR
+                b = z.model_b if z.model_b is not None else COOL_GAIN_SOLAR
+                c = z.model_c if z.model_c is not None else COOL_GAIN_BASE
+                k = z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY
+                load = cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c)
+                pct = capacity_fan(
+                    load, pulldown=COOL_PULLDOWN, capacity=k,
+                    fan_min_pct=z.fan_min, step=FAN_LEVEL_STEP,
+                    last_level=self._last_fan.get(z.zone_id),
+                    hysteresis=FAN_LEVEL_HYSTERESIS,
+                )
+                self._last_fan[z.zone_id] = pct
+            else:  # rest -> min circulation (0 = off, held)
+                pct = z.fan_min
+                self._last_fan.pop(z.zone_id, None)
+            for fan, manuale in z.fancoil_units:
+                out[switch_lever(manuale)] = "on"
+                out[fan_lever(fan)] = pct
+        return out
+
+    # ---- the merge-controller entry ------------------------------------------
+
+    def __call__(self, state: HouseState) -> Desired:
+        override, regime_blocco = self.regime_pass(state)
+        duty_out = self.duty_pass(state)  # ALWAYS runs — the duty timers must
+        # advance even while the regime overrides the merge (as in the old engine).
+        # Loud, never a prod KeyError: duty_pass opines on BLOCCO on every path
+        # (the explicit-RELEASE-on-disable contract; invariant 2).
+        assert BLOCCO_LEVER in duty_out
+        blocco = (
+            regime_blocco if regime_blocco is not None
+            else duty_out.get(BLOCCO_LEVER)
+        )
+        # BLOCCO FIRST: preserves the old [regime?, duty, band] merge's key order,
+        # so the engine's per-lever write ORDER stays byte-identical.
+        out: Desired = {BLOCCO_LEVER: blocco}
+        out.update(self.band_pass(state, phase_override=override))
+        return out
