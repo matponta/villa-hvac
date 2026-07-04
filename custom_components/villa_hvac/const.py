@@ -566,6 +566,19 @@ COOL_PULLDOWN_HOURS = 2.0
 # valve closed while the fan is off, so a 0% RUN cools nothing by construction.
 COOL_RUN_FAN_FLOOR = 20
 
+# --- S_eff: per-facade effective solar input (STORY_SEFF) ---------------------
+# Replace the model's solar regressor input b·S_ghi with b·S_eff, a per-zone
+# effective irradiance COMPUTED from sun geometry + facade normals (cover
+# labels) + live cover position. The physics constants live in
+# supervisor/solar.py (pure). The option is STRUCTURALLY DARK until every
+# b-consumer is switched: SupervisorConfig ANDs it with SEFF_CONSUMERS_READY,
+# which flips True (and the options-flow toggle appears) only in the release
+# that completes the §6 consumer table — a half-migrated tree must never run
+# S_eff even if the option key is set (adversarial review 2026-07-04).
+OPT_SEFF_ENABLED = "seff_enabled"
+DEFAULT_SEFF_ENABLED = False
+SEFF_CONSUMERS_READY = False
+
 # --- F2: online self-refining per-room thermal model (RLS) --------------------
 # Learn dT/dt = a(T_out-T) + b*S + c - k*u_eff per room from live data.
 # {a,b,c} are learned on w=False windows (no chilled water -> the -k*u term is 0);

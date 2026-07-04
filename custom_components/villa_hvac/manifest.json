@@ -1,7 +1,9 @@
 {
   "domain": "villa_hvac",
   "name": "Villa HVAC",
-  "codeowners": ["@matponta"],
+  "codeowners": [
+    "@matponta"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/matponta/villa-hvac",
@@ -9,5 +11,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/matponta/villa-hvac/issues",
   "requirements": [],
-  "version": "0.41.0"
+  "version": "0.42.0"
 }

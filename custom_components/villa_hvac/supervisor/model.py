@@ -57,6 +57,17 @@ class ZoneSnapshot:
     # F4b: °C to add to this zone's band center right now (outside its comfort
     # window). Capped by the engine so center+relax never exceeds duty_comfort_max.
     comfort_relax: float = 0.0
+    # S_eff (STORY_SEFF): the per-zone effective irradiance every b-consumer
+    # reads (W/m²-equivalent, GHI scale). While the feature flag is off the
+    # engine populates the house GHI here with source/units "ghi", so consumers
+    # switched to z.s_eff stay byte-identical to the GHI era. s_eff_source is
+    # the per-cycle quality ("facade" | "facade_degraded" | "ghi" | "fallback" —
+    # the estimator learns only from the first and third); s_eff_units is the
+    # stable semantics stamp the migration rebase compares (e.g.
+    # "seff1:225x1,292x1").
+    s_eff: float | None = None
+    s_eff_source: str = "ghi"
+    s_eff_units: str = "ghi"
     # R1 (Tier-1): the ONE resolved band center every consumer reads — planner
     # reference ▸ compose_center ladder ▸ base — written once per cycle by the
     # engine's annotate_centers call (planner.resolve_center). Zones outside the

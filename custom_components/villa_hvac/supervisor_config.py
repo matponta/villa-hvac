@@ -48,6 +48,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
     DEFAULT_RETURN_MARGIN_MIN,
+    DEFAULT_SEFF_ENABLED,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
     DEFAULT_REGIME_MEDIUM_RATIO,
     DEFAULT_REGIME_PEAK_RATIO,
@@ -88,6 +89,8 @@ from .const import (
     OPT_REGIME_PEAK_RATIO,
     OPT_RETURN_MARGIN_MIN,
     OPT_RETURN_MAX_LEAD_HOURS,
+    OPT_SEFF_ENABLED,
+    SEFF_CONSUMERS_READY,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_PROPORTIONAL,
@@ -140,6 +143,8 @@ class SupervisorConfig:
     model_learning_enabled: bool
     # F4a solar
     solar_forecast_enabled: bool
+    # S_eff per-facade solar (STORY_SEFF; structurally dark until consumers ready)
+    seff_enabled: bool
     # F4b comfort windows (raw HH:MM strings; parsed with the current clock)
     comfort_enabled: bool
     comfort_relax: float
@@ -209,6 +214,12 @@ class SupervisorConfig:
             ),
             model_learning_enabled=_b(options, OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
             solar_forecast_enabled=_b(options, OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
+            # ANDed with the code-level readiness constant: the option can never
+            # light S_eff up while any §6 b-consumer still reads house GHI.
+            seff_enabled=(
+                _b(options, OPT_SEFF_ENABLED, DEFAULT_SEFF_ENABLED)
+                and SEFF_CONSUMERS_READY
+            ),
             comfort_enabled=_b(options, OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED),
             comfort_relax=_f(options, OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX, 0, 6),
             comfort_day_from=str(options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM)),

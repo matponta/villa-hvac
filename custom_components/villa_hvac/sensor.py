@@ -36,6 +36,22 @@ from .coordinator import VillaHvacCoordinator
 from .supervisor import PlanView, cooling_load
 
 
+def _s_eff_attributes(engine, zone_id: str) -> dict:
+    """S_eff diagnostic attributes (STORY_SEFF): the would-be per-facade
+    effective irradiance the engine computed this cycle — exposed regardless of
+    the feature flag so the geometry is live-validatable before any b-consumer
+    switches. Empty when the engine hasn't produced a value for this zone."""
+    cached = getattr(engine, "last_s_eff", {}).get(zone_id)
+    if cached is None:
+        return {}
+    value, source, units = cached
+    return {
+        "s_eff": round(value, 1) if value is not None else None,
+        "s_eff_source": source,
+        "s_units": units,
+    }
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: VillaHvacConfigEntry,
@@ -390,6 +406,7 @@ class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "abc_identified": thermal.abc_identified(self._zone_id) if thermal else False,
             "planner_eligible": thermal.planner_eligible(self._zone_id)
             if thermal else False,
+            **_s_eff_attributes(engine, self._zone_id),
         }
 
 

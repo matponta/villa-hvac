@@ -143,6 +143,11 @@ from .supervisor import (
     _forecast_temp_at,
     cooling_effectiveness,
     energy_precool_decision,
+    SEFF_SOURCE_GHI,
+    SEFF_UNITS_GHI,
+    units_tag,
+    zone_apertures,
+    zone_effective_solar,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -194,6 +199,18 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
 def _manuale_switch(fan_entity: str) -> str:
     """Manuale switch for a fancoil fan (verified: fan.fancoil_X -> switch.fancoil_X_manuale)."""
     return "switch." + fan_entity.removeprefix("fan.") + "_manuale"
+
+
+def _attr_float(state, attr: str) -> float | None:
+    """A state attribute coerced to float, None on anything non-numeric — the
+    S_eff geometry math must degrade to the "fallback" source on a garbage
+    sun.sun attribute, never crash the cycle (isfinite-ingest convention)."""
+    if state is None:
+        return None
+    try:
+        return float(state.attributes.get(attr))
+    except (TypeError, ValueError):
+        return None
 
 
 def _cover_position(hass: HomeAssistant, entity_id: str) -> int | None:
@@ -396,6 +413,30 @@ def build_house_state(
     )
     comfort = _comfort_config(cfg, center)  # None when disabled / no center
 
+    # #6: enrich each shadeable cover with its room's shade target + block flag
+    # + the live position (the shading policy's never-raise min() reads it).
+    # Hoisted above the zone loop: the S_eff feed needs the enriched positions.
+    resolved_covers = base_covers if base_covers is not None else shadeable_covers(hass)
+    covers = tuple(
+        replace(
+            c,
+            target_position=shade_position(hass, entry, c.zone) if c.zone else None,
+            blocked=shade_blocked(hass, entry, c.zone) if c.zone else False,
+            current_position=_cover_position(hass, c.entity_id),
+        )
+        for c in resolved_covers
+    )
+    sun = hass.states.get("sun.sun")
+    sun_az = _attr_float(sun, "azimuth")
+    sun_el = _attr_float(sun, "elevation")
+    ghi = _num(hass, SOLAR_RADIATION)
+    apertures_by_zone = zone_apertures(covers)
+    # S_eff diagnostics: the would-be facade values are computed for every
+    # leader EVERY cycle (deploy-dark style — visible on the model sensor
+    # before the flag lights consumers up); the SNAPSHOT carries them only when
+    # the flag is on, else the GHI identity (byte-identical to the GHI era).
+    last_s_eff: dict[str, tuple[float | None, str, str]] = {}
+
     zones: dict[str, ZoneSnapshot] = {}
     for zone_id, zone in ZONES.items():
         valve = COOL_VALVES.get(zone_id)
@@ -451,6 +492,18 @@ def build_house_state(
             comfort.relax_for(bedroom=bool(zone.get("bedroom")))
             if (comfort is not None and is_leader) else 0.0
         )
+        # S_eff (STORY_SEFF): compute the facade value for every leader
+        # (diagnostics), feed the snapshot only when the flag is on.
+        z_s_eff: float | None = ghi
+        z_src = SEFF_SOURCE_GHI
+        z_units = SEFF_UNITS_GHI
+        if is_leader:
+            aps = apertures_by_zone.get(zone_id, ())
+            facade_val, facade_src = zone_effective_solar(ghi, sun_el, sun_az, aps)
+            facade_units = units_tag(aps)
+            last_s_eff[zone_id] = (facade_val, facade_src, facade_units)
+            if cfg.seff_enabled:
+                z_s_eff, z_src, z_units = facade_val, facade_src, facade_units
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
@@ -473,23 +526,15 @@ def build_house_state(
             model_planner_eligible=m_eligible,
             fan_pct=fan_pct, manuale_on=manuale_on,
             comfort_relax=comfort_relax,
+            s_eff=z_s_eff, s_eff_source=z_src, s_eff_units=z_units,
         )
 
-    # #6: enrich each shadeable cover with its room's shade target + block flag
-    # + the live position (the shading policy's never-raise min() reads it).
-    resolved_covers = base_covers if base_covers is not None else shadeable_covers(hass)
-    covers = tuple(
-        replace(
-            c,
-            target_position=shade_position(hass, entry, c.zone) if c.zone else None,
-            blocked=shade_blocked(hass, entry, c.zone) if c.zone else False,
-            current_position=_cover_position(hass, c.entity_id),
-        )
-        for c in resolved_covers
-    )
+    # Publish the per-leader diagnostic S_eff (model sensor reads it).
+    eng = getattr(coordinator, "engine", None)
+    if eng is not None:
+        eng.last_s_eff = last_s_eff
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
-    sun = hass.states.get("sun.sun")
     # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
     # Computed here (not from a NightController.active flag) so it's consistent
     # with what NightSilenceController computes THIS cycle (no transition lag) and
@@ -506,8 +551,8 @@ def build_house_state(
         now=now,
         zones=zones,
         covers=covers,
-        sun_azimuth=sun.attributes.get("azimuth") if sun else None,
-        sun_elevation=sun.attributes.get("elevation") if sun else None,
+        sun_azimuth=sun_az,
+        sun_elevation=sun_el,
         shading_enabled=cfg.shading_enabled,
         shading_solar_threshold=cfg.shading_solar,
         shading_default_position=cfg.shading_default_position,
@@ -534,7 +579,7 @@ def build_house_state(
         free_cool_enabled=cfg.free_cool_enabled,
         free_cool_threshold=cfg.free_cool_outdoor,
         outdoor_temp=outdoor,
-        solar=_num(hass, SOLAR_RADIATION),
+        solar=ghi,
         config=cfg,
         consenso_freddo=data.get("consenso_freddo"),
         consenso_caldo=data.get("consenso_caldo"),
@@ -577,6 +622,10 @@ class SupervisorEngine:
         # actuates; the engine ticks it every cycle (even deploy-dark) so passive
         # params converge before actuation lights up.
         self.thermal = ThermalEstimator()
+        # S_eff diagnostics: per-leader (value, source, units_tag) computed every
+        # build_house_state (deploy-dark style) — the model sensor exposes it so
+        # the geometry can be validated live before any consumer switches.
+        self.last_s_eff: dict[str, tuple[float | None, str, str]] = {}
         # #8: overrides the effective house mode while Via+armed (deep setback ->
         # pre-cond ramp). Applied to the state before policies run. Holds the latch.
         self.away_return = AwayReturnController()
