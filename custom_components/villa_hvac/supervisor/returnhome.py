@@ -33,6 +33,10 @@ class ReturnRoom:
     b: float
     c: float
     k: float
+    # S_eff (STORY_SEFF): this room's effective irradiance — b is per-room and
+    # may be S_eff-fitted, so pairing it with the house GHI would mix units.
+    # None falls back to the shared `solar` argument (GHI-identity rooms).
+    s_eff: float | None = None
 
 
 
@@ -71,7 +75,7 @@ def return_lead_time(
     to [min_lead, max_lead].
     """
     o = outdoor if outdoor is not None else 0.0
-    s = solar if solar is not None else 0.0
+    s_house = solar if solar is not None else 0.0
     worst = timedelta(0)
     for r in rooms:
         if r.temp is None:
@@ -79,6 +83,7 @@ def return_lead_time(
         delta = r.temp - r.target
         if delta <= 0:
             continue
+        s = r.s_eff if r.s_eff is not None else s_house
         rate = max(r.k - r.a * (o - r.target) - r.b * s - r.c, rate_floor)
         t = timedelta(hours=delta / rate)
         if t > worst:

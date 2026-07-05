@@ -628,6 +628,9 @@ def _obs_state(
     # blocco defaults to "off" (released) — its realistic value while cooling; a
     # transient/None blocco read now bars admitting a k-learning window (B4:
     # observer-blocco-read-poisons-k).
+    # Engine-feed parity (STORY_SEFF): build_house_state fills z.s_eff (the GHI
+    # identity while the flag is dark) and the estimator ingests z.s_eff.
+    z = replace(z, s_eff=solar)
     return HouseState(
         now=now, zones={z.zone_id: z}, outdoor_temp=outdoor, solar=solar,
         consenso_freddo=consenso, blocco=blocco, model_learning_enabled=enabled,
@@ -690,14 +693,34 @@ def test_estimator_model_for_blends_prior_when_unconverged():
     assert m.a > 0 and m.k > 0  # the COOL_* prior
 
 
+def _identify(est, zid="lr"):
+    """Mark the zone's passive model IDENTIFIED (count-confident + solar-excited)
+    — the k-freeze (STORY_SEFF §4.3) bars k learning before that."""
+    est.params.setdefault(zid, est._prior())
+    est.params[zid] = replace(est.params[zid], n=100, s_hi=980.0)
+
+
 def test_estimator_learns_capacity_on_held_steady_window():
     est = ThermalEstimator()
+    _identify(est)
     base = datetime(2026, 6, 30, 14, 0, 0)
     for m in range(0, 17, 2):  # w=True, fan HELD at 50% steady, manuale on
         z = _leader(temp=25.0 - 0.2 * (m / 60.0), demand=True, fan_pct=50, manuale_on=True)
         est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
     assert est.params["lr"].n_k >= 1     # capacity learned
-    assert est.params["lr"].n == 0        # passive untouched on a cooling window
+    assert est.params["lr"].n == 100      # passive untouched on a cooling window
+
+
+def test_estimator_k_frozen_until_abc_identified():
+    """STORY_SEFF §4.3 k-freeze: k_obs derives from G off the passive params, so
+    a held-fan w=True window must NOT update k (nor n_k) while {a,b,c} is
+    unidentified — exactly the post-rebase state (s_hi reset to 0)."""
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    for m in range(0, 17, 2):
+        z = _leader(temp=25.0 - 0.2 * (m / 60.0), demand=True, fan_pct=50, manuale_on=True)
+        est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
+    assert est.params["lr"].n_k == 0  # frozen: fresh params are unidentified
 
 
 def test_estimator_skips_learning_on_transient_consenso():

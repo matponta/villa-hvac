@@ -620,6 +620,10 @@ MODEL_CAP_FAN_STABILITY = 12   # max (max-min) fan % spread over the window to l
 # k is a NIGHT-CALIBRATED LOWER BOUND — their planner trajectories stay ADVISORY
 # until k converges (may never, at the ~0-net 34°C peak). See ENGINE_REVIEW §6.
 MODEL_SOLAR_EXCITATION_MIN = 150.0   # W/m²: min max-window-solar for abc to be "identified"
+# Estimator gap guard (STORY_SEFF §3): a learning window may never bridge an
+# unobserved interval (skipped samples can hide a chilled-water stint inside a
+# "passive" window). Singles / the ~40 s KNX blips pass; longer gaps restart.
+MODEL_GAP_MAX_S = 180.0
 
 # --- F3: regime selector + coalescing -----------------------------------------
 # Aggregate per-room load/capacity -> regime; in MEDIUM, coalesce demand into

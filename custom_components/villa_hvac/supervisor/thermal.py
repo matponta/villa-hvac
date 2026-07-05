@@ -216,6 +216,29 @@ def planner_eligible(
 
 
 
+def rebase_solar_units(
+    params: ThermalParams, *, prior_b: float, p0_b: float
+) -> ThermalParams:
+    """S_eff units rebase (STORY_SEFF §4.2): the solar regressor's input
+    semantics changed (GHI ↔ a facade tag), so the learned b is meaningless in
+    the new units. Wipe b to the PRIOR (never 0: blend_params applies the
+    shared count weight to a, b, c jointly, so with high kept n a zeroed b
+    would be trusted — reset-to-prior makes blended b == prior exactly while
+    RLS re-identifies), reopen b's covariance row/col only (the textbook
+    single-parameter reset: the gain routes prediction error almost entirely
+    into b while a, c stay pinned), and zero s_hi (it measured excitation of
+    the OLD regressor; keeping it would fake abc_identified/planner_eligible
+    on a wiped b — this also auto-suspends k learning via the identified
+    gate). a, c, k, n, n_k, p_k are KEPT: their regressors did not change."""
+    p = params.p
+    new_p = (
+        p[0], 0.0, p[2],
+        0.0, p0_b, 0.0,
+        p[6], 0.0, p[8],
+    )
+    return replace(params, b=prior_b, p=new_p, s_hi=0.0)
+
+
 def blend_params(
     learned: ThermalParams, prior: ThermalParams, *,
     abc_conf_min: float, k_conf_min: float,

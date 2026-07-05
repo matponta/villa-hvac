@@ -409,6 +409,51 @@ async def test_garbage_sun_attribute_degrades_to_fallback(hass, monkeypatch):
     assert z.s_eff_source == SEFF_SOURCE_FALLBACK
 
 
+async def test_ensure_units_seam_fires_with_learning_disabled(hass, monkeypatch):
+    """CRITICAL review pin (STORY_SEFF §4.2): the units rebase runs at the
+    consumption seam — even with OPT_MODEL_ENABLED off (the observe path never
+    ticks) and with no temperature/valve data, a stored GHI-fitted b must be
+    rebased before model_for feeds control in S_eff units."""
+    from custom_components.villa_hvac.const import (
+        COOL_GAIN_SOLAR, MODEL_P0_PASSIVE, OPT_MODEL_ENABLED,  # noqa: F811
+    )
+
+    monkeypatch.setattr(supervisor_config, "SEFF_CONSUMERS_READY", True)
+    entry = await _setup(
+        hass, options={OPT_SEFF_ENABLED: True, OPT_MODEL_ENABLED: False}
+    )
+    thermal = entry.runtime_data.engine.thermal
+    thermal.load({
+        "main_bedroom": {
+            "a": 0.02, "b": 0.004, "c": 0.1, "k": 0.9,
+            "p": [0.1, 0.01, 0.01, 0.01, 5e-6, 0.01, 0.01, 0.01, 2.0],
+            "p_k": 1.0, "n": 200, "n_k": 30, "s_hi": 900.0,
+        }
+    })
+    hass.states.async_set(SOLAR_RADIATION, str(GHI))
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"azimuth": 270.0, "elevation": 34.0}
+    )
+    hass.states.async_set("cover.grande_camera", "open", {"current_position": 100})
+    hass.states.async_set("cover.piccola_camera", "open", {"current_position": 100})
+
+    build_house_state(hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS)
+
+    p = thermal.params["main_bedroom"]
+    assert thermal._s_units["main_bedroom"] == "seff1:225x1,292x1"
+    assert p.b == COOL_GAIN_SOLAR          # wiped to prior in the new units
+    assert p.s_hi == 0.0                   # excitation re-gates in S_eff units
+    assert p.p[4] == MODEL_P0_PASSIVE[1]   # b variance reopened
+    assert p.p[1] == p.p[3] == p.p[5] == p.p[7] == 0.0  # b cross terms cleared
+    assert p.a == 0.02 and p.c == 0.1 and p.k == 0.9    # a, c, k kept
+    assert p.n == 200 and p.n_k == 30      # counts kept (blend stays confident)
+    assert p.p[0] == 0.1 and p.p[8] == 2.0  # a, c variances kept
+
+    # Idempotent: a second build with the same tag must not rebase again.
+    build_house_state(hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS)
+    assert thermal.params["main_bedroom"] == p
+
+
 async def test_unknown_cover_position_degrades_source(hass, monkeypatch):
     monkeypatch.setattr(supervisor_config, "SEFF_CONSUMERS_READY", True)
     entry = await _setup(hass, options={OPT_SEFF_ENABLED: True})
@@ -422,3 +467,209 @@ async def test_unknown_cover_position_degrades_source(hass, monkeypatch):
         hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS
     )
     assert state.zones["main_bedroom"].s_eff_source == SEFF_SOURCE_DEGRADED
+
+
+# --- units seam + migration (STORY_SEFF §4, §7.6–7) -----------------------------
+
+
+from datetime import datetime, timedelta  # noqa: E402
+from dataclasses import replace  # noqa: E402
+
+from custom_components.villa_hvac.const import (  # noqa: E402
+    COOL_GAIN_SOLAR,
+)
+from custom_components.villa_hvac.policies import ThermalEstimator  # noqa: E402
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    HouseState,
+    ReturnRoom,
+    ZoneSnapshot,
+    house_load_index,
+    rebase_solar_units,
+    return_lead_time,
+    seed_params,
+)
+
+T0 = datetime(2026, 7, 4, 2, 0, 0)
+
+
+def _est_leader(s_eff, source=SEFF_SOURCE_GHI, **kw):
+    base = dict(
+        zone_id="lr", name="lr", climate="climate.lr", emitter="fancoil",
+        fancoil_units=(("fan.lr", "switch.lr_man"),),
+        s_eff=s_eff, s_eff_source=source,
+    )
+    base.update(kw)
+    return ZoneSnapshot(**base)
+
+
+def _est_state(z, *, now, solar=0.0):
+    return HouseState(
+        now=now, zones={z.zone_id: z}, outdoor_temp=30.0, solar=solar,
+        consenso_freddo="off", blocco="off",
+    )
+
+
+def test_rebase_wipes_b_only():
+    p = seed_params(0.02, 0.004, 0.1, 0.9, p0_passive=(0.5, 1e-5, 4.0), p0_k=4.0)
+    p = replace(
+        p, p=(0.1, 0.01, 0.02, 0.01, 5e-6, 0.03, 0.02, 0.03, 2.0),
+        n=200, n_k=30, p_k=1.5, s_hi=900.0,
+    )
+    r = rebase_solar_units(p, prior_b=COOL_GAIN_SOLAR, p0_b=1e-5)
+    assert r.b == COOL_GAIN_SOLAR and r.s_hi == 0.0
+    assert r.p == (0.1, 0.0, 0.02, 0.0, 1e-5, 0.0, 0.02, 0.0, 2.0)
+    assert (r.a, r.c, r.k, r.n, r.n_k, r.p_k) == (p.a, p.c, p.k, p.n, p.n_k, p.p_k)
+
+
+def test_ensure_units_rebases_once_and_clears_buffer():
+    est = ThermalEstimator()
+    est.params["lr"] = replace(est._prior(), b=0.005, s_hi=800.0, n=50)
+    est._buf["lr"] = [(T0, 24.0, 30.0, 500.0, None, False)]  # OLD-units samples
+    est._last_w["lr"] = False
+
+    est.ensure_units("lr", "seff1:292x1")
+    assert est.params["lr"].b == COOL_GAIN_SOLAR and est.params["lr"].s_hi == 0.0
+    assert est.params["lr"].n == 50
+    assert "lr" not in est._buf and "lr" not in est._last_w
+    assert est._s_units["lr"] == "seff1:292x1"
+
+    snap = est.params["lr"]
+    est.ensure_units("lr", "seff1:292x1")   # same tag -> no-op
+    assert est.params["lr"] == snap
+
+
+def test_ensure_units_cover_count_change_rewipes():
+    est = ThermalEstimator()
+    est.ensure_units("lr", "seff1:292x1")
+    est.params["lr"] = replace(est._prior(), b=0.003, s_hi=400.0)
+    est.ensure_units("lr", "seff1:292x2")   # second cover on the SAME facade
+    assert est.params["lr"].b == COOL_GAIN_SOLAR and est.params["lr"].s_hi == 0.0
+
+
+def test_ensure_units_symmetric_flag_off_rewipes():
+    est = ThermalEstimator()
+    est.ensure_units("lr", "seff1:225x1")
+    est.params["lr"] = replace(est._prior(), b=0.0025, s_hi=600.0)
+    est.ensure_units("lr", SEFF_UNITS_GHI)  # facade -> ghi (flag off / labels gone)
+    assert est.params["lr"].b == COOL_GAIN_SOLAR and est.params["lr"].s_hi == 0.0
+
+
+def test_units_tag_dump_load_roundtrip_and_missing_tag_is_ghi():
+    est = ThermalEstimator()
+    est.load({"lr": {"a": 0.1, "b": 0.001, "c": 0.0, "k": 0.9, "p": [0.0] * 9,
+                     "p_k": 0.0, "n": 5}})
+    assert est._s_units["lr"] == SEFF_UNITS_GHI  # pre-STORY_SEFF row -> GHI
+    est._s_units["lr"] = "seff1:292x1"
+    est2 = ThermalEstimator()
+    est2.load(est.dump())
+    assert est2._s_units["lr"] == "seff1:292x1"
+
+
+def test_estimator_skips_fallback_and_degraded_sources():
+    for source in (SEFF_SOURCE_FALLBACK, SEFF_SOURCE_DEGRADED):
+        est = ThermalEstimator()
+        for m in range(0, 17, 2):
+            z = _est_leader(500.0, source=source, temp=24.0 + 0.1 * m, demand=False)
+            est.observe(_est_state(z, now=T0 + timedelta(minutes=m)))
+        assert est.params["lr"].n == 0, source  # units-impure -> zero updates
+
+
+def test_estimator_gap_guard_restarts_window():
+    est = ThermalEstimator()
+    # 8 min of samples, a 10-min unobserved gap, then 14 more minutes: the
+    # window must NOT complete across the gap (total span 32 min >= 15)...
+    for m in (0, 2, 4, 6, 8, 18, 20, 22, 24, 26, 28, 30, 32):
+        z = _est_leader(0.0, temp=24.0 + 0.05 * m, demand=False)
+        est.observe(_est_state(z, now=T0 + timedelta(minutes=m)))
+    assert est.params["lr"].n == 0
+    # ...and completes once the POST-gap samples alone span >= 15 min.
+    z = _est_leader(0.0, temp=25.7, demand=False)
+    est.observe(_est_state(z, now=T0 + timedelta(minutes=34)))
+    assert est.params["lr"].n == 1
+
+
+def test_estimator_ingests_zone_s_eff_not_house_ghi():
+    """Mutation pin: the buffered solar sample is z.s_eff — s_hi (max window-mean
+    solar) lands at the ZONE value, not the house GHI."""
+    est = ThermalEstimator()
+    for m in range(0, 17, 2):
+        z = _est_leader(300.0, temp=24.0 + 0.1 * m, demand=False)
+        est.observe(_est_state(z, now=T0 + timedelta(minutes=m), solar=900.0))
+    assert est.params["lr"].n >= 1
+    assert est.params["lr"].s_hi == 300.0   # not 900
+
+
+def test_return_lead_time_uses_room_s_eff():
+    kw = dict(temp=27.0, target=24.0, a=0.03, b=0.0008, c=0.0, k=1.2)
+    lit = ReturnRoom(s_eff=600.0, **kw)
+    dark = ReturnRoom(**kw)  # falls back to the shared house solar (0)
+    lead_lit = return_lead_time(
+        [lit], 30.0, 0.0, max_lead=timedelta(hours=12), margin=timedelta(0)
+    )
+    lead_dark = return_lead_time(
+        [dark], 30.0, 0.0, max_lead=timedelta(hours=12), margin=timedelta(0)
+    )
+    assert lead_lit > lead_dark  # the sunlit room cools slower -> longer lead
+
+
+def test_house_load_index_uses_zone_s_eff():
+    def _state(s_eff):
+        # k-converged model: g_house aggregates eligible (k-trusted) zones only
+        z = _est_leader(
+            s_eff, temp=26.0, model_a=0.03, model_b=0.0008, model_c=0.0,
+            model_k=1.2, model_k_confidence=0.9,
+        )
+        return HouseState(now=T0, zones={"lr": z}, outdoor_temp=30.0, solar=0.0)
+
+    hot = house_load_index(
+        _state(600.0), default_a=0.03, default_b=0.0008, default_c=0.0,
+        default_capacity=1.2, k_conf_min=0.5,
+    )
+    dark = house_load_index(
+        _state(0.0), default_a=0.03, default_b=0.0008, default_c=0.0,
+        default_capacity=1.2, k_conf_min=0.5,
+    )
+    assert hot.g_house > dark.g_house  # the b·S term reads the zone's own S_eff
+
+
+# --- §7.8 v0.41.0 non-regression pins (RUN fan law under facade S_eff) ----------
+
+
+from custom_components.villa_hvac.supervisor import run_fan_pct  # noqa: E402
+
+_LAW = dict(
+    a=0.03, b=0.0008, c=0.0, k=1.2, pulldown=0.3, pulldown_hours=2.0,
+    run_floor=20, fan_min_pct=0, band=1.5,
+)
+
+
+def _pct(temp, solar, *, at_peak=False):
+    return run_fan_pct(
+        temp=temp, outdoor=29.0, solar=solar, center=24.0, at_peak=at_peak, **_LAW
+    )
+
+
+def test_covers_open_afternoon_sizes_at_least_ghi():
+    # (i) open west+south at 16:00: S_eff (1.44x GHI) must size >= the GHI answer
+    assert _pct(24.2, 864.0) >= _pct(24.2, 600.0)
+
+
+def test_shaded_above_band_at_peak_still_full_fan():
+    # (ii) shaded (S_eff 0.3x GHI) + above band + peak latch -> 100% backstop
+    assert _pct(25.0, 180.0, at_peak=True) == 100
+    assert _pct(25.0, 180.0) < 100  # the law alone would size lower
+
+
+def test_shaded_above_band_within_one_level_of_ghi():
+    # (iii) shaded + temp >= center+B/2, below the latch: the stored-heat term
+    # keeps the law-sized fan within one level of the GHI-sized answer
+    assert abs(_pct(25.0, 180.0) - _pct(25.0, 600.0)) <= 10
+
+
+def test_shaded_near_center_may_size_lower():
+    # (iv) ACCEPTED (STORY_SEFF §7.8): behind a shaded cover with the room near
+    # center, the glass gain IS lower -> the fan may size below the GHI answer;
+    # the RUN floor still holds (a 0% RUN is self-defeating).
+    shaded, ghi = _pct(24.1, 180.0), _pct(24.1, 600.0)
+    assert shaded < ghi
+    assert shaded >= _LAW["run_floor"]

@@ -96,6 +96,7 @@ class AwayReturnController:
                     b=z.model_b if z.model_b is not None else COOL_GAIN_SOLAR,
                     c=z.model_c if z.model_c is not None else COOL_GAIN_BASE,
                     k=z.model_k if (z.model_k and z.model_k > 0) else COOL_CAPACITY,
+                    s_eff=z.s_eff,
                 )
             )
         return rooms

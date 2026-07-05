@@ -199,7 +199,7 @@ def house_load_index(
         a = z.model_a if z.model_a is not None else default_a
         b = z.model_b if z.model_b is not None else default_b
         c = z.model_c if z.model_c is not None else default_c
-        g = max(0.0, cooling_load(z.temp, state.outdoor_temp, state.solar, a=a, b=b, c=c))
+        g = max(0.0, cooling_load(z.temp, state.outdoor_temp, z.s_eff, a=a, b=b, c=c))
         converged = (
             z.model_k_confidence is not None
             and z.model_k_confidence >= k_conf_min
@@ -1036,7 +1036,7 @@ def plan_center_schedule(
         zz = measured.zones.get(zid)
         if zz is not None and zz.temp is not None and zid in zones_out:
             g_sum += max(0.0, cooling_load(
-                zz.temp, measured.outdoor_temp, measured.solar, a=p.a, b=p.b, c=p.c
+                zz.temp, measured.outdoor_temp, zz.s_eff, a=p.a, b=p.b, c=p.c
             ))
             k_sum += p.k
     run, rest = (
@@ -1048,7 +1048,7 @@ def plan_center_schedule(
         rooms = [
             ReturnRoom(
                 temp=zz.temp, target=measured.house_setpoint,
-                a=p.a, b=p.b, c=p.c, k=p.k,
+                a=p.a, b=p.b, c=p.c, k=p.k, s_eff=zz.s_eff,
             )
             for zid, p in params_by_zone.items()
             if (zz := measured.zones.get(zid)) is not None and zz.temp is not None

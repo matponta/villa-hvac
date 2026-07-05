@@ -208,7 +208,7 @@ def _hs(
     temps: dict[str, float], *, now=T0, cfg=None,
     fan_pacing=True, duty=True, season=SEASON_SUMMER,
     free_cool=False, night=False, consenso="on", at_peak=False, precool=False,
-    paused=(), solar=100.0, annotate=True,
+    paused=(), solar=100.0, annotate=True, s_eff_override=None,
 ):
     """One harness HouseState: leaders lr/sg + bedroom bed + follower kit, with
     the config-derived scalar fields mirroring build_house_state, ANNOTATED
@@ -221,6 +221,12 @@ def _hs(
             z = replace(z, paused=True)
         zones[zid] = z
     zones["kit"] = _leader("kit", temp=25.0, follows="lr", climate=False)
+    # Engine-feed parity (STORY_SEFF): build_house_state fills s_eff on every
+    # zone (the GHI identity while the flag is dark); consumers read z.s_eff.
+    zones = {
+        zid: replace(z, s_eff=(s_eff_override or {}).get(zid, solar))
+        for zid, z in zones.items()
+    }
     outdoor = 20.0 if free_cool else (34.0 if at_peak else 26.0)
     state = HouseState(
         now=now, zones=zones, season=season, house_mode="Casa",
@@ -278,6 +284,31 @@ def test_lattice_differential(
         for i in range(len(_LR_SCRIPT))
     ]
     _run_differential(states)
+
+
+def test_seff_split_input_differential_and_wiring():
+    """STORY_SEFF §7.2–3: with z.s_eff decoupled from state.solar the trio and
+    fold stay verbatim-identical, AND the RUN fan consumes z.s_eff — a GHI-fed
+    answer differs (mutation-proof that the consumer switch actually landed)."""
+    cfg = _cfg()
+
+    def _mk(s_eff_override=None):
+        return [
+            _hs(
+                {"lr": 24.9, "sg": 23.0, "bed": 23.0},
+                now=T0 + timedelta(minutes=10 * i), cfg=cfg,
+                solar=0.0, s_eff_override=s_eff_override,
+            )
+            for i in range(3)
+        ]
+
+    split = _mk({"lr": 900.0})   # lr's own irradiance ≠ the house GHI
+    _run_differential(split)      # parity holds under split inputs
+    out_split = CoolingController()(split[0])
+    out_ghi = CoolingController()(_mk()[0])
+    # lr RUN fan sized from s_eff 900 (saturates) vs solar 0 (level ~70)
+    assert out_split[fan_lever("fan.lr")] != out_ghi[fan_lever("fan.lr")]
+    assert out_split[fan_lever("fan.lr")] == 100
 
 
 def test_live_combo_weighted_heaviest():

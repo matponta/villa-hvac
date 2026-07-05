@@ -39,6 +39,7 @@ INVARIANTS (regression = stop; pinned by tests/test_composition.py):
 from __future__ import annotations
 
 from datetime import timedelta
+import logging
 import math
 
 from .const import (
@@ -59,6 +60,7 @@ from .const import (
     MODEL_ABC_CONF_MIN,
     MODEL_CAP_FAN_STABILITY,
     MODEL_FORGETTING,
+    MODEL_GAP_MAX_S,
     MODEL_K_CONF_MIN,
     MODEL_MAX_A,
     MODEL_MAX_B,
@@ -116,13 +118,19 @@ from .supervisor import (
     planner_eligible,
     peak_latch,
     preset_lever,
+    rebase_solar_units,
     rls_capacity_update,
     rls_passive_update,
     run_fan_pct,
     seed_params,
     switch_lever,
     temperature_lever,
+    SEFF_SOURCE_FACADE,
+    SEFF_SOURCE_GHI,
+    SEFF_UNITS_GHI,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 Desired = dict[str, str | float | None]
 
@@ -546,7 +554,7 @@ class FanBandController:
                 # (temp excess over the center), RUN-floored, peak-backstopped —
                 # the one law shared with the planner sim (run_fan_pct).
                 pct = run_fan_pct(
-                    temp=z.temp, outdoor=state.outdoor_temp, solar=state.solar,
+                    temp=z.temp, outdoor=state.outdoor_temp, solar=z.s_eff,
                     center=center, band=band,
                     a=a, b=b, c=c, k=k,
                     pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,
@@ -580,6 +588,10 @@ class ThermalEstimator:
         self.params: dict[str, ThermalParams] = {}
         self._buf: dict[str, list[tuple]] = {}
         self._last_w: dict[str, bool] = {}
+        # S_eff (STORY_SEFF §4): per-zone solar-units tag the stored b was
+        # fitted in ("ghi" | "seff1:<normal>x<count>,…"). ensure_units — the
+        # engine-driven consumption seam — rebases b on any mismatch.
+        self._s_units: dict[str, str] = {}
         self._bounds = ParamBounds(
             MODEL_MAX_A, MODEL_MAX_B, MODEL_MAX_C, MODEL_MIN_K, MODEL_MAX_K
         )
@@ -591,6 +603,33 @@ class ThermalEstimator:
         return seed_params(
             COOL_GAIN_OUTDOOR, COOL_GAIN_SOLAR, COOL_GAIN_BASE, COOL_CAPACITY,
             p0_passive=MODEL_P0_PASSIVE, p0_k=MODEL_P0_K,
+        )
+
+    def ensure_units(self, zone_id: str, tag: str) -> None:
+        """S_eff units-consistency seam (STORY_SEFF §4.2). The ENGINE calls this
+        for every cooling leader EVERY cycle with the zone's current tag,
+        immediately before model_for feeds the snapshot — independent of
+        model_learning_enabled and of temp/valve availability (an
+        observe-path-only rebase is unreachable exactly when control still
+        consumes the params: adversarial review, 2 CRITICAL findings). On a
+        mismatch: rebase b to the prior in the new units, record the tag, and
+        drop the sample buffer (its solar values are in the OLD units — a
+        mixed-units window mean would land as the first, maximum-gain b
+        update)."""
+        if self._s_units.get(zone_id, SEFF_UNITS_GHI) == tag:
+            return
+        old = self._s_units.get(zone_id, SEFF_UNITS_GHI)
+        if zone_id in self.params:
+            self.params[zone_id] = rebase_solar_units(
+                self.params[zone_id],
+                prior_b=COOL_GAIN_SOLAR, p0_b=MODEL_P0_PASSIVE[1],
+            )
+        self._s_units[zone_id] = tag
+        self._buf.pop(zone_id, None)
+        self._last_w.pop(zone_id, None)
+        _LOGGER.info(
+            "Zone %s solar units changed %s -> %s: learned b rebased to prior",
+            zone_id, old, tag,
         )
 
     def model_for(self, zone_id: str) -> ThermalParams:
@@ -653,8 +692,17 @@ class ThermalEstimator:
     def _observe_zone(self, z: ZoneSnapshot, state: HouseState) -> None:
         zid = z.zone_id
         self.params.setdefault(zid, self._prior())
-        temp, t_out, solar = z.temp, state.outdoor_temp, state.solar
+        # S_eff (STORY_SEFF §6 row 1): the regressor input is the zone's own
+        # effective irradiance — the SAME value control consumes. Learn only
+        # from units-pure sources: "fallback" (sun/GHI missing → value degraded
+        # to GHI) and "facade_degraded" (a cover position unknown → g=1
+        # assumed; learning it would fit b systematically LOW because position
+        # dropouts correlate with shading hours) are skipped WITHOUT clearing
+        # the buffer — the gap guard below handles long outages.
+        temp, t_out, solar = z.temp, state.outdoor_temp, z.s_eff
         if temp is None or t_out is None or solar is None:
+            return
+        if z.s_eff_source not in (SEFF_SOURCE_FACADE, SEFF_SOURCE_GHI):
             return
         # demand for the whole open-space unit (leader + its followers).
         demand_any = z.demand
@@ -684,6 +732,13 @@ class ThermalEstimator:
             buf.clear()  # a chilled-water edge -> start a fresh homogeneous window
         self._last_w[zid] = w
         now = state.now
+        # Gap guard: skipped samples (fallback/degraded/transient/None inputs)
+        # leave the buffer intact, so without this a window could bridge an
+        # unobserved interval containing a chilled-water stint (e.g. a sun.sun
+        # outage across a valve open+close) and learn from it as "passive".
+        # Singles / the ~40 s KNX blips pass; anything longer restarts the window.
+        if buf and (now - buf[-1][0]).total_seconds() > MODEL_GAP_MAX_S:
+            buf.clear()
         buf.append((now, float(temp), float(t_out), float(solar), z.fan_pct, z.manuale_on))
         while buf and (now - buf[0][0]) > self._max_window:
             buf.pop(0)
@@ -705,9 +760,20 @@ class ThermalEstimator:
         else:
             # F2b: capacity k — only on a HELD, STEADY fan window (manuale on by
             # us + a known %), never from AUTO/unknown or a pull-down transient.
+            # k-freeze (STORY_SEFF §4.3): k_obs derives from G computed off the
+            # passive params, so a w=True window may only update k when {a,b,c}
+            # is IDENTIFIED (count-confident AND solar-excited). After a units
+            # rebase s_hi is 0 → k learning (and its n_k confidence) suspends
+            # automatically until b re-identifies in the new units — otherwise
+            # the systematically-signed G error of an unlearned b walks k while
+            # inflating its confidence.
+            identified = abc_identified(
+                self.params[zid], conf_min=MODEL_ABC_CONF_MIN,
+                solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
+            )
             fans = [s[4] for s in buf]
             held = all(s[5] for s in buf)
-            if held and all(f is not None for f in fans) and (
+            if identified and held and all(f is not None for f in fans) and (
                 max(fans) - min(fans) <= MODEL_CAP_FAN_STABILITY
             ):
                 u = (sum(fans) / n) / 100.0
@@ -740,12 +806,16 @@ class ThermalEstimator:
                 and p.a >= 0 and p.b >= 0 and p.c >= 0 and p.k > 0 and p.s_hi >= 0
             ):
                 self.params[zid] = p
+                # S_eff: rows without the tag were fitted to GHI by construction
+                # (pre-STORY_SEFF store); ensure_units rebases on first mismatch.
+                self._s_units[zid] = str(d.get("s_units", SEFF_UNITS_GHI))
 
     def dump(self) -> dict:
         return {
             zid: {
                 "a": p.a, "b": p.b, "c": p.c, "k": p.k,
                 "p": list(p.p), "p_k": p.p_k, "n": p.n, "n_k": p.n_k, "s_hi": p.s_hi,
+                "s_units": self._s_units.get(zid, SEFF_UNITS_GHI),
             }
             for zid, p in self.params.items()
         }
@@ -1076,7 +1146,7 @@ class CoolingController:
                 # (temp excess over the center), RUN-floored, peak-backstopped —
                 # the one law shared with the planner sim (run_fan_pct).
                 pct = run_fan_pct(
-                    temp=z.temp, outdoor=state.outdoor_temp, solar=state.solar,
+                    temp=z.temp, outdoor=state.outdoor_temp, solar=z.s_eff,
                     center=center, band=band,
                     a=a, b=b, c=c, k=k,
                     pulldown=COOL_PULLDOWN, pulldown_hours=COOL_PULLDOWN_HOURS,

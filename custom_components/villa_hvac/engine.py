@@ -474,23 +474,9 @@ def build_house_state(
                 if ms is not None and ms.state == STATE_ON:
                     manuale_on = True
                     break
-        # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
-        m_a = m_b = m_c = m_k = m_conf = m_kconf = None
-        m_eligible = False
         is_leader = bool(
             zone.get("climate") and emitter == "fancoil"
             and fancoils and not zone.get("follows")
-        )
-        if thermal is not None and is_leader:
-            m = thermal.model_for(zone_id)
-            abc_conf, k_conf = thermal.confidence(zone_id)
-            m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
-            m_conf, m_kconf = min(abc_conf, k_conf), k_conf
-            m_eligible = thermal.planner_eligible(zone_id)  # D1: planner gate
-        # F4b: relax the band center while OUTSIDE this room's comfort window.
-        comfort_relax = (
-            comfort.relax_for(bedroom=bool(zone.get("bedroom")))
-            if (comfort is not None and is_leader) else 0.0
         )
         # S_eff (STORY_SEFF): compute the facade value for every leader
         # (diagnostics), feed the snapshot only when the flag is on.
@@ -504,6 +490,24 @@ def build_house_state(
             last_s_eff[zone_id] = (facade_val, facade_src, facade_units)
             if cfg.seff_enabled:
                 z_s_eff, z_src, z_units = facade_val, facade_src, facade_units
+        # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
+        m_a = m_b = m_c = m_k = m_conf = m_kconf = None
+        m_eligible = False
+        if thermal is not None and is_leader:
+            # S_eff units seam (STORY_SEFF §4.2): runs EVERY cycle, before the
+            # params feed control — never behind the learning gate or the
+            # observe path's data-availability early-returns.
+            thermal.ensure_units(zone_id, z_units)
+            m = thermal.model_for(zone_id)
+            abc_conf, k_conf = thermal.confidence(zone_id)
+            m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
+            m_conf, m_kconf = min(abc_conf, k_conf), k_conf
+            m_eligible = thermal.planner_eligible(zone_id)  # D1: planner gate
+        # F4b: relax the band center while OUTSIDE this room's comfort window.
+        comfort_relax = (
+            comfort.relax_for(bedroom=bool(zone.get("bedroom")))
+            if (comfort is not None and is_leader) else 0.0
+        )
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
