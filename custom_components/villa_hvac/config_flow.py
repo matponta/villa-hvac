@@ -46,6 +46,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
+    DEFAULT_SEFF_ENABLED,
     DEFAULT_SOLAR_FORECAST,
     DEFAULT_SHADING_ENABLED,
     DEFAULT_SHADING_POSITION,
@@ -88,6 +89,7 @@ from .const import (
     OPT_RETURN_MARGIN_MIN,
     OPT_RETURN_MAX_LEAD_HOURS,
     OPT_SEASON,
+    OPT_SEFF_ENABLED,
     OPT_SHADING_DEFAULT_POSITION,
     OPT_SHADING_ENABLED,
     OPT_SHADING_PROPORTIONAL,
@@ -283,6 +285,10 @@ class VillaHvacOptionsFlow(OptionsFlow):
                 vol.Optional(
                     OPT_SOLAR_FORECAST,
                     default=options.get(OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
+                ): bool,
+                vol.Optional(
+                    OPT_SEFF_ENABLED,
+                    default=options.get(OPT_SEFF_ENABLED, DEFAULT_SEFF_ENABLED),
                 ): bool,
                 vol.Optional(
                     OPT_COMFORT_ENABLED,

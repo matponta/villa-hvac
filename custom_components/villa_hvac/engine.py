@@ -145,9 +145,11 @@ from .supervisor import (
     energy_precool_decision,
     SEFF_SOURCE_GHI,
     SEFF_UNITS_GHI,
+    _solar_at,
     units_tag,
     zone_apertures,
     zone_effective_solar,
+    zone_solar_curves,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -157,9 +159,11 @@ _LOGGER = logging.getLogger(__name__)
 # degrades to the flat-solar fallback instead of breaking integration setup.
 try:
     from astral import Observer as _AstralObserver
+    from astral.sun import azimuth as _sun_azimuth
     from astral.sun import elevation as _sun_elevation
 except ImportError:  # pragma: no cover - astral is a hard HA-core dependency
     _AstralObserver = None
+    _sun_azimuth = None
     _sun_elevation = None
 
 # Fail-safe waits at most this long for an in-flight cycle to finish before
@@ -436,6 +440,9 @@ def build_house_state(
     # before the flag lights consumers up); the SNAPSHOT carries them only when
     # the flag is on, else the GHI identity (byte-identical to the GHI era).
     last_s_eff: dict[str, tuple[float | None, str, str]] = {}
+    # ...and the CONTROL-FACING value per leader (== the snapshot's s_eff): the
+    # model sensor's G must be computed with the same S control consumes.
+    last_s_eff_active: dict[str, float | None] = {}
 
     zones: dict[str, ZoneSnapshot] = {}
     for zone_id, zone in ZONES.items():
@@ -490,6 +497,7 @@ def build_house_state(
             last_s_eff[zone_id] = (facade_val, facade_src, facade_units)
             if cfg.seff_enabled:
                 z_s_eff, z_src, z_units = facade_val, facade_src, facade_units
+            last_s_eff_active[zone_id] = z_s_eff
         # F2: blended thermal model for cooling-fancoil leaders (None otherwise).
         m_a = m_b = m_c = m_k = m_conf = m_kconf = None
         m_eligible = False
@@ -533,10 +541,11 @@ def build_house_state(
             s_eff=z_s_eff, s_eff_source=z_src, s_eff_units=z_units,
         )
 
-    # Publish the per-leader diagnostic S_eff (model sensor reads it).
+    # Publish the per-leader diagnostic + control-facing S_eff (model sensor).
     eng = getattr(coordinator, "engine", None)
     if eng is not None:
         eng.last_s_eff = last_s_eff
+        eng.last_s_eff_active = last_s_eff_active
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
@@ -630,6 +639,8 @@ class SupervisorEngine:
         # build_house_state (deploy-dark style) — the model sensor exposes it so
         # the geometry can be validated live before any consumer switches.
         self.last_s_eff: dict[str, tuple[float | None, str, str]] = {}
+        # The control-facing value per leader (== the snapshot's s_eff).
+        self.last_s_eff_active: dict[str, float | None] = {}
         # #8: overrides the effective house mode while Via+armed (deep setback ->
         # pre-cond ramp). Applied to the state before policies run. Holds the latch.
         self.away_return = AwayReturnController()
@@ -934,12 +945,14 @@ class SupervisorEngine:
             peak_ratio=cfg.regime_peak_ratio, medium_ratio=cfg.regime_medium_ratio,
         )
         # F3b: per-room 12h forward simulation + pre-cool (pure, plan-only).
-        solar_curve, solar_model = self._solar_forecast(state)
+        solar_curve, solar_model, elevations, azimuths = self._solar_forecast(state)
+        solar_by_zone = self._zone_solar_curves(state, solar_curve, elevations, azimuths)
         trajectories = build_room_plans(
             state, self._room_params(state), list(self._forecast),
             solar_curve, cfg.lookahead,
             dt_min=PLAN_SIM_STEP_MIN, downsample_min=PLAN_SIM_DOWNSAMPLE_MIN,
             max_precool_depth=cfg.precool_max_depth,
+            solar_by_zone=solar_by_zone,
         )
         # F4c: surface the CACHED unified reference schedule (already attached to
         # the state by _maybe_refresh_schedule) — the same one the band controller
@@ -948,6 +961,7 @@ class SupervisorEngine:
             plan, regime=regime, g_house=load.g_house, k_house=load.k_house,
             load_ratio=load.load_ratio, room_trajectories=trajectories,
             solar_model=solar_model,
+            solar_domain="seff" if solar_by_zone else "ghi",
             center_compositions=self._center_compositions(state),
             center_schedule=state.center_schedule,
         )
@@ -967,9 +981,10 @@ class SupervisorEngine:
             or mode_key != self._schedule_mode
         )
         if due:
-            solar_curve, solar_model = self._solar_forecast(state)
+            solar_curve, solar_model, elevations, azimuths = self._solar_forecast(state)
             self._center_schedule_cache = self._center_schedule(
-                state, solar_curve, solar_model
+                state, solar_curve, solar_model,
+                self._zone_solar_curves(state, solar_curve, elevations, azimuths),
             )
             self._schedule_ts = state.now
             self._schedule_mode = mode_key
@@ -979,7 +994,9 @@ class SupervisorEngine:
             unified_planner_enabled=unified_planner_enabled(self.hass, self.entry),
         )
 
-    def _center_schedule(self, state: HouseState, solar_curve, solar_model):
+    def _center_schedule(
+        self, state: HouseState, solar_curve, solar_model, solar_by_zone=None
+    ):
         """F4c Phase 5: build the unified per-leader band-center reference schedule
         by composing the shipping pure cores (schedule_precool / energy_precool /
         run_rest_durations / return_lead_time). PLAN-ONLY — returned on the plan
@@ -1003,6 +1020,7 @@ class SupervisorEngine:
                 eta=getattr(self.away_return, "eta", None),
                 return_max_lead=cfg.return_max_lead, return_margin=cfg.return_margin,
                 dt_min=PLAN_SIM_STEP_MIN,
+                solar_by_zone=solar_by_zone,
             )
         except Exception:  # noqa: BLE001 - plan-only reference must never break the view
             _LOGGER.debug("Center-schedule build failed", exc_info=True)
@@ -1084,8 +1102,12 @@ class SupervisorEngine:
         pv = _num(self.hass, FORECASTSOLAR_POWER)
         return pv * FORECASTSOLAR_GHI_FACTOR if pv is not None else None
 
-    def _solar_forecast(self, state: HouseState) -> tuple[list[float], str]:
-        """Per-step solar estimate over the lookahead + a model marker.
+    def _solar_forecast(
+        self, state: HouseState
+    ) -> tuple[list[float], str, list[float], list[float]]:
+        """Per-step solar estimate over the lookahead + a model marker + the
+        per-step sun track (elevations, azimuths — STORY_SEFF §5, feeds the
+        per-zone S_eff projection; empty lists on every flat path).
 
         F4a-v2 (opt-in OPT_SOLAR_FORECAST): sun elevation (astral) × clear-sky ×
         forecast cloud, then NOWCAST-ANCHORED to the live gw3000a (the regional
@@ -1094,10 +1116,10 @@ class SupervisorEngine:
         n = int(state.config.lookahead.total_seconds() / 60 // PLAN_SIM_STEP_MIN) + 1
         if not state.config.solar_forecast_enabled:
             cur = state.solar if state.solar is not None else 0.0
-            return [cur] * n, "flat"
+            return [cur] * n, "flat", [], []
         if _AstralObserver is None:  # astral unavailable -> flat fallback
             cur = state.solar if state.solar is not None else 0.0
-            return [cur] * n, "flat"
+            return [cur] * n, "flat", [], []
         try:
             obs = _AstralObserver(
                 latitude=self.hass.config.latitude,
@@ -1105,33 +1127,49 @@ class SupervisorEngine:
                 elevation=self.hass.config.elevation or 0.0,
             )
             elevations: list[float] = []
+            azimuths: list[float] = []
             clouds: list[float | None] = []
             for i in range(n):
                 when = state.now + timedelta(minutes=i * PLAN_SIM_STEP_MIN)
                 elevations.append(_sun_elevation(obs, when))
+                azimuths.append(_sun_azimuth(obs, when))
                 clouds.append(_forecast_cloud_at(self._cloud, when))
             curve, anchored = solar_curve_v2(
                 elevations=elevations, clouds=clouds, clear_sky_ghi=CLEAR_SKY_GHI,
                 actual_now=self._nowcast_actual(state),
             )
-            return curve, ("nowcast" if anchored else "forecast")
+            return curve, ("nowcast" if anchored else "forecast"), elevations, azimuths
         except Exception:  # noqa: BLE001 - solar estimate is best-effort -> fall back
             _LOGGER.debug("Solar forecast failed; using flat prior", exc_info=True)
             cur = state.solar if state.solar is not None else 0.0
-            return [cur] * n, "flat"
+            return [cur] * n, "flat", [], []
 
-    def _house_cooling_model(self, state: HouseState) -> tuple[float, float, float, float]:
-        """Mean (a, b, c, k) over the cooling leader zones (blended model else priors)
-        — the aggregate the PV effectiveness ranking reasons over."""
-        params = self._room_params(state)
-        if not params:
-            return COOL_GAIN_OUTDOOR, COOL_GAIN_SOLAR, COOL_GAIN_BASE, COOL_CAPACITY
-        n = len(params)
-        return (
-            sum(p.a for p in params.values()) / n,
-            sum(p.b for p in params.values()) / n,
-            sum(p.c for p in params.values()) / n,
-            sum(p.k for p in params.values()) / n,
+    def _zone_solar_curves(
+        self, state: HouseState, solar_curve: list[float],
+        elevations: list[float], azimuths: list[float],
+    ) -> dict[str, list[float]]:
+        """Per-zone S_eff curves over the planner horizon (STORY_SEFF §1.4).
+
+        Geometry mode projects the sun track through each facade zone's current
+        apertures; flat mode (empty track) propagates each zone's LIVE
+        s_eff/GHI ratio so the plan never silently sims on the house curve
+        while actuation runs on S_eff. Empty while the flag is dark — every
+        consumer then .get-falls-back to the house curve, matching the dark
+        GHI-identity actuation."""
+        cfg = state.config
+        if cfg is None or not cfg.seff_enabled:
+            return {}
+        apertures = zone_apertures(state.covers)
+        if not apertures:
+            return {}
+        live_ratio: dict[str, float] = {}
+        ghi = state.solar
+        if ghi is not None and ghi > 0:
+            for zid, cached in self.last_s_eff.items():
+                if cached[0] is not None:
+                    live_ratio[zid] = cached[0] / ghi
+        return zone_solar_curves(
+            solar_curve, elevations, azimuths, apertures, live_ratio
         )
 
     def _pv_bias_apply(self, state: HouseState) -> HouseState:
@@ -1161,11 +1199,20 @@ class SupervisorEngine:
         try:
             # The effectiveness ranking's solar dimension needs a REAL forecast curve;
             # the flat prior (OPT_SOLAR_FORECAST off) collapses the peak-defer shape.
-            solar_curve, solar_marker = self._solar_forecast(state)
+            solar_curve, solar_marker, elevations, azimuths = self._solar_forecast(state)
             if not solar_curve or solar_marker == "flat":
                 self._pv_since = None
                 return state
-            a, b, c, k = self._house_cooling_model(state)
+            # STORY_SEFF §6 row 9: per-zone effectiveness averaged over the
+            # leaders, each on its OWN S_eff curve — averaging b's with mixed
+            # per-zone units against one GHI curve is exactly the silent mix
+            # the consumer table kills. cooling_effectiveness is linear, so
+            # with the house curve (dark / no facade zones) the zone mean is
+            # numerically the old mean-model answer.
+            solar_by_zone = self._zone_solar_curves(
+                state, solar_curve, elevations, azimuths
+            )
+            params = self._room_params(state)
             center = state.house_setpoint + state.mode_offset
             eff: list[float] = []
             for i, s in enumerate(solar_curve):
@@ -1173,7 +1220,22 @@ class SupervisorEngine:
                 t_out = _forecast_temp_at(self._forecast, when)
                 if t_out is None:
                     t_out = state.outdoor_temp
-                eff.append(cooling_effectiveness(center, t_out, s, a=a, b=b, c=c, k=k))
+                if params:
+                    vals = [
+                        cooling_effectiveness(
+                            center, t_out,
+                            _solar_at(solar_by_zone.get(zid), i) if zid in solar_by_zone else s,
+                            a=p.a, b=p.b, c=p.c, k=p.k,
+                        )
+                        for zid, p in params.items()
+                    ]
+                    eff.append(sum(vals) / len(vals))
+                else:
+                    eff.append(cooling_effectiveness(
+                        center, t_out, s,
+                        a=COOL_GAIN_OUTDOOR, b=COOL_GAIN_SOLAR,
+                        c=COOL_GAIN_BASE, k=COOL_CAPACITY,
+                    ))
             cfg = state.config
             pv_kwh = _num(self.hass, CONDOMINIO_PV_REMAINING)
             local = dt_util.now()  # LOCAL day clock (state.now is UTC)

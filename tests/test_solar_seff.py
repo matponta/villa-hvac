@@ -301,18 +301,19 @@ def test_curves_flat_mode_without_ratio_is_empty():
 # --- structural flag darkness (SupervisorConfig) -------------------------------
 
 
-def test_seff_option_is_structurally_dark():
-    # adversarial-review pin: until SEFF_CONSUMERS_READY flips in the release
-    # that completes the consumer table, the option can NEVER enable S_eff
-    assert supervisor_config.SEFF_CONSUMERS_READY is False
-    cfg = SupervisorConfig.from_options({OPT_SEFF_ENABLED: True})
-    assert cfg.seff_enabled is False
-
-
-def test_seff_option_flows_once_consumers_ready(monkeypatch):
-    monkeypatch.setattr(supervisor_config, "SEFF_CONSUMERS_READY", True)
+def test_seff_option_defaults_off_and_flows_when_set():
+    # vN+2: every §6 consumer is switched -> SEFF_CONSUMERS_READY is True and
+    # the option flows; it stays OPT-IN (default off) until live validation.
+    assert supervisor_config.SEFF_CONSUMERS_READY is True
+    assert SupervisorConfig.from_options({}).seff_enabled is False
     assert SupervisorConfig.from_options({OPT_SEFF_ENABLED: True}).seff_enabled is True
-    assert SupervisorConfig.from_options({}).seff_enabled is False  # still opt-in
+
+
+def test_seff_option_dark_when_consumers_not_ready(monkeypatch):
+    # the structural-darkness mechanism itself stays pinned: a half-migrated
+    # tree (READY False) can never run S_eff even with the option set
+    monkeypatch.setattr(supervisor_config, "SEFF_CONSUMERS_READY", False)
+    assert SupervisorConfig.from_options({OPT_SEFF_ENABLED: True}).seff_enabled is False
 
 
 # --- engine feed (inert vN plumbing) -------------------------------------------
@@ -335,9 +336,9 @@ async def _setup(hass, options=None):
 
 
 async def test_snapshot_is_ghi_identity_and_diagnostics_carry_facade(hass):
-    """Flag off (vN always): every snapshot carries the GHI identity — while
+    """Flag off (the default): every snapshot carries the GHI identity — while
     engine.last_s_eff exposes the would-be facade values for live validation."""
-    entry = await _setup(hass, options={OPT_SEFF_ENABLED: True})  # dark anyway
+    entry = await _setup(hass)  # option unset -> off
     hass.states.async_set(SOLAR_RADIATION, str(GHI))
     hass.states.async_set(
         "sun.sun", "above_horizon", {"azimuth": 270.0, "elevation": 34.0}
@@ -673,3 +674,121 @@ def test_shaded_near_center_may_size_lower():
     shaded, ghi = _pct(24.1, 180.0), _pct(24.1, 600.0)
     assert shaded < ghi
     assert shaded >= _LAW["run_floor"]
+
+
+# --- vN+2: planner horizon (STORY_SEFF §7.4 anchors + §6 routing) ---------------
+
+
+from custom_components.villa_hvac.supervisor import (  # noqa: E402
+    RoomParams,
+    build_room_plans,
+    plan_center_schedule,
+)
+
+
+async def test_planner_step0_anchor_geometry_mode(hass):
+    """§7.4: with the live sun as step 0 of the horizon, the per-zone planner
+    curve starts at exactly the value control consumes (z.s_eff) — plan and
+    actuation share the ONE law at the seam."""
+    entry = await _setup(hass, options={OPT_SEFF_ENABLED: True})
+    hass.states.async_set(SOLAR_RADIATION, str(GHI))
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"azimuth": 270.0, "elevation": 34.0}
+    )
+    hass.states.async_set("cover.grande_camera", "open", {"current_position": 100})
+    hass.states.async_set("cover.piccola_camera", "open", {"current_position": 100})
+    state = build_house_state(
+        hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS
+    )
+    eng = entry.runtime_data.engine
+
+    curves = eng._zone_solar_curves(state, [GHI, 500.0], [34.0, 20.0], [270.0, 285.0])
+    assert curves["main_bedroom"][0] == pytest.approx(
+        state.zones["main_bedroom"].s_eff
+    )
+
+
+async def test_planner_step0_anchor_flat_mode_live_ratio(hass):
+    """§7.4 flat mode: no sun track (solar forecast off / astral fallback) must
+    NOT sim on the house curve while actuation runs on S_eff — the live ratio
+    propagates, so step 0 still equals z.s_eff."""
+    entry = await _setup(hass, options={OPT_SEFF_ENABLED: True})
+    hass.states.async_set(SOLAR_RADIATION, str(GHI))
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"azimuth": 270.0, "elevation": 34.0}
+    )
+    hass.states.async_set("cover.grande_camera", "open", {"current_position": 100})
+    hass.states.async_set("cover.piccola_camera", "open", {"current_position": 100})
+    state = build_house_state(
+        hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS
+    )
+    eng = entry.runtime_data.engine
+
+    curves = eng._zone_solar_curves(state, [GHI, GHI], [], [])
+    assert curves["main_bedroom"][0] == pytest.approx(
+        state.zones["main_bedroom"].s_eff
+    )
+
+
+async def test_planner_curves_empty_while_dark(hass):
+    """Flag off: no per-zone curves -> every consumer .get-falls-back to the
+    house curve, matching the dark GHI-identity actuation."""
+    entry = await _setup(hass)
+    hass.states.async_set(SOLAR_RADIATION, str(GHI))
+    hass.states.async_set(
+        "sun.sun", "above_horizon", {"azimuth": 270.0, "elevation": 34.0}
+    )
+    hass.states.async_set("cover.grande_camera", "open", {"current_position": 100})
+    state = build_house_state(
+        hass, entry, entry.runtime_data, base_covers=PADRONALE_COVERS[:1]
+    )
+    eng = entry.runtime_data.engine
+    assert eng._zone_solar_curves(state, [GHI], [34.0], [270.0]) == {}
+
+
+def _sim_state(now, temp=26.0):
+    z = ZoneSnapshot(
+        zone_id="lr", name="lr", climate="climate.lr", emitter="fancoil",
+        temp=temp, fancoil_units=(("fan.lr", "switch.lr_man"),), s_eff=GHI,
+    )
+    return HouseState(
+        now=now, zones={"lr": z}, house_setpoint=24.0, mode_offset=0.0,
+        band_width=1.5, band_slam=0.75, outdoor_temp=30.0, solar=GHI,
+    )
+
+
+def test_build_room_plans_routes_zone_curve():
+    """§6 row 7: a zone with its own S_eff curve sims on it — a hot facade curve
+    must produce a hotter trajectory than the (cool) house curve. Start below
+    center so the REST-phase reheat (where the b·S term drives) sets max_temp."""
+    now = T0
+    params = {"lr": RoomParams(a=0.03, b=0.0008, c=0.0, k=1.2, pulldown=0.3, fan_min=0)}
+    forecast = [(now + timedelta(hours=h), 30.0) for h in range(13)]
+    lookahead = timedelta(hours=6)
+    state = _sim_state(now, temp=23.0)
+    n = int(lookahead.total_seconds() / 60 // 15) + 2
+
+    on_house = build_room_plans(
+        state, params, forecast, [0.0] * n, lookahead,
+    )
+    on_zone = build_room_plans(
+        state, params, forecast, [0.0] * n, lookahead,
+        solar_by_zone={"lr": [900.0] * n},
+    )
+    assert on_zone[0].max_temp > on_house[0].max_temp
+
+
+def test_plan_center_schedule_stamps_solar_domain():
+    now = T0
+    params = {"lr": RoomParams(a=0.03, b=0.0008, c=0.0, k=1.2, pulldown=0.3, fan_min=0)}
+    forecast = [(now + timedelta(hours=h), 30.0) for h in range(13)]
+    state = _sim_state(now)
+    kw = dict(lookahead=timedelta(hours=6), max_precool_depth=3.0)
+
+    ghi_sched = plan_center_schedule(state, params, forecast, [200.0] * 30, **kw)
+    seff_sched = plan_center_schedule(
+        state, params, forecast, [200.0] * 30,
+        solar_by_zone={"lr": [300.0] * 30}, **kw
+    )
+    assert ghi_sched.solar_domain == "ghi"
+    assert seff_sched.solar_domain == "seff"

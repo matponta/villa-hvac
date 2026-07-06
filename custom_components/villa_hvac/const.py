@@ -570,14 +570,15 @@ COOL_RUN_FAN_FLOOR = 20
 # Replace the model's solar regressor input b·S_ghi with b·S_eff, a per-zone
 # effective irradiance COMPUTED from sun geometry + facade normals (cover
 # labels) + live cover position. The physics constants live in
-# supervisor/solar.py (pure). The option is STRUCTURALLY DARK until every
-# b-consumer is switched: SupervisorConfig ANDs it with SEFF_CONSUMERS_READY,
-# which flips True (and the options-flow toggle appears) only in the release
-# that completes the §6 consumer table — a half-migrated tree must never run
-# S_eff even if the option key is set (adversarial review 2026-07-04).
+# supervisor/solar.py (pure). SupervisorConfig ANDs the option with
+# SEFF_CONSUMERS_READY so a half-migrated tree can never run S_eff: the
+# constant flipped True in the release that completed the §6 consumer table
+# (estimator + trio/fold + house_load_index + planner horizon + PV + sensor).
+# The option itself stays opt-in (default OFF) until live validation
+# (STORY_SEFF §8 gates) passes.
 OPT_SEFF_ENABLED = "seff_enabled"
 DEFAULT_SEFF_ENABLED = False
-SEFF_CONSUMERS_READY = False
+SEFF_CONSUMERS_READY = True
 
 # --- F2: online self-refining per-room thermal model (RLS) --------------------
 # Learn dT/dt = a(T_out-T) + b*S + c - k*u_eff per room from live data.

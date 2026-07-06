@@ -185,6 +185,7 @@ def _center_schedule_attr(sched) -> dict | None:
     return {
         "created_at": _iso(sched.created_at),
         "horizon_minutes": _minutes(sched.horizon),
+        "solar_domain": sched.solar_domain,
         "house_blocco": sched.house_blocco,
         "house_run_minutes": _minutes(sched.house_run),
         "house_rest_minutes": _minutes(sched.house_rest),
@@ -276,6 +277,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "k_house": plan.k_house,
             "load_ratio": plan.load_ratio,
             "solar_model": plan.solar_model,
+            "solar_domain": plan.solar_domain,
             "center_compositions": plan.center_compositions,
             "center_schedule": _center_schedule_attr(plan.center_schedule),
             "season": plan.season,
@@ -377,9 +379,15 @@ class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
         outdoor = _num_state(self.hass, OUTDOOR_TEMP)
         if outdoor is None:
             outdoor = _num_state(self.hass, OUTDOOR_TEMP_FALLBACK)
+        # STORY_SEFF §6 row 11: G is computed with the SAME solar value control
+        # consumes (the zone's control-facing S_eff; == GHI while the flag is
+        # dark) — the sensor state and the live fan sizing must never disagree.
+        engine = getattr(self.coordinator, "engine", None)
+        solar = getattr(engine, "last_s_eff_active", {}).get(self._zone_id)
+        if solar is None:
+            solar = _num_state(self.hass, SOLAR_RADIATION)
         return round(
-            cooling_load(self._temp, outdoor, _num_state(self.hass, SOLAR_RADIATION),
-                         a=m.a, b=m.b, c=m.c),
+            cooling_load(self._temp, outdoor, solar, a=m.a, b=m.b, c=m.c),
             3,
         )
 

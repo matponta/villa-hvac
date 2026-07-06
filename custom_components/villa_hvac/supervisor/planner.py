@@ -142,6 +142,10 @@ class PlanView:
     # F3b: per-room 12h trajectories (set by the engine via replace()).
     room_trajectories: tuple = ()
     solar_model: str = "flat"   # F4a: "flat" prior vs "forecast" (sun×cloud model)
+    # STORY_SEFF §1.4: the solar domain the room sims ran in — "seff" (per-zone
+    # facade curves) or "ghi" (house curve). Divergence from the live band's
+    # domain must be visible, never silent.
+    solar_domain: str = "ghi"
     # F4c Phase 1: per-leader band-center composition (base + active feature +
     # floor) for observability — zone_id -> CenterComposition. Computed read-only
     # every cycle (even deploy-dark) so the composition is visible before go-live.
@@ -600,8 +604,12 @@ def build_room_plans(
     forecast: list[tuple[datetime, float]], solar: list[float] | None,
     lookahead: timedelta, *,
     dt_min: int = 15, downsample_min: int = 60, max_precool_depth: float = 3.0,
+    solar_by_zone: dict[str, list[float]] | None = None,
 ) -> tuple[RoomTrajectory, ...]:
-    """Per-leader 12h trajectory + pre-cool schedule (downsampled). Plan-only."""
+    """Per-leader 12h trajectory + pre-cool schedule (downsampled). Plan-only.
+
+    `solar_by_zone` (STORY_SEFF §6 row 7): per-zone S_eff curves; a zone absent
+    from the dict sims on the house `solar` curve (the GHI-identity zones)."""
     if state.house_setpoint is None or state.mode_offset is None:
         return ()
     center = state.house_setpoint + state.mode_offset
@@ -621,7 +629,8 @@ def build_room_plans(
         traj = schedule_precool(
             zone_id=z.zone_id, params=params_by_zone[z.zone_id], t0=z.temp,
             center=center + z.comfort_relax, band=band, slam=slam,
-            forecast=forecast, solar=solar,
+            forecast=forecast,
+            solar=(solar_by_zone or {}).get(z.zone_id, solar),
             now=state.now, lookahead=lookahead, water_available=wa,
             max_depth=max_precool_depth, dt_min=dt_min,
         )
@@ -762,6 +771,10 @@ class CenterSchedule:
     house_run: timedelta | None = None    # advisory duty run length
     house_rest: timedelta | None = None   # advisory duty rest length
     return_lead: timedelta | None = None  # advisory #8 lead time (ETA armed)
+    # STORY_SEFF §1.4: which solar domain the schedule was simulated in — "seff"
+    # (per-zone facade curves) or "ghi" (house curve). A plan/actuation domain
+    # divergence must be visible in diagnostics, never silent.
+    solar_domain: str = "ghi"
 
     def at(self, zone_id: str, now: datetime) -> float | None:
         """Step-interpolated reference center for a zone at `now` (None if absent)."""
@@ -931,6 +944,7 @@ def plan_center_schedule(
     return_max_lead: timedelta = timedelta(hours=6),
     return_margin: timedelta = timedelta(minutes=30),
     dt_min: int = 15,
+    solar_by_zone: dict[str, list[float]] | None = None,
 ) -> CenterSchedule:
     """Jointly schedule a per-leader band-center REFERENCE over the lookahead.
 
@@ -970,11 +984,14 @@ def plan_center_schedule(
         if z.temp is None or z.zone_id not in params_by_zone:
             continue
         params = params_by_zone[z.zone_id]
+        # STORY_SEFF §6 row 8: this zone's own S_eff curve (house curve for
+        # GHI-identity zones) — an S_eff-fitted b × the house GHI would mix units.
+        zone_solar = (solar_by_zone or {}).get(z.zone_id, solar)
         # #9 pre-cool depth + start (reuse the shipping scheduler).
         traj = schedule_precool(
             zone_id=z.zone_id, params=params, t0=z.temp, center=base, band=band,
-            slam=slam, forecast=forecast, solar=solar, now=now, lookahead=lookahead,
-            max_depth=max_precool_depth, dt_min=dt_min,
+            slam=slam, forecast=forecast, solar=zone_solar, now=now,
+            lookahead=lookahead, max_depth=max_precool_depth, dt_min=dt_min,
         )
         depth, start_min = traj.precool_depth, traj.precool_start_min
         # Effectiveness horizon at the base center (for the PV ranking).
@@ -985,7 +1002,7 @@ def plan_center_schedule(
             if t_out is None:
                 t_out = measured.outdoor_temp
             eff.append(cooling_effectiveness(
-                base, t_out, _solar_at(solar, h),
+                base, t_out, _solar_at(zone_solar, h),
                 a=params.a, b=params.b, c=params.c, k=params.k,
             ))
         points: list[CenterPoint] = []
@@ -1062,4 +1079,5 @@ def plan_center_schedule(
         zones=zones_out, created_at=now, horizon=lookahead, dt_min=dt_min,
         house_blocco=BLOCCO_RELEASE,   # the reference never BLOCKs; reactive owns it
         house_run=run, house_rest=rest, return_lead=lead,
+        solar_domain="seff" if solar_by_zone else "ghi",
     )
