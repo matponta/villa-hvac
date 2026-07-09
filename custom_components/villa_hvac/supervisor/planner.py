@@ -27,6 +27,7 @@ from .model import (
     _SEASON_SUMMER,
     _is_cooling_leader,
     _is_free_cooling,
+    active_cooling_leaders,
 )
 from .returnhome import ReturnRoom, return_lead_time
 
@@ -153,6 +154,110 @@ class PlanView:
     # F4c Phase 5: the unified 12h band-center REFERENCE schedule (Track B),
     # PLAN-ONLY — observable, drives nothing (Phase 6 wires it behind the switch).
     center_schedule: "CenterSchedule | None" = None
+    # R4 (Tier-1): per-optimizer {enabled, active, inert_reason} — set by the
+    # engine via replace(). Populated even deploy-dark so live validation can see
+    # WHY a feature did nothing.
+    feature_graph: tuple = ()
+
+
+
+# --- R4 (Tier-1): feature graph — observability before behavior --------------
+# One row per optimizer: is its opt-in ON (`enabled`), is it doing something THIS
+# cycle (`active`), and if not — a one-line `inert_reason`. So a live operator can
+# tell "did nothing because the switch is off" from "switch on but no cooling
+# demand" from "switch on but supervisor (master) is off". Pure: the `enabled`
+# bits come from the engine (switch/config reads — some need `hass`); active +
+# reason are derived here from the already-computed HouseState + PlanView.
+
+# Display order (the sensor lists rows in this order).
+FEATURE_ORDER: tuple[str, ...] = (
+    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool",
+    "comfort_windows", "pv_bias", "unified_planner", "shading", "night",
+)
+
+
+@dataclass(frozen=True)
+class FeatureStatus:
+    """One optimizer's live status for `sensor.hvac_plan.feature_graph`."""
+
+    feature: str
+    enabled: bool           # the opt-in switch/config for this feature is on
+    active: bool            # it is actually doing something this cycle
+    inert_reason: str | None  # None when active; else why it is doing nothing
+
+
+def build_feature_graph(
+    state: HouseState,
+    plan: PlanView,
+    *,
+    master_on: bool,
+    enabled: dict[str, bool],
+) -> tuple[FeatureStatus, ...]:
+    """Project each optimizer's {enabled, active, inert_reason} (pure).
+
+    Precedence of the inert reason: a disabled switch reads "disabled" (most
+    specific); an enabled-but-master-off feature reads "supervisor off" (the
+    dominant deploy-dark reason); otherwise the feature's own gate.
+    """
+    summer = state.season == _SEASON_SUMMER
+    has_leaders = bool(active_cooling_leaders(state))
+
+    def row(feature: str, is_active: bool, reason: str) -> FeatureStatus:
+        if not enabled.get(feature, False):
+            return FeatureStatus(feature, False, False, "disabled")
+        if not master_on:
+            return FeatureStatus(feature, True, False, "supervisor off")
+        if is_active:
+            return FeatureStatus(feature, True, True, None)
+        return FeatureStatus(feature, True, False, reason)
+
+    zones = state.zones.values()
+    rows = {
+        "fan_pacing": row(
+            "fan_pacing",
+            summer and has_leaders,
+            "not cooling season" if not summer else "no active cooling zone",
+        ),
+        "duty_cycle": row(
+            "duty_cycle",
+            plan.in_cooloff,
+            "peak: PdC free-runs" if plan.at_peak
+            else ("not cooling season" if not summer else "cooling within stint cap"),
+        ),
+        "regime": row(
+            "regime",
+            plan.regime == "medium",
+            f"{plan.regime or 'unknown'} regime (coalesce only in medium)",
+        ),
+        "precool": row("precool", plan.precool, "no peak ahead to bank for"),
+        "free_cool": row(
+            "free_cool",
+            plan.free_cool,
+            "not cooling season" if not summer else "outdoor not cool enough",
+        ),
+        "comfort_windows": row(
+            "comfort_windows",
+            any(z.comfort_relax > 0 for z in zones),
+            "inside every comfort window",
+        ),
+        "pv_bias": row(
+            "pv_bias",
+            state.pv_mode in ("bank", "coast"),
+            "no PV surplus to bank",
+        ),
+        "unified_planner": row(
+            "unified_planner",
+            any(z.planner_driven for z in zones),
+            "no planner-driven room (none eligible / schedule stale)",
+        ),
+        "shading": row(
+            "shading",
+            bool(plan.covers_closing),
+            "not cooling season" if not summer else "sun below shading threshold",
+        ),
+        "night": row("night", state.night_active, "not night / no bedroom setback"),
+    }
+    return tuple(rows[f] for f in FEATURE_ORDER)
 
 
 

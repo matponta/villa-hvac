@@ -137,6 +137,7 @@ from .supervisor import (
     _is_cooling_leader,
     _is_free_cooling,
     annotate_centers,
+    build_feature_graph,
     build_plan,
     build_room_plans,
     house_load_index,
@@ -1075,6 +1076,29 @@ class SupervisorEngine:
             max_precool_depth=cfg.precool_max_depth,
             solar_by_zone=solar_by_zone,
         )
+        # R4 (Tier-1): per-optimizer {enabled, active, inert_reason}. Enables come
+        # from the switch/config reads (some need hass); active/reason are pure over
+        # state+plan. Runs every cycle incl. deploy-dark so the graph is populated
+        # before go-live (master off -> enabled features read "supervisor off").
+        feature_graph = build_feature_graph(
+            state, replace(plan, regime=regime),
+            master_on=self.enabled,
+            enabled={
+                "fan_pacing": state.fan_pacing_enabled,
+                "duty_cycle": state.duty_enabled,
+                "regime": bool(cfg and cfg.regime_enabled),
+                "precool": state.duty_enabled,
+                "free_cool": state.free_cool_enabled,
+                "comfort_windows": state.comfort_enabled,
+                "pv_bias": (
+                    pv_bias_enabled(self.hass, self.entry)
+                    and state.fan_pacing_enabled
+                ),
+                "unified_planner": state.unified_planner_enabled,
+                "shading": state.shading_enabled,
+                "night": state.auto_setback,
+            },
+        )
         # F4c: surface the CACHED unified reference schedule (already attached to
         # the state by _maybe_refresh_schedule) — the same one the band controller
         # reads, so the sensor and the drive path never disagree.
@@ -1085,6 +1109,7 @@ class SupervisorEngine:
             solar_domain="seff" if solar_by_zone else "ghi",
             center_compositions=self._center_compositions(state),
             center_schedule=state.center_schedule,
+            feature_graph=feature_graph,
         )
 
     def _maybe_refresh_schedule(self, state: HouseState) -> HouseState:

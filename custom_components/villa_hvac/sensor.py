@@ -234,7 +234,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
     # (the 12h per-room trajectories + the forecast curve + per-zone lists).
     _unrecorded_attributes = frozenset(
         {"room_plans", "forecast", "zones", "covers_closing", "per_zone",
-         "center_compositions", "center_schedule"}
+         "center_compositions", "center_schedule", "feature_graph"}
     )
 
     def __init__(
@@ -303,6 +303,15 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "blocco": plan.blocco,
             "blocco_desired": plan.blocco_desired,
             "covers_closing": list(plan.covers_closing),
+            "feature_graph": [
+                {
+                    "feature": f.feature,
+                    "enabled": f.enabled,
+                    "active": f.active,
+                    "inert_reason": f.inert_reason,
+                }
+                for f in plan.feature_graph
+            ],
             "forecast": [
                 {"datetime": _iso(when), "temperature": temp}
                 for when, temp in plan.forecast
