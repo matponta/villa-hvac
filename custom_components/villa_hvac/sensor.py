@@ -4,11 +4,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -61,6 +62,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     entities: list[SensorEntity] = [
         CoolingDemandZonesSensor(coordinator, entry),
+        CoolingRuntimeSensor(coordinator, entry),
         HvacPlanSensor(coordinator, entry),
         ReturnPlanSensor(coordinator, entry),
         EnergyBiasSensor(coordinator, entry),
@@ -118,6 +120,52 @@ class CoolingDemandZonesSensor(
             "zones": data.get("cooling_zones"),
             "consenso_freddo": data.get("consenso_freddo"),
             "consenso_caldo": data.get("consenso_caldo"),
+        }
+
+
+class CoolingRuntimeSensor(CoordinatorEntity[VillaHvacCoordinator], RestoreSensor):
+    """#6 KPI: accumulated PdC cooling-compressor run-time (consenso_freddo on).
+
+    The efficiency baseline #9 duty-cycling is judged against: fewer/longer runs
+    = better. total_increasing so HA statistics derive per-day/week run-hours;
+    restored across restarts so the total stays monotonic. `cycles` (compressor
+    starts) is since-restart only — a secondary short-cycling hint.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Cooling compressor runtime"
+    _attr_icon = "mdi:timer-cog-outline"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_suggested_display_precision = 2
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_cooling_runtime"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self.coordinator.seed_runtime_base(float(last.native_value))
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def native_value(self) -> float:
+        return round(self.coordinator.cool_runtime_hours, 3)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        data = self.coordinator.data
+        return {
+            "compressor_calling": data.get("consenso_freddo"),
+            "cooling_zones_now": data.get("cooling_zone_count"),
+            "cycles_since_restart": self.coordinator.cool_cycles,
         }
 
 
