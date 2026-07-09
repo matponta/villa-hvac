@@ -595,7 +595,9 @@ class HvacSplitSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
     """
 
     _attr_has_entity_name = True
-    _attr_name = "Split AC"
+    # "HVAC split" -> sensor.hvac_split, matching the hvac_* diagnostic family
+    # (hvac_plan / hvac_levers / hvac_model_*) and distinct from switch.split_ac.
+    _attr_name = "HVAC split"
     _attr_icon = "mdi:air-conditioner"
     _unrecorded_attributes = frozenset({"heads"})
 
