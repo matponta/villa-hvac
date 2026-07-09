@@ -57,6 +57,12 @@ from .const import (
     DEFAULT_SHADING_PROPORTIONAL,
     DEFAULT_SHADING_SOLAR,
     DEFAULT_SOLAR_FORECAST,
+    DEFAULT_SPLIT_CANTINA_SETPOINT,
+    DEFAULT_SPLIT_MIN_OFF,
+    DEFAULT_SPLIT_MIN_ON,
+    DEFAULT_SPLIT_PALESTRA_SETPOINT,
+    DEFAULT_SPLIT_RH_CEILING,
+    DEFAULT_SPLIT_RH_FLOOR,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
     OPT_COMFORT_DAY_FROM,
@@ -96,6 +102,12 @@ from .const import (
     OPT_SHADING_PROPORTIONAL,
     OPT_SHADING_SOLAR,
     OPT_SOLAR_FORECAST,
+    OPT_SPLIT_CANTINA_SETPOINT,
+    OPT_SPLIT_MIN_OFF,
+    OPT_SPLIT_MIN_ON,
+    OPT_SPLIT_PALESTRA_SETPOINT,
+    OPT_SPLIT_RH_CEILING,
+    OPT_SPLIT_RH_FLOOR,
     OPT_WEATHER_ENTITY,
     WEATHER_ENTITY_DEFAULT,
 )
@@ -168,6 +180,13 @@ class SupervisorConfig:
     # #8 return-home (also feeds the planner's advisory arrival lead time)
     return_max_lead: timedelta
     return_margin: timedelta
+    # #6 split-AC trio (cantina wine + palestra comfort setpoints, per-head dwell, RH band)
+    split_cantina_setpoint: float
+    split_palestra_setpoint: float
+    split_min_on: timedelta
+    split_min_off: timedelta
+    split_rh_ceiling: float
+    split_rh_floor: float
     # weather
     weather_entity: str
 
@@ -271,6 +290,24 @@ class SupervisorConfig:
                 minutes=_f(
                     options, OPT_RETURN_MARGIN_MIN, DEFAULT_RETURN_MARGIN_MIN, 0, 180
                 )
+            ),
+            split_cantina_setpoint=_f(
+                options, OPT_SPLIT_CANTINA_SETPOINT, DEFAULT_SPLIT_CANTINA_SETPOINT, 18, 26
+            ),
+            split_palestra_setpoint=_f(
+                options, OPT_SPLIT_PALESTRA_SETPOINT, DEFAULT_SPLIT_PALESTRA_SETPOINT, 18, 28
+            ),
+            split_min_on=timedelta(
+                minutes=_f(options, OPT_SPLIT_MIN_ON, DEFAULT_SPLIT_MIN_ON, 0, 60)
+            ),
+            split_min_off=timedelta(
+                minutes=_f(options, OPT_SPLIT_MIN_OFF, DEFAULT_SPLIT_MIN_OFF, 0, 60)
+            ),
+            split_rh_ceiling=_f(
+                options, OPT_SPLIT_RH_CEILING, DEFAULT_SPLIT_RH_CEILING, 40, 90
+            ),
+            split_rh_floor=_f(
+                options, OPT_SPLIT_RH_FLOOR, DEFAULT_SPLIT_RH_FLOOR, 30, 80
             ),
             weather_entity=str(options.get(OPT_WEATHER_ENTITY) or WEATHER_ENTITY_DEFAULT),
         )

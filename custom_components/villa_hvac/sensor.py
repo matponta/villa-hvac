@@ -65,6 +65,7 @@ async def async_setup_entry(
         ReturnPlanSensor(coordinator, entry),
         EnergyBiasSensor(coordinator, entry),
         HvacLeversSensor(coordinator, entry),
+        HvacSplitSensor(coordinator, entry),
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
@@ -579,4 +580,46 @@ class HvacLeversSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
                 if d.get("note") in _HELD_NOTES
             ),
             "levers": levers,
+        }
+
+
+class HvacSplitSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """#6 diagnostic: the split-AC trio's live observe view.
+
+    State = the group's live refrigerant direction (`cool` / `heat` / `off` /
+    `conflict`). `conflict` means a physically-unsatisfiable heat↔cool mix across
+    the shared compressor — the Zennio KLIC-DD bus cannot flag this itself, so this
+    sensor is the only place it surfaces. Attributes carry `enabled` (the opt-in),
+    and per-head mode/setpoint/temperature/fan_mode. Computed every cycle, even
+    while deploy-dark (P0 is observe-only — nothing actuates).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Split AC"
+    _attr_icon = "mdi:air-conditioner"
+    _unrecorded_attributes = frozenset({"heads"})
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_hvac_split"
+
+    @property
+    def _view(self) -> dict:
+        engine = getattr(self.coordinator, "engine", None)
+        return getattr(engine, "split_view", None) or {}
+
+    @property
+    def native_value(self) -> str | None:
+        return self._view.get("direction")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        view = self._view
+        return {
+            "enabled": view.get("enabled"),
+            "conflict": view.get("conflict"),
+            "group": view.get("group"),
+            "heads": view.get("heads"),
         }

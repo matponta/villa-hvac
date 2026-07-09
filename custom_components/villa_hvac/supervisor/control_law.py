@@ -489,3 +489,95 @@ def coalesce_phase(
     if comfort_breach or (hottest >= center + enter_frac * half and elapsed >= min_off):
         return replace(rs, house_phase="run", run_started=now), "run"
     return rs, "rest"
+
+
+
+# --- Split-AC trio (#6, pure) ------------------------------------------------
+# The managed heads (roles below) are driven cool-side ONLY, so the controller
+# can never create a heat↔cool conflict on the shared compressor. Each head, once
+# given a mode + setpoint, is its OWN thermostat — so "cantina cool @ setpoint" is
+# self-regulating (idles when the cellar is already cool) and doubles as the
+# dead-man fail-safe. `split_head_target` is a pure map from role + context to the
+# desired (mode, setpoint); `split_dwell` is the per-head anti-short-cycle guard
+# (C4) that debounces on/off transitions we command.
+
+SPLIT_FAN_DEFAULT = "low"          # quiet steady circulation for both managed heads
+SPLIT_ROLE_STORAGE = "storage"     # cantina: wine, priority, self-regulating cool
+SPLIT_ROLE_COMFORT = "comfort"     # palestra: summer occupancy cool
+# When the cellar is already DRY (RH < floor), tolerate a warmer setpoint so the
+# compressor runs less and dehumidifies the wine less (a split can only REMOVE
+# moisture, never add it — the only humidity bound we can defend is the ceiling).
+SPLIT_DRY_SETPOINT_RELAX = 1.5     # °C added to the cantina setpoint while RH < floor
+
+
+def split_head_target(
+    role: str | None,
+    *,
+    summer: bool,
+    home: bool,
+    occupied: bool,
+    temp: float | None,
+    rh: float | None,
+    cantina_setpoint: float,
+    comfort_setpoint: float,
+    rh_ceiling: float,
+    rh_floor: float,
+) -> tuple[str, float | None] | None:
+    """Raw desired (hvac_mode, setpoint) for a managed split head — cool-side only.
+
+    Returns None for an unmanaged/observe-only head (garage `manual`, or unknown),
+    which the controller must NEVER command.
+
+    `storage` (cantina, wine) is humidity-aware — a split can only DEHUMIDIFY, so we
+    defend only the RH ceiling and avoid over-drying below the floor:
+      * RH > ceiling (too humid): pull moisture — `cool` if also warm (cools AND
+        dries), else `dry` (dedicated dehumidify while the temp is fine).
+      * otherwise: self-regulating `cool` at the setpoint (the inverter idles once at
+        setpoint, so it barely dehumidifies at steady state); while RH < floor (dry
+        cellar) the setpoint is relaxed warmer by `SPLIT_DRY_SETPOINT_RELAX` so the
+        compressor runs — and dries — less. RH unknown (stale sensor) => plain
+        temp-only cool at the setpoint.
+
+    `comfort` (palestra) cools only in summer while someone is home and the room is
+    occupied, else it is turned off. Humidity is not managed there (comfort room).
+    """
+    if role == SPLIT_ROLE_STORAGE:
+        if rh is not None and rh > rh_ceiling:
+            if temp is not None and temp <= cantina_setpoint:
+                return ("dry", None)            # cool enough but humid -> dehumidify
+            return ("cool", cantina_setpoint)   # warm (or temp unknown) -> cool dries too
+        setpoint = cantina_setpoint
+        if rh is not None and rh < rh_floor:
+            setpoint = cantina_setpoint + SPLIT_DRY_SETPOINT_RELAX  # dry cellar -> run less
+        return ("cool", setpoint)
+    if role == SPLIT_ROLE_COMFORT:
+        if summer and home and occupied:
+            return ("cool", comfort_setpoint)
+        return ("off", None)
+    return None
+
+
+def split_dwell(
+    desired_on: bool,
+    prev: tuple[bool, datetime] | None,
+    now: datetime,
+    min_on: timedelta,
+    min_off: timedelta,
+) -> tuple[bool, datetime]:
+    """Anti-short-cycle guard (C4) for one head's commanded on/off.
+
+    `prev` is the last committed (on, since) or None. A transition is only allowed
+    once the head has dwelled at least `min_on` (before turning off) or `min_off`
+    (before turning on); otherwise the previous state is held. Returns the effective
+    (on, since) to commit this cycle. A head that never toggles (cantina, always on)
+    is unaffected.
+    """
+    if prev is None:
+        return desired_on, now
+    prev_on, since = prev
+    if desired_on == prev_on:
+        return prev_on, since
+    need = min_on if prev_on else min_off
+    if (now - since) < need:
+        return prev_on, since      # hold — not enough dwell to flip yet
+    return desired_on, now

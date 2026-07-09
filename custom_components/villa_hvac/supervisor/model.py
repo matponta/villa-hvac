@@ -77,6 +77,21 @@ class ZoneSnapshot:
     center_source: str = "none"      # planner|base|pv_bank|pv_coast|precool|comfort_relax
     center_floored: bool = False     # the ladder's comfort floor clamped a lowering feature
     planner_driven: bool = False     # the unified planner reference drove the center
+    # Split-AC trio (#6): the standard Daikin `climate` head for this zone + its
+    # live state, populated for zones carrying an `ac_group`. `split_climate` is
+    # the head entity (resolved: the zone's explicit `split_climate`, else its
+    # `climate` when emitter=="split_ac"); the rest are the live reads. These heads
+    # share ONE compressor (single refrigerant direction) — the SplitGroupController
+    # reasons over the group, never through the fancoil cooling stack.
+    ac_group: str | None = None       # e.g. "split_trio" — group membership key
+    split_climate: str | None = None  # the split head entity_id
+    split_role: str | None = None     # storage (cantina) | comfort (palestra) | manual (garage)
+    split_mode: str | None = None     # live hvac_mode (off/cool/dry/fan_only/heat/auto)
+    split_setpoint: float | None = None   # live target temperature
+    split_fan_mode: str | None = None      # live fan_mode (off/low/medium/high)
+    split_temp: float | None = None        # the split head's own current_temperature
+    occupied: bool | None = None      # EP occupancy (ep_occ), None if no/stale sensor
+    humidity: float | None = None     # RH % (humidity_sensor), None if no/stale sensor
 
 
 
@@ -157,6 +172,16 @@ class HouseState:
     # `unified_planner_enabled`; else the compose_center ladder. None = no schedule.
     center_schedule: "CenterSchedule | None" = None
     unified_planner_enabled: bool = False
+    # #6 split-AC trio: the opt-in flag + the parsed config the SplitGroupController
+    # reads (cool-side only; cantina self-regulates at its setpoint). min_on/min_off
+    # are the per-head anti-short-cycle dwell (C4).
+    split_enabled: bool = False
+    split_cantina_setpoint: float | None = None
+    split_palestra_setpoint: float | None = None
+    split_min_on: timedelta = timedelta(minutes=5)
+    split_min_off: timedelta = timedelta(minutes=3)
+    split_rh_ceiling: float = 65.0    # run `dry` above this; wine humidity ceiling
+    split_rh_floor: float = 55.0      # relax the cantina setpoint below this (avoid over-drying)
 
 
 
@@ -217,3 +242,39 @@ def active_cooling_leaders(state: HouseState) -> list[ZoneSnapshot]:
         and not (z.bedroom and state.night_active)
         and z.temp is not None
     ]
+
+
+
+# --- Split-AC group helpers (#6, pure) ---------------------------------------
+# The trio shares ONE outdoor heat pump that cannot make heat and cold at once.
+# `cool` and `dry` are the same refrigerant direction (compatible); `fan_only`
+# needs no compressor (neutral); only `heat` conflicts. The gateway (Zennio
+# KLIC-DD) gives NO standby/conflict feedback, so a head forced to standby still
+# reports its requested mode — we must detect an incompatible mix ourselves.
+
+SPLIT_COOL_MODES: tuple[str, ...] = ("cool", "dry")  # same refrigerant direction
+SPLIT_HEAT_MODE = "heat"
+SPLIT_NEUTRAL_MODES: tuple[str, ...] = ("off", "fan_only", "fan")  # no compressor call
+
+
+
+def split_members(state: HouseState, group: str | None = None) -> list[ZoneSnapshot]:
+    """Zones belonging to a split-AC group (all groups if `group` is None),
+    in a stable insertion order."""
+    return [
+        z
+        for z in state.zones.values()
+        if z.ac_group is not None and (group is None or z.ac_group == group)
+    ]
+
+
+
+def split_mode_conflict(members: list[ZoneSnapshot]) -> bool:
+    """True if the heads' live modes are physically unsatisfiable on one shared
+    compressor: at least one calling `heat` while another calls `cool`/`dry`.
+    `fan_only`/`off` are neutral and never conflict. This is the case the KNX bus
+    cannot report (the losing head keeps echoing its requested mode)."""
+    modes = {(z.split_mode or "").lower() for z in members}
+    wants_heat = SPLIT_HEAT_MODE in modes
+    wants_cool = any(m in SPLIT_COOL_MODES for m in modes)
+    return wants_heat and wants_cool

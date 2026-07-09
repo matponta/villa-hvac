@@ -19,8 +19,13 @@ import logging
 import math
 
 from homeassistant.components.climate import (
+    ATTR_CURRENT_TEMPERATURE,
+    ATTR_FAN_MODE,
+    ATTR_HVAC_MODE,
     ATTR_PRESET_MODE,
     DOMAIN as CLIMATE_DOMAIN,
+    SERVICE_SET_FAN_MODE,
+    SERVICE_SET_HVAC_MODE,
     SERVICE_SET_PRESET_MODE,
     SERVICE_SET_TEMPERATURE,
 )
@@ -89,6 +94,7 @@ from .const import (
     SHADING_ORIENTATIONS,
     SHADING_SKIP_AREAS,
     SOLAR_RADIATION,
+    SPLIT_GROUP,
     STALE_TEMP_CYCLES,
     WEATHER_ENTITY_DEFAULT,
     ZONES,
@@ -107,6 +113,7 @@ from .controller import (
     pv_bias_enabled,
     shade_blocked,
     shade_position,
+    split_ac_enabled,
     supervisor_enabled,
     unified_planner_enabled,
 )
@@ -139,6 +146,14 @@ from .supervisor import (
     plan_run,
     reconcile,
     select_regime,
+    SPLIT_COOL_MODES,
+    SPLIT_HEAT_MODE,
+    SPLIT_ROLE_STORAGE,
+    fan_mode_lever,
+    hvac_mode_lever,
+    split_members,
+    split_mode_conflict,
+    temperature_lever,
     solar_curve_v2,
     _forecast_temp_at,
     cooling_effectiveness,
@@ -189,6 +204,16 @@ def _num(hass: HomeAssistant, entity_id: str) -> float | None:
         return None
     try:
         val = float(state.state)
+    except (TypeError, ValueError):
+        return None
+    return val if math.isfinite(val) else None
+
+
+def _finite(value) -> float | None:
+    """Coerce an attribute value to a finite float (None if missing/non-numeric/
+    NaN/inf) — the isfinite-ingest convention for climate attributes."""
+    try:
+        val = float(value)
     except (TypeError, ValueError):
         return None
     return val if math.isfinite(val) else None
@@ -516,6 +541,37 @@ def build_house_state(
             comfort.relax_for(bedroom=bool(zone.get("bedroom")))
             if (comfort is not None and is_leader) else 0.0
         )
+        # Split-AC trio (#6): resolve the head entity + read its live state
+        # (observe-only in P0). palestra carries an explicit `split_climate`
+        # alongside its radiant `climate`; cantina/garage ARE the split (their
+        # `climate` is the aircon, emitter=="split_ac").
+        ac_group = zone.get("ac_group")
+        split_climate = split_mode = split_fan_mode = split_role = None
+        split_setpoint = split_temp = None
+        if ac_group is not None:
+            split_role = zone.get("split_role")
+            split_climate = zone.get("split_climate") or (
+                zone.get("climate") if emitter == "split_ac" else None
+            )
+            ss = hass.states.get(split_climate) if split_climate else None
+            if ss is not None:
+                split_mode = ss.state
+                split_fan_mode = ss.attributes.get(ATTR_FAN_MODE)
+                split_setpoint = _finite(ss.attributes.get(ATTR_TEMPERATURE))
+                split_temp = _finite(ss.attributes.get(ATTR_CURRENT_TEMPERATURE))
+        # EP occupancy (for #6 palestra comfort + future occupancy features).
+        occupied: bool | None = None
+        ep_occ = zone.get("ep_occ")
+        if ep_occ and (occ_s := hass.states.get(ep_occ)) is not None:
+            if occ_s.state in (STATE_ON, STATE_OFF):
+                occupied = occ_s.state == STATE_ON
+        # RH for #6 cantina humidity handling (None if no sensor / stale -> the
+        # split control law falls back to temp-only).
+        humidity: float | None = None
+        hum_sensor = zone.get("humidity_sensor")
+        if hum_sensor and (hum_s := hass.states.get(hum_sensor)) is not None:
+            if hum_s.state not in ("unavailable", "unknown"):
+                humidity = _finite(hum_s.state)
         zones[zone_id] = ZoneSnapshot(
             zone_id=zone_id,
             name=zone["name"],
@@ -539,6 +595,15 @@ def build_house_state(
             fan_pct=fan_pct, manuale_on=manuale_on,
             comfort_relax=comfort_relax,
             s_eff=z_s_eff, s_eff_source=z_src, s_eff_units=z_units,
+            ac_group=ac_group,
+            split_climate=split_climate,
+            split_role=split_role,
+            split_mode=split_mode,
+            split_setpoint=split_setpoint,
+            split_fan_mode=split_fan_mode,
+            split_temp=split_temp,
+            occupied=occupied,
+            humidity=humidity,
         )
 
     # Publish the per-leader diagnostic + control-facing S_eff (model sensor).
@@ -597,6 +662,13 @@ def build_house_state(
         consenso_freddo=data.get("consenso_freddo"),
         consenso_caldo=data.get("consenso_caldo"),
         blocco=blocco_state.state if blocco_state is not None else None,
+        split_enabled=split_ac_enabled(hass, entry),
+        split_cantina_setpoint=cfg.split_cantina_setpoint,
+        split_palestra_setpoint=cfg.split_palestra_setpoint,
+        split_min_on=cfg.split_min_on,
+        split_min_off=cfg.split_min_off,
+        split_rh_ceiling=cfg.split_rh_ceiling,
+        split_rh_floor=cfg.split_rh_floor,
     )
 
 
@@ -686,6 +758,8 @@ class SupervisorEngine:
         self._cloud: list[tuple] = []
         self._forecast_ts = None
         self._plan_view: PlanView | None = None
+        # #6 split-AC trio observe view (refreshed each cycle, even deploy-dark).
+        self._split_view: dict | None = None
         # PV/energy-aware pre-cool: last decision (diagnostic) + min-dwell anchor.
         self._pv_decision = None
         self._pv_since = None
@@ -738,6 +812,11 @@ class SupervisorEngine:
     def plan_view(self) -> PlanView | None:
         """The latest #11 plan projection (refreshed each cycle, even dark)."""
         return self._plan_view
+
+    @property
+    def split_view(self) -> dict | None:
+        """The latest #6 split-AC trio observe view (refreshed each cycle, dark)."""
+        return self._split_view
 
     @property
     def lever_decisions(self) -> dict[str, dict]:
@@ -861,6 +940,7 @@ class SupervisorEngine:
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
             self._plan_view = self._build_plan_view(state, pure_outputs)
+            self._split_view = self._build_split_view(state)
             if actuate:
                 self._check_unresolved_centers(state)
                 # Tier-1 M1: the regime/duty/band composition (BLOCCO precedence,
@@ -915,6 +995,47 @@ class SupervisorEngine:
             await self._model_store.async_save(self.thermal.dump())
         except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
             _LOGGER.debug("Room-model persist failed", exc_info=True)
+
+    def _build_split_view(self, state: HouseState) -> dict:
+        """Project the split-AC trio's live state into a read-only observe view (#6).
+
+        Pure projection from the snapshot (no writes, no controller), so it is safe
+        every cycle even while deploy-dark. Reports each head's live mode/setpoint/
+        temperature, the group's live refrigerant direction, and whether the heads
+        are in a physically-unsatisfiable heat↔cool mix — which the Zennio KLIC-DD
+        bus cannot itself flag. P0 has no controller, so this is observe-only.
+        """
+        members = split_members(state)
+        heads = {
+            z.zone_id: {
+                "name": z.name,
+                "entity": z.split_climate,
+                "role": z.split_role,
+                "mode": z.split_mode,
+                "setpoint": z.split_setpoint,
+                "temp": z.split_temp,
+                "humidity": z.humidity,
+                "fan_mode": z.split_fan_mode,
+            }
+            for z in members
+        }
+        modes = {(z.split_mode or "").lower() for z in members}
+        conflict = split_mode_conflict(members)
+        if conflict:
+            direction = "conflict"
+        elif SPLIT_HEAT_MODE in modes:
+            direction = "heat"
+        elif any(m in SPLIT_COOL_MODES for m in modes):
+            direction = "cool"
+        else:
+            direction = "off"
+        return {
+            "enabled": split_ac_enabled(self.hass, self.entry),
+            "group": SPLIT_GROUP,
+            "direction": direction,
+            "conflict": conflict,
+            "heads": heads,
+        }
 
     def _build_plan_view(self, state: HouseState, pure_outputs) -> PlanView:
         """Project the current state into the #11 plan view (read-only).
@@ -1349,6 +1470,15 @@ class SupervisorEngine:
             return s.attributes.get(ATTR_PRESET_MODE)
         if kind == "temperature":
             return s.attributes.get(ATTR_TEMPERATURE)
+        if kind == "hvac_mode":
+            # For a climate the operation mode IS the entity state (off/cool/dry/
+            # fan_only/heat/auto), not an attribute. unavailable/unknown falls
+            # through to reconcile as transient.
+            return s.state
+        if kind == "fan_mode":
+            # Split fan speed is a STRING enum ON the climate (off/low/medium/
+            # high) — distinct from the fancoil `fan:` percentage lever.
+            return s.attributes.get(ATTR_FAN_MODE)
         if kind == "fan":
             # Compare on the DELIVERED airflow, not the retained % attribute: an
             # OFF fan still reports the last bus percentage, so a fan silenced
@@ -1393,6 +1523,18 @@ class SupervisorEngine:
             await self._call(
                 CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
                 {ATTR_ENTITY_ID: entity, ATTR_TEMPERATURE: float(value)},
+            )
+        elif kind == "hvac_mode":
+            # Split-AC operation mode (off/cool/dry/fan_only/heat/auto);
+            # set_hvac_mode('off') is the on/off lever too.
+            await self._call(
+                CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE,
+                {ATTR_ENTITY_ID: entity, ATTR_HVAC_MODE: value},
+            )
+        elif kind == "fan_mode":
+            await self._call(
+                CLIMATE_DOMAIN, SERVICE_SET_FAN_MODE,
+                {ATTR_ENTITY_ID: entity, ATTR_FAN_MODE: value},
             )
         elif kind == "fan":
             # Assert the on/off STATE together with the % — set_percentage alone
@@ -1554,6 +1696,58 @@ class SupervisorEngine:
             except Exception:  # noqa: BLE001 - fail-safe must not raise
                 _LOGGER.exception("Fail-safe: could not restore preset for %s", climate)
 
+    async def _split_fail_safe(self) -> None:
+        """Fail-safe (#6): hand the split heads to a safe, self-supervising baseline.
+
+        ONLY for heads we were actually managing — detected by a committed
+        `hvac_mode:` lever state. A deploy-dark unload (the controller never wrote a
+        split) therefore leaves the heads in the user's manual state, untouched.
+
+        A split given a mode+setpoint is its own thermostat, so the wine head
+        (role ``storage``) is left in ``cool`` at its configured setpoint — a
+        self-regulating dead-man that keeps protecting the cellar with no supervisor
+        alive. Every other managed head (palestra) goes ``off``. Garage is never
+        managed, so it is never here. Each write is guarded; the caller holds the
+        lock, and the lever state is dropped so a queued cycle can't re-assert.
+        """
+        managed = {lev for lev in self._lever_states if lev.startswith("hvac_mode:")}
+        if not managed:
+            return
+        setpoint = SupervisorConfig.from_options(self.entry.options).split_cantina_setpoint
+        for zone_id, zone in ZONES.items():
+            if zone.get("ac_group") != SPLIT_GROUP:
+                continue
+            entity = zone.get("split_climate") or (
+                zone.get("climate") if zone.get("emitter") == "split_ac" else None
+            )
+            if entity is None or hvac_mode_lever(entity) not in managed:
+                continue
+            try:
+                if zone.get("split_role") == SPLIT_ROLE_STORAGE:
+                    await self._call(
+                        CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE,
+                        {ATTR_ENTITY_ID: entity, ATTR_HVAC_MODE: "cool"},
+                    )
+                    await self._call(
+                        CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                        {ATTR_ENTITY_ID: entity, ATTR_TEMPERATURE: float(setpoint)},
+                    )
+                else:
+                    await self._call(
+                        CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE,
+                        {ATTR_ENTITY_ID: entity, ATTR_HVAC_MODE: "off"},
+                    )
+            except Exception:  # noqa: BLE001 - fail-safe must not raise
+                _LOGGER.exception("Fail-safe: could not hand back split %s", entity)
+            # Drop our lever state so a cycle queued behind the hand-back can't
+            # re-assert the managed mode/setpoint/fan afterwards.
+            for lev in (
+                hvac_mode_lever(entity),
+                temperature_lever(entity),
+                fan_mode_lever(entity),
+            ):
+                self._lever_states.pop(lev, None)
+
     async def async_release_blocco(self) -> None:
         """Boot / external safe baseline: release the block, SERIALIZED against
         cycles (so an in-flight cycle can't re-block after us). Skips only when
@@ -1604,6 +1798,11 @@ class SupervisorEngine:
             # B1: un-stick any zone left in building_protection (skip #10-disabled +
             # window-paused, which SHOULD stay in it) -> neutral `auto` preset.
             await self._restore_presets()
+            # #6: hand the split heads back — ONLY those we were managing (a
+            # committed lever), so a deploy-dark unload never actuates an untouched
+            # split. Cantina stays a self-regulating dead-man (cool @ setpoint); the
+            # comfort head (palestra) goes off. Garage is never ours -> never touched.
+            await self._split_fail_safe()
         finally:
             if locked:
                 self._lock.release()

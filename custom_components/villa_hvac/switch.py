@@ -50,6 +50,7 @@ async def async_setup_entry(
         ReturnArmedSwitch(entry),
         PvBiasSwitch(entry),
         UnifiedPlannerSwitch(entry),
+        SplitAcSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -372,6 +373,46 @@ class UnifiedPlannerSwitch(SwitchEntity, RestoreEntity):
         engine = getattr(self._entry.runtime_data, "engine", None)
         if engine is not None:
             await engine.request_run()
+
+
+class SplitAcSwitch(SwitchEntity, RestoreEntity):
+    """Opt-in for the #6 split-AC trio controller (default OFF, deploy-dark).
+
+    When on (and the master is on), the SplitGroupController manages the Cantina
+    (wine-storage cool) and Palestra (summer occupancy cool) heads on the shared
+    Daikin outdoor unit, emitting cool-side only. Garage stays owner-manual. Off
+    by default — P0 is observe-only, so this switch actuates nothing until P1.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Split AC"
+    _attr_icon = "mdi:air-conditioner"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_split_ac"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        # Hand the heads back to their own thermostat/native state via fail-safe.
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.async_fail_safe()
 
 
 class ShadeBlockSwitch(SwitchEntity, RestoreEntity):

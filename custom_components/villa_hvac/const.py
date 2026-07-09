@@ -352,12 +352,15 @@ ZONES: dict[str, dict] = {
     "palestra": {
         "name": "Palestra",
         "floor": "terra",
-        "climate": "climate.palestra_termostato_2",     # radiant thermostat
+        "climate": "climate.palestra_termostato_2",     # radiant thermostat (HEAT ONLY)
         "temp_sensor": "sensor.clima_palestra",
-        "split_climate": "climate.aircon_palestra_2",   # split AC (trio)
+        "split_climate": "climate.aircon_palestra_2",   # split AC (trio) — the cooler
         "ac_group": "split_trio",
-        "ep_temp": None,
-        "ep_occ": None,
+        # EP 3febdc verified live 2026-07-08 (temp + occupancy available) — used by
+        # #6 split occupancy cooling. Was stale-None in const.
+        "ep_temp": "sensor.everything_presence_one_3febdc_temperature",
+        "ep_occ": "binary_sensor.everything_presence_one_3febdc_occupancy",
+        "split_role": "comfort",   # #6: summer occupancy cool, off in winter/away
         "emitter": "radiant",
     },
     "cantina_vini": {
@@ -368,6 +371,11 @@ ZONES: dict[str, dict] = {
         "ac_group": "split_trio",
         "ep_temp": "sensor.ep_cantina_vini_temperature",
         "ep_occ": "binary_sensor.ep_cantina_vini_occupancy",
+        # RH for #6 humidity handling (the split has NO humidity attr). EP a8c934
+        # channel — verified live 2026-07-09 (44%); flaps to unavailable, so the
+        # control law falls back to temp-only when it's stale.
+        "humidity_sensor": "sensor.everything_presence_one_a8c934_humidity",
+        "split_role": "storage",   # #6: wine — self-regulating cool @ setpoint, priority
         "emitter": "split_ac",
     },
     "garage": {
@@ -378,6 +386,7 @@ ZONES: dict[str, dict] = {
         "ac_group": "split_trio",
         "ep_temp": None,  # EP 3febe8 is 'Garage Grande' (area-ambiguous) -> unmapped
         "ep_occ": None,
+        "split_role": "manual",    # #6: owner-triggered only — observe, never commanded
         "emitter": "split_ac",
     },
 }
@@ -712,6 +721,39 @@ FORECAST_REFRESH = timedelta(minutes=30)  # re-fetch + re-plan cadence
 # forecast fetch has been failing), the band controller falls back to the base
 # ladder — never drives off a stale 12 h reference sized to a peak that has moved.
 SCHEDULE_MAX_AGE = timedelta(minutes=90)
+
+# --- Split-AC trio (#6) ------------------------------------------------------
+# The 3 Daikin heads (Palestra/Cantina/Garage) on ONE shared outdoor heat pump,
+# bridged by Zennio KLIC-DD gateways. Separate refrigerant circuit from the PdC.
+# Single direction only: cool/dry compatible, heat exclusive — the controller
+# emits cool-side only, so it can never create a mode conflict. Opt-in
+# switch.split_ac (deploy-dark, default off). Automated scope = Cantina (wine
+# storage) + Palestra (summer occupancy cool); Garage is owner-manual
+# (observe-only, never commanded). See STORY_SPLIT_TRIO.md.
+SPLIT_GROUP = "split_trio"                        # ac_group key in ZONES
+OPT_SPLIT_ENABLED = "split_ac_enabled"            # mirrored by switch.split_ac
+OPT_SPLIT_CANTINA_SETPOINT = "split_cantina_setpoint"
+OPT_SPLIT_PALESTRA_SETPOINT = "split_palestra_setpoint"
+DEFAULT_SPLIT_ENABLED = False                     # strict deploy-dark
+DEFAULT_SPLIT_CANTINA_SETPOINT = 19.0             # °C, owner-set wine storage target
+DEFAULT_SPLIT_PALESTRA_SETPOINT = 24.0            # °C, gym comfort target (its own, not the house slider)
+# Group compressor protection (industry-standard defaults, minutes): we are the
+# only gate on this heat pump. Setpoint hysteresis is preferred over on/off, so
+# start events stay rare regardless.
+OPT_SPLIT_MIN_ON = "split_min_on"
+OPT_SPLIT_MIN_OFF = "split_min_off"
+OPT_SPLIT_MODE_LOCKOUT = "split_mode_lockout"
+DEFAULT_SPLIT_MIN_ON = 5
+DEFAULT_SPLIT_MIN_OFF = 3
+DEFAULT_SPLIT_MODE_LOCKOUT = 10
+# Cantina humidity band (wine). A split can only DEHUMIDIFY: run `dry` above the
+# ceiling; below the floor relax the setpoint so it dries the cellar less. A cellar
+# that trends below the floor needs a HUMIDIFIER (out of scope) — the AC can't add
+# moisture. RH ceiling/floor in %.
+OPT_SPLIT_RH_CEILING = "split_rh_ceiling"
+OPT_SPLIT_RH_FLOOR = "split_rh_floor"
+DEFAULT_SPLIT_RH_CEILING = 65.0
+DEFAULT_SPLIT_RH_FLOOR = 55.0
 
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)

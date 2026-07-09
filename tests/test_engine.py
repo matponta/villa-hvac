@@ -1210,16 +1210,22 @@ async def test_failsafe_mid_loop_epoch_bump_stops_lever_writes(hass):
 
 async def test_controllers_are_exactly_cooling_then_night(hass):
     """(P2 gate g) The production controllers tuple is EXACTLY
-    (CoolingController, NightSilenceController) — the oracle trio cannot stay
-    silently wired, and Night stays LAST (its Notte-exit one-shot manuale
-    release must yield to the band re-taking a bedroom on the same cycle)."""
+    (CoolingController, NightSilenceController, SplitGroupController) — the oracle
+    trio cannot stay silently wired. CoolingController is FIRST and Night follows it
+    (Night's Notte-exit one-shot manuale release must yield to the band re-taking a
+    bedroom on the same cycle). SplitGroupController (#6) is last: its lever set
+    (aircon_* hvac_mode/temperature/fan_mode) is disjoint from both, so its position
+    is immaterial and it can never perturb the band↔night precedence."""
     from custom_components.villa_hvac.night import NightSilenceController
-    from custom_components.villa_hvac.policies import CoolingController
+    from custom_components.villa_hvac.policies import (
+        CoolingController,
+        SplitGroupController,
+    )
 
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
     assert [type(c) for c in engine.controllers] == [
-        CoolingController, NightSilenceController,
+        CoolingController, NightSilenceController, SplitGroupController,
     ]
     assert engine._cooling is engine.controllers[0]
 
@@ -1228,10 +1234,11 @@ def test_failsafe_functions_byte_identical():
     """(P2 gate h) The fail-safe cluster is byte-identical to the v0.38.0
     baseline — the Tier-1 tier preserves it verbatim (STORY §6). The ONLY
     allowed changes are the two pinned hardening commits (P2 per-lever epoch
-    check in _cycle, P6 boot manuale sweep in async_release_blocco) — neither
-    touches these three functions. If this fails, either the change is
-    unintended (revert it) or it is a NEW deliberate hardening: own commit, own
-    pin, update the hash here in that same commit."""
+    check in _cycle, P6 boot manuale sweep in async_release_blocco) plus the #6
+    split-trio hand-back (async_fail_safe now calls `_split_fail_safe`, a no-op
+    unless a split was managed — never perturbs the oracle A/B soak). If this
+    fails, either the change is unintended (revert it) or it is a NEW deliberate
+    hardening: own commit, own pin, update the hash here in that same commit."""
     import hashlib
     import inspect
 
@@ -1239,7 +1246,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
         "async_fail_safe":
-            "bd60c3863bc5430fe925bd9df7fdd99dc374df91e1975ceeaf4bdb3378c4dfce",
+            "756fcb88e808a4104e773222ae29ee3e0f6557d12862ee9de75c3f5ea8a302d0",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":

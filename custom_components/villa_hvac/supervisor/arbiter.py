@@ -206,3 +206,20 @@ def cover_lever(cover_entity: str) -> str:
 
 def switch_lever(switch_entity: str) -> str:
     return f"switch:{switch_entity}"
+
+
+
+# Split-AC (standard `climate`) levers. Unlike the KNX thermostats these expose
+# a real on/off + operation mode as the entity STATE and a fan_mode STRING enum
+# (not a fan.* percentage), so they get their own lever kinds. `temperature:` is
+# reused verbatim (SERVICE_SET_TEMPERATURE works on any climate). `hvac_mode`
+# carries off/cool/dry/fan_only/heat/auto; `set_hvac_mode('off')` folds turn_on/
+# turn_off into one reconcilable lever instead of a separate on/off path.
+
+def hvac_mode_lever(climate_entity: str) -> str:
+    return f"hvac_mode:{climate_entity}"
+
+
+
+def fan_mode_lever(climate_entity: str) -> str:
+    return f"fan_mode:{climate_entity}"

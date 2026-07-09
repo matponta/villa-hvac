@@ -114,6 +114,8 @@ from .supervisor import (
     duty_decision,
     estimate_rate,
     fan_lever,
+    fan_mode_lever,
+    hvac_mode_lever,
     k_confidence,
     planner_eligible,
     peak_latch,
@@ -125,6 +127,10 @@ from .supervisor import (
     seed_params,
     switch_lever,
     temperature_lever,
+    SPLIT_FAN_DEFAULT,
+    split_dwell,
+    split_head_target,
+    split_members,
     SEFF_SOURCE_FACADE,
     SEFF_SOURCE_GHI,
     SEFF_UNITS_GHI,
@@ -1189,4 +1195,73 @@ class CoolingController:
         # invert the precedence after the P3 oracle deletion.
         assert BLOCCO_LEVER not in band_out
         out.update(band_out)
+        return out
+
+
+class SplitGroupController:
+    """#6 split-AC trio controller (opt-in `switch.split_ac`, on top of the master).
+
+    Drives the shared Daikin outdoor unit's heads COOL-SIDE ONLY, so it can never
+    create a heat↔cool conflict:
+      - Cantina (role ``storage``, priority): self-regulating ``cool`` at its
+        setpoint — the split idles when the cellar is already cold, and this doubles
+        as the dead-man fail-safe. Home/away/season-agnostic (wine, not comfort).
+      - Palestra (role ``comfort``): ``cool`` only in summer while someone is home
+        and the room is occupied (EP); otherwise ``off``. Radiant owns winter heat.
+      - Garage (role ``manual``): NEVER commanded — owner triggers it by hand.
+
+    Emits its own lever family (``hvac_mode:`` / ``temperature:`` / ``fan_mode:`` on
+    the ``aircon_*`` entities), disjoint from every other controller/policy. Per-head
+    anti-short-cycle dwell (C4) debounces the on/off transitions we command. Yields
+    (emits nothing, clears its timers) while the opt-in is off, so the heads stay in
+    their manual state — strict deploy-dark.
+    """
+
+    def __init__(self) -> None:
+        # per-head committed (on, since) for the dwell guard.
+        self._dwell: dict[str, tuple[bool, object]] = {}
+
+    def __call__(self, state: HouseState) -> Desired:
+        if not state.split_enabled:
+            self._dwell.clear()
+            return {}
+        summer = state.season == SEASON_SUMMER
+        home = state.house_mode not in (HOUSE_MODE_AWAY, HOUSE_MODE_VACATION)
+        cantina_sp = state.split_cantina_setpoint or 19.0
+        comfort_sp = state.split_palestra_setpoint or state.house_setpoint or cantina_sp
+        out: Desired = {}
+        for z in split_members(state):
+            if z.split_climate is None:
+                continue
+            tgt = split_head_target(
+                z.split_role, summer=summer, home=home,
+                occupied=bool(z.occupied),
+                temp=z.split_temp if z.split_temp is not None else z.temp,
+                rh=z.humidity,
+                cantina_setpoint=cantina_sp, comfort_setpoint=comfort_sp,
+                rh_ceiling=state.split_rh_ceiling, rh_floor=state.split_rh_floor,
+            )
+            if tgt is None:            # 'manual' (garage) / unknown -> never commanded
+                self._dwell.pop(z.zone_id, None)
+                continue
+            mode, setpoint = tgt
+            desired_on = mode != "off"      # cool AND dry are "on" (cool-side)
+            eff_on, since = split_dwell(
+                desired_on, self._dwell.get(z.zone_id), state.now,
+                state.split_min_on, state.split_min_off,
+            )
+            self._dwell[z.zone_id] = (eff_on, since)
+            hv = hvac_mode_lever(z.split_climate)
+            if not eff_on:
+                out[hv] = "off"        # off subsumes the on/off lever; no setpoint/fan
+                continue
+            # ON: emit mode -> setpoint -> fan (C7 order; dict insertion order kept).
+            # When the dwell HOLDS us on past a desired-off (min-on not elapsed) keep
+            # cooling at the comfort setpoint rather than emitting the desired `off`.
+            emit_mode = mode if desired_on else "cool"
+            emit_sp = setpoint if desired_on else comfort_sp
+            out[hv] = emit_mode        # cool OR dry (both cool-side); dry has no setpoint
+            if emit_sp is not None:
+                out[temperature_lever(z.split_climate)] = float(emit_sp)
+            out[fan_mode_lever(z.split_climate)] = SPLIT_FAN_DEFAULT
         return out

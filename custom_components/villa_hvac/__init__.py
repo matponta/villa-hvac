@@ -11,7 +11,7 @@ from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import RoomModelStore, SupervisorEngine
 from .night import NightSilenceController
-from .policies import POLICIES, CoolingController
+from .policies import POLICIES, CoolingController, SplitGroupController
 from .returnhome import ReturnHomeManager
 from .window import WindowController
 
@@ -64,7 +64,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # Tier-1 M1: ONE CoolingController (regime + duty + band folded).
         # NightSilenceController LAST: on the Notte-exit cycle its one-shot manuale
         # release must yield to the band re-taking a bedroom for pacing.
-        controllers=(CoolingController(), night),
+        # SplitGroupController (#6): disjoint lever set (aircon_* hvac_mode/temp/
+        # fan_mode) — merge order immaterial; never touches the PdC/BLOCCO stack.
+        controllers=(CoolingController(), night, SplitGroupController()),
         model_store=model_store,
     )
     engine.thermal.load(model_data)
