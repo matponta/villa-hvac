@@ -210,9 +210,10 @@ def precool_policy(state: HouseState) -> Desired:
         return {}
     if state.precool_offset is None:
         return {}
-    target = state.house_setpoint + state.mode_offset - state.precool_offset
+    base = state.house_setpoint + state.mode_offset - state.precool_offset
     return {
-        temperature_lever(z.climate): round(target, 1)
+        # #2: per-zone comfort trim stacks on the pre-cool target.
+        temperature_lever(z.climate): round(base + z.setpoint_offset, 1)
         for z in state.zones.values()
         if _controllable(z) and z.emitter == "fancoil" and z.enabled and not z.paused
     }
@@ -240,7 +241,7 @@ def house_mode_policy(state: HouseState) -> Desired:
         out[preset_lever(z.climate)] = preset
         if state.mode_offset is not None and state.house_setpoint is not None:
             out[temperature_lever(z.climate)] = round(
-                state.house_setpoint + state.mode_offset, 1
+                state.house_setpoint + state.mode_offset + z.setpoint_offset, 1
             )
     return out
 
@@ -520,7 +521,9 @@ class FanBandController:
             # A None on an eligible leader means the annotate call is missing or
             # misordered: the engine WARNs loudly (_check_unresolved_centers) and
             # the band degrades to the base center meanwhile.
-            center = center_base
+            # #2: the fallback base gets the per-zone trim too (the resolved
+            # center already includes it via resolve_center).
+            center = None if center_base is None else center_base + z.setpoint_offset
             if eligible and z.resolved_center is not None:
                 center = z.resolved_center
             # F3c: when the regime coordinator coalesces, it dictates the phase;
@@ -1112,7 +1115,9 @@ class CoolingController:
             # A None on an eligible leader means the annotate call is missing or
             # misordered: the engine WARNs loudly (_check_unresolved_centers) and
             # the band degrades to the base center meanwhile.
-            center = center_base
+            # #2: the fallback base gets the per-zone trim too (the resolved
+            # center already includes it via resolve_center).
+            center = None if center_base is None else center_base + z.setpoint_offset
             if eligible and z.resolved_center is not None:
                 center = z.resolved_center
             # F3c: when the regime coordinator coalesces, it dictates the phase;

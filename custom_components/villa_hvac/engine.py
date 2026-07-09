@@ -111,6 +111,7 @@ from .controller import (
     is_zone_disabled,
     mode_offset,
     pv_bias_enabled,
+    setpoint_offset,
     shade_blocked,
     shade_position,
     split_ac_enabled,
@@ -584,6 +585,9 @@ def build_house_state(
             paused=zone_id in paused,
             bedroom=bool(zone.get("bedroom")),
             fan_min=fan_min(hass, entry, zone_id) if emitter == "fancoil" else 0,
+            setpoint_offset=(
+                setpoint_offset(hass, entry, zone_id) if emitter == "fancoil" else 0.0
+            ),
             fancoil=fancoil,
             manuale=manuale,
             follows=zone.get("follows"),

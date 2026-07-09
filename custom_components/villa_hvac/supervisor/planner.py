@@ -970,7 +970,8 @@ def resolve_center(
     sensor semantics; the planner reference carries its own clamp."""
     if state.house_setpoint is None or state.mode_offset is None:
         return None
-    base = state.house_setpoint + state.mode_offset
+    # #2: per-zone comfort trim stacks on the house base (mode offset included).
+    base = state.house_setpoint + state.mode_offset + zone.setpoint_offset
     comp = compose_center(
         base=base,
         pv_mode=state.pv_mode, pv_floor=state.pv_floor,

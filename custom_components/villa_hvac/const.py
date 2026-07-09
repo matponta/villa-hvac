@@ -101,6 +101,15 @@ HOUSE_SETPOINT_MIN = 16.0
 HOUSE_SETPOINT_MAX = 28.0
 HOUSE_SETPOINT_STEP = 0.5
 
+# #2 per-room comfort offset: °C added to the house base center for a cooling
+# zone (number.*_setpoint_offset). Negative = this room runs cooler than the
+# house; the single slider still moves the whole house, rooms trim relative to it.
+# The offset stacks on the season/mode offset, so it survives mode changes.
+SETPOINT_OFFSET_MIN = -3.0
+SETPOINT_OFFSET_MAX = 3.0
+SETPOINT_OFFSET_STEP = 0.5
+DEFAULT_SETPOINT_OFFSET = 0.0
+
 # Zone emitters whose KNX thermostat accepts the comfort/standby/economy ladder
 # (the 17 *_termostato_2). Split-AC zones (aircon_*) are excluded from #2.
 PRESET_CONTROLLABLE_EMITTERS = ("fancoil", "radiant")

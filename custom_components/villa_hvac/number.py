@@ -21,10 +21,14 @@ from . import VillaHvacConfigEntry
 from .const import (
     DEFAULT_FAN_MIN,
     DEFAULT_HOUSE_SETPOINT,
+    DEFAULT_SETPOINT_OFFSET,
     DEFAULT_SHADING_POSITION,
     HOUSE_SETPOINT_MAX,
     HOUSE_SETPOINT_MIN,
     HOUSE_SETPOINT_STEP,
+    SETPOINT_OFFSET_MAX,
+    SETPOINT_OFFSET_MIN,
+    SETPOINT_OFFSET_STEP,
     SHADE_POSITION_MAX,
     SHADE_POSITION_MIN,
     SHADE_POSITION_STEP,
@@ -48,6 +52,12 @@ async def async_setup_entry(
     # Per-zone min-circulation override for the cooling fancoil leader zones.
     entities += [
         FanMinNumber(entry, zone_id, zone["name"])
+        for zone_id, zone in ZONES.items()
+        if zone.get("climate") and zone.get("emitter") == "fancoil"
+    ]
+    # #2: per-zone comfort offset for the cooling fancoil zones.
+    entities += [
+        ZoneOffsetNumber(entry, zone_id, zone["name"])
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
     ]
@@ -111,6 +121,47 @@ class ShadePositionNumber(NumberEntity, RestoreEntity):
         self._attr_name = f"{name} shade position"
         self._attr_unique_id = f"{entry.entry_id}_shade_position_{zone}"
         self._attr_native_value = DEFAULT_SHADING_POSITION
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state not in (None, "unknown", "unavailable"):
+            try:
+                self._attr_native_value = float(last.state)
+            except (TypeError, ValueError):
+                pass
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class ZoneOffsetNumber(NumberEntity, RestoreEntity):
+    """Per-zone comfort offset (#2).
+
+    °C added to this room's base center (house setpoint + season/mode offset):
+    negative = this room runs cooler than the house, positive = warmer. The house
+    slider still moves the whole house; this trims one room relative to it and
+    survives mode changes (it stacks on the season offset). Read by the engine's
+    band + house-mode policies; setting it nudges a re-plan.
+    """
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:thermometer-plus"
+    _attr_native_min_value = SETPOINT_OFFSET_MIN
+    _attr_native_max_value = SETPOINT_OFFSET_MAX
+    _attr_native_step = SETPOINT_OFFSET_STEP
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_mode = NumberMode.SLIDER
+
+    def __init__(self, entry: VillaHvacConfigEntry, zone: str, name: str) -> None:
+        self._entry = entry
+        self._attr_name = f"{name} offset"
+        self._attr_unique_id = f"{entry.entry_id}_setpoint_offset_{zone}"
+        self._attr_native_value = DEFAULT_SETPOINT_OFFSET
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

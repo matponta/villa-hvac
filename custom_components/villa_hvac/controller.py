@@ -42,6 +42,8 @@ from .const import (
     SEASON_STAGIONE_WINTER,
     SEASON_SUMMER,
     SEASON_WINTER,
+    SETPOINT_OFFSET_MAX,
+    SETPOINT_OFFSET_MIN,
     ZONES,
 )
 
@@ -177,6 +179,16 @@ def fan_min(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> int:
         except (TypeError, ValueError):
             value = DEFAULT_FAN_MIN
     return max(0, min(100, int(value)))
+
+
+def setpoint_offset(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> float:
+    """Per-zone comfort offset (#2): °C added to this zone's base center
+    (house_setpoint + mode_offset). Negative = cooler than the house. 0.0 when
+    the per-zone number is unset. Clamped to the safe band."""
+    value = _number_value(hass, entry, f"setpoint_offset_{zone}")
+    if value is None:
+        return 0.0
+    return max(SETPOINT_OFFSET_MIN, min(SETPOINT_OFFSET_MAX, float(value)))
 
 
 def comfort_floor(
