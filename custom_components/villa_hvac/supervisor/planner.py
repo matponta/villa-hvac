@@ -171,7 +171,7 @@ class PlanView:
 
 # Display order (the sensor lists rows in this order).
 FEATURE_ORDER: tuple[str, ...] = (
-    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool",
+    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool", "free_air",
     "comfort_windows", "pv_bias", "unified_planner", "shading", "night",
 )
 
@@ -235,6 +235,9 @@ def build_feature_graph(
             plan.free_cool,
             "not cooling season" if not summer else "outdoor not cool enough",
         ),
+        # #3: on == pausing the cooled zones (windows-open); there is no
+        # enabled-but-inert state (row() only reaches is_active when enabled+master).
+        "free_air": row("free_air", True, "off"),
         "comfort_windows": row(
             "comfort_windows",
             any(z.comfort_relax > 0 for z in zones),

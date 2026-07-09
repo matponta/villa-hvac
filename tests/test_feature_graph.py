@@ -140,6 +140,11 @@ def test_pv_bias_active_on_bank():
     assert g2["pv_bias"].inert_reason == "no PV surplus to bank"
 
 
+def test_free_air_active_when_enabled():
+    g = _graph(_house(zones=[_leader()]), master_on=True, enabled=ALL_ON)
+    assert g["free_air"].active is True and g["free_air"].inert_reason is None
+
+
 def test_unified_planner_active_when_driving():
     g = _graph(_house(zones=[_leader(planner_driven=True)]),
                master_on=True, enabled=ALL_ON)

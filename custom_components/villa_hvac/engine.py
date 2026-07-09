@@ -108,6 +108,7 @@ from .controller import (
     duty_cycle_enabled,
     fan_min,
     fan_pacing_enabled,
+    free_air_enabled,
     is_zone_disabled,
     mode_offset,
     pv_bias_enabled,
@@ -426,7 +427,13 @@ def build_house_state(
     data = coordinator.data or {}
     zone_temps = data.get("zone_temps") or {}
     window = getattr(coordinator, "window", None)
-    paused = window.paused if window is not None else set()
+    # Copy: we may union free-air zones below and must not mutate window.paused.
+    paused = set(window.paused) if window is not None else set()
+    # #3: a manual free-air / windows-open flag pauses the cooled fancoil zones
+    # house-wide (same mechanism as a #4 window contact opening) so the AC doesn't
+    # fight the open air. Released by turning the switch back off.
+    if free_air_enabled(hass, entry):
+        paused |= {zid for zid, z in ZONES.items() if z.get("emitter") == "fancoil"}
     # F2: the learned thermal model (blended prior->learned) for each leader.
     thermal = getattr(getattr(coordinator, "engine", None), "thermal", None)
     # C3: parse + clamp every option ONCE for this cycle (kills the scattered
@@ -1093,6 +1100,7 @@ class SupervisorEngine:
                 "regime": bool(cfg and cfg.regime_enabled),
                 "precool": state.duty_enabled,
                 "free_cool": state.free_cool_enabled,
+                "free_air": free_air_enabled(self.hass, self.entry),
                 "comfort_windows": state.comfort_enabled,
                 "pv_bias": (
                     pv_bias_enabled(self.hass, self.entry)

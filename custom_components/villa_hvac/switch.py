@@ -51,6 +51,7 @@ async def async_setup_entry(
         PvBiasSwitch(entry),
         UnifiedPlannerSwitch(entry),
         SplitAcSwitch(entry),
+        FreeAirSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -160,6 +161,45 @@ class DutyCycleSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_duty_cycle"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class FreeAirSwitch(SwitchEntity, RestoreEntity):
+    """#3 free-air / windows-open (default OFF).
+
+    A manual "I've opened the windows" flag: while on, the cooled fancoil zones
+    are treated as window-paused (building_protection, fan handed back to AUTO,
+    band yields) so the AC doesn't fight the open air. Same effect as a #4 window
+    contact opening, house-wide. Turning it off re-applies the house mode.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Free air"
+    _attr_icon = "mdi:window-open-variant"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_free_air"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
