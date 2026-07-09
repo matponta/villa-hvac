@@ -333,8 +333,9 @@ its confidence, and `planner_eligible` could reopen on the corrupted pair.
 `s_hi := 0` reset then suspends k learning automatically from rebase until b has re-excited and
 re-identified in the new units; no extra persisted state needed. While suspended: no k update,
 no `n_k` increment. This is also the right general principle (k_obs is only as good as G) and
-is a no-op for every zone today (all identified rooms keep learning k; office's k never
-learned anyway).
+is a no-op for every zone today (all identified rooms keep learning k; office's k had never
+learned while its emitter was out of service — emitter REPAIRED 2026-07-08, zone
+re-enabled, so office now accrues k too once it runs cooling windows).
 
 ### 4.4 Rollback matrix (verified against the actual `load()`)
 

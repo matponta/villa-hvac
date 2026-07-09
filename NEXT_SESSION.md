@@ -4,6 +4,7 @@ Paste the block below as the first message in a fresh Claude Code session to res
 this work with full context. Durable source of truth: [`CLAUDE.md`](./CLAUDE.md)
 (verified facts + per-feature status) · [`MASTER_PLAN.md`](./MASTER_PLAN.md) (build
 checklist) · [`STORY_SEFF.md`](./STORY_SEFF.md) (the reviewed S_eff spec) ·
+[`STORY_SPLIT_TRIO.md`](./STORY_SPLIT_TRIO.md) (the split-AC trio spec) ·
 `../hvac-implementation-plan.html` (backbone + prioritized backlog). This file is
 the resume pointer + live state.
 
@@ -13,14 +14,28 @@ CWD: /Users/mattia/Documents/Claude/Projects/Home Assistant/villa-hvac
 First read CLAUDE.md in full (verified facts: zone map, EV-FAN-valve cooling chain,
 BLOCCO polarity on=block, supervisor architecture, F1/F2/F3/F4 notes). Don't
 re-derive verified facts. MASTER_PLAN.md = build checklist. STORY_SEFF.md = the
-adversarially-reviewed per-facade solar spec (all 3 slices SHIPPED).
+adversarially-reviewed per-facade solar spec (all 3 slices SHIPPED). STORY_SPLIT_TRIO.md
+= the split-AC trio spec (SHIPPED v0.45.0).
 
-STATE (2026-07-06): repo = v0.44.0 (1399 tests, ruff clean); LIVE = v0.40.0 —
-the owner has NOT yet deployed (HACS index was stale on 7/6; force "Update
-information" on the Villa HVAC repo in HACS, update, restart HA). Between live
-and repo: v0.40.1+v0.41.0 (morning-defect train: fan lever ON/OFF, night wake
-clock-derived, RUN sizing law run_fan_pct, shading never-raise + SW band) and
-v0.42.0–v0.44.0 (STORY_SEFF, this session):
+STATE (2026-07-09): repo = v0.45.0 (1418 tests, ruff clean; tagged + gh-released
+2026-07-09 at 381c515); LIVE = v0.44.0 (deployed 2026-07-08). Repo is now ONE
+increment ahead of live: v0.45.0 = the #6 split-AC trio (STORY_SPLIT_TRIO,
+deploy-dark behind `switch.split_ac`). Historical note: on 7/6 the HACS index was
+stale; force "Update information" on the Villa HVAC repo in HACS, update, restart
+HA). Between live and repo: v0.40.1+v0.41.0 (morning-defect train: fan lever
+ON/OFF, night wake clock-derived, RUN sizing law run_fan_pct, shading never-raise
++ SW band), v0.42.0–v0.44.0 (STORY_SEFF), and v0.45.0 (split trio):
+
+0-trio. v0.45.0 — #6 split-AC trio (Cantina wine + Palestra comfort). 3 Daikin
+   heads (Zennio KLIC-DD, one shared outdoor PdC) as a synchronized COOL-SIDE-ONLY
+   group so it can never create a heat↔cool conflict the KLIC-DD bus can't flag.
+   Cantina = self-regulating cool@19 dead-man + RH-aware (dry >65%, relax +1.5
+   <55%); Palestra = summer+home+occupied → cool@24 else off; Garage = observe-only.
+   `sensor.hvac_split` (live group direction + conflict + per-head, even
+   deploy-dark). Pure split_members/split_mode_conflict/split_head_target/
+   split_dwell; per-head anti-short-cycle dwell. Fail-safe hands back ONLY managed
+   heads. Opt-in `switch.split_ac` (default OFF). NOTE: before enabling, DISABLE
+   `automation.circolazione_aria_cantina_vini` first (it fights the controller).
 
 1. v0.42.0 — S_eff pure law (supervisor/solar.py: vertical-glazing beam tilt
    rb clamped 3.0 per-facade AND on the zone beam sum ≤2.69×GHI; diffuse floor
@@ -51,11 +66,31 @@ frozen meanwhile; the 5 currently planner_eligible rooms TEMPORARILY de-el
 igible until s_hi re-excites in S_eff units — fine, unified_planner is OFF).
 
 NEXT STEPS (in order):
-1. Owner deploys v0.44.0 (HACS force-refresh + restart) → live re-verify the
+0. [DONE 2026-07-08] v0.44.0 deployed. Office/Studio P1 emitter REPAIRED
+   2026-07-08 (owner-confirmed): `switch.office_studio_enabled` = on, zone cooling
+   again; its k has NOT re-converged yet (n_k=18, planner_eligible False) — will
+   accrue once it runs cooling windows. CAVEAT (2026-07-08): `switch.supervisor`
+   is currently OFF → the app is deploy-dark (learning-only, not actuating);
+   night-silence + morning wake are running on the LEGACY automations
+   (`script.buonanotte_*` + `automation.clima_rientro_in_casa_ripristina_fancoil`,
+   triggered by the "Apri Casa" button → `input_select.modalita_casa`), NOT
+   villa_hvac #2b — so the v0.41.0 morning fan-ON fix is dormant until supervisor
+   is turned on. See the "morning night-silence" note in the auto-memory.
+1. Owner deploys v0.45.0 (HACS force-refresh + restart) → live re-verify the
    v0.41.0 morning fixes (padronale morning fan-on + 100% sizing; studio_v
    afternoon shade holds) AND watch the S_eff diagnostics a few days (model
    sensor attrs: studio_v s_eff peaks mid-afternoon + drops when its cover
-   shades; padronale morning s_eff ≈ 0.22·GHI; s_units correct per room).
+   shades; padronale morning s_eff ≈ 0.22·GHI; s_units correct per room). ALSO:
+   the whole app is still deploy-dark until `switch.supervisor` is turned ON —
+   that is the master gate for EVERY feature below (S_eff, split trio, #2b morning
+   wake). Verify the S_eff + `sensor.hvac_split` diagnostics compute correctly
+   while dark, THEN flip supervisor on.
+1-trio. Split trio: verify `sensor.hvac_split` reads sane (group direction, no
+   phantom conflict, per-head temp/RH) while deploy-dark. To enable: DISABLE
+   `automation.circolazione_aria_cantina_vini` FIRST (else it fights the Cantina
+   controller), then supervisor ON + opt-in `switch.split_ac`. Tune
+   `OPT_SPLIT_*` setpoints/RH band/dwell in the options flow. Garage stays
+   observe-only until §6 intent is decided with the owner.
 2. Geometry validated → owner flips seff_enabled ON (options flow) → watch the
    STORY_SEFF §8 gates ~1 week: (a) G-phase fix (sensor G at 17:30-18:30 >
    13:20 on clear days for office/main_bedroom), (b) b re-identifies (s_hi

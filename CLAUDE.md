@@ -192,7 +192,16 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              + fan off + heat-guard hysteresis; threshold + auto-wake in options
              flow (defaults 26 °C / 08:00). See `night.py`.
        - [x] #2c away auto-escalation (presenza_adulti not_home 18h → Via;
-             home → Casa only from auto-Via). Delay in options. See `away.py`.
+             home → Casa from ANY Via — manual or auto (restore_target checks
+             mode==Via only, no origin tracking); Notte/Vacanza never touched.
+             BOTH paths gated on `switch.auto_setback` — found OFF 2026-07-08
+             (second silent breaker besides the missing presence group, see
+             below). Delay in options. See `away.py`.
+             GOTCHA (2026-07-08): `group.presenza_adulti` is a volatile
+             group.set group — it vanishes on HA restart, silently killing #2c.
+             Bridge: automation.sistema_ricrea_group_presenza_adulti_all_avvio
+             recreates it at boot. Durable TODO: watch the person entities
+             directly (PRESENCE_GROUP → list in const.py).
        (Cleanup TODO: delete the now-replaced HA automations/scripts —
        clima_applica_modalita_casa, clima_backup_via_quando_esco,
        clima_rientro_in_casa, clima_risincronizza, notte_guardia_caldo_camera_*,
