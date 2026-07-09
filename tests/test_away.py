@@ -10,13 +10,34 @@ from pytest_homeassistant_custom_component.common import (
 )
 from homeassistant.util import dt as dt_util
 
-from custom_components.villa_hvac.away import escalation_target, restore_target
-from custom_components.villa_hvac.const import DOMAIN, PRESENCE_GROUP
+from custom_components.villa_hvac.away import (
+    aggregate_presence,
+    escalation_target,
+    restore_target,
+)
+from custom_components.villa_hvac.const import DOMAIN, PRESENCE_PERSONS
 
 SELECT = "select.house_mode"
 
 
+def _set_presence(hass, *, home: bool) -> None:
+    """Drive every adult person entity home or away (#7 durable source)."""
+    for person in PRESENCE_PERSONS:
+        hass.states.async_set(person, "home" if home else "not_home")
+
+
 # --- Pure decision -----------------------------------------------------------
+
+def test_aggregate_presence():
+    assert aggregate_presence(["home", "not_home"]) == "home"  # any adult home
+    assert aggregate_presence(["not_home", "not_home"]) == "not_home"
+    assert aggregate_presence(["not_home", None]) == "not_home"  # one known-away
+    assert aggregate_presence(["home", None]) == "home"
+    assert aggregate_presence([None, None]) is None  # all unknown -> don't act
+    assert aggregate_presence(["unknown", "unavailable"]) is None
+    assert aggregate_presence(["work", "school"]) == "not_home"  # a zone isn't home
+    assert aggregate_presence([]) is None
+
 
 def test_escalation_target():
     assert escalation_target("Casa") == "Via"
@@ -47,7 +68,7 @@ async def test_long_absence_escalates_to_via(hass):
     async_mock_service(hass, "climate", "set_preset_mode")
     async_mock_service(hass, "climate", "set_temperature")
 
-    hass.states.async_set(PRESENCE_GROUP, "not_home")
+    _set_presence(hass, home=False)
     await hass.async_block_till_done()
     # Jump past the default 18 h escalation delay.
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(hours=18, minutes=1))
@@ -61,7 +82,7 @@ async def test_brief_absence_does_not_escalate(hass):
     async_mock_service(hass, "climate", "set_preset_mode")
     async_mock_service(hass, "climate", "set_temperature")
 
-    hass.states.async_set(PRESENCE_GROUP, "not_home")
+    _set_presence(hass, home=False)
     await hass.async_block_till_done()
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(hours=2))
     await hass.async_block_till_done()
@@ -78,7 +99,23 @@ async def test_return_home_restores_casa_from_via(hass):
     )
     await hass.async_block_till_done()
 
-    hass.states.async_set(PRESENCE_GROUP, "home")
+    _set_presence(hass, home=True)
     await hass.async_block_till_done()
 
     assert hass.states.get(SELECT).state == "Casa"
+
+
+async def test_presence_survives_restart_into_empty_house(hass):
+    """#7 durability: adults already away at setup (a reboot into an empty house)
+    -> escalation still schedules from `start()`. This is the case the volatile
+    group.presenza_adulti used to break (it vanished on restart)."""
+    _set_presence(hass, home=False)  # away BEFORE the integration loads
+    await hass.async_block_till_done()
+    await _setup(hass)
+    async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(hours=18, minutes=1))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(SELECT).state == "Via"

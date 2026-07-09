@@ -10,8 +10,16 @@ from __future__ import annotations
 import logging
 from datetime import timedelta
 
+from collections.abc import Iterable
+
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import ATTR_ENTITY_ID, STATE_HOME, STATE_NOT_HOME
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    STATE_HOME,
+    STATE_NOT_HOME,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+)
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
@@ -26,11 +34,26 @@ from .const import (
     HOUSE_MODE_HOME,
     HOUSE_MODE_NIGHT,
     OPT_AWAY_HOURS,
-    PRESENCE_GROUP,
+    PRESENCE_PERSONS,
 )
 from .controller import auto_setback_enabled, current_house_mode
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def aggregate_presence(states: Iterable[str | None]) -> str | None:
+    """Fuse the adult `person.*` states into one presence signal.
+
+    home if ANY adult is home; not_home if at least one adult has a known state
+    and none is home; None if every adult is unknown/unavailable/missing (can't
+    tell — don't act). A person parked in a named zone (e.g. "work") is NOT home.
+    """
+    known = [s for s in states if s not in (None, STATE_UNKNOWN, STATE_UNAVAILABLE)]
+    if not known:
+        return None
+    if any(s == STATE_HOME for s in known):
+        return STATE_HOME
+    return STATE_NOT_HOME
 
 
 def escalation_target(current_mode: str) -> str | None:
@@ -58,13 +81,22 @@ class AwayController:
         self.entry = entry
         self._unsub_state = None
         self._cancel_timer = None
+        self._last_presence: str | None = None
+
+    def _presence(self) -> str | None:
+        """Current fused presence over the adult person entities."""
+        states = []
+        for person in PRESENCE_PERSONS:
+            st = self.hass.states.get(person)
+            states.append(st.state if st is not None else None)
+        return aggregate_presence(states)
 
     def start(self) -> None:
         self._unsub_state = async_track_state_change_event(
-            self.hass, [PRESENCE_GROUP], self._on_presence
+            self.hass, list(PRESENCE_PERSONS), self._on_presence
         )
-        state = self.hass.states.get(PRESENCE_GROUP)
-        if state is not None and state.state == STATE_NOT_HOME:
+        self._last_presence = self._presence()
+        if self._last_presence == STATE_NOT_HOME:
             self._schedule()
 
     def stop(self) -> None:
@@ -86,15 +118,16 @@ class AwayController:
 
     @callback
     def _on_presence(self, event: Event) -> None:
-        old_state = event.data.get("old_state")
-        new_state = event.data.get("new_state")
-        old = old_state.state if old_state else None
-        new = new_state.state if new_state else None
-        if new == old:
-            return  # attribute-only churn: don't reset the absence timer
-        if new == STATE_NOT_HOME:
+        # Any adult moved: recompute the FUSED presence and act only on a real
+        # aggregate transition (one adult leaving while the other stays home is
+        # not a house-empty event).
+        presence = self._presence()
+        if presence is None or presence == self._last_presence:
+            return  # all-unknown, or attribute-only churn: don't reset the timer
+        self._last_presence = presence
+        if presence == STATE_NOT_HOME:
             self._schedule()
-        elif new == STATE_HOME:
+        elif presence == STATE_HOME:
             self._clear_timer()
             self.hass.async_create_task(self._restore())
 
@@ -112,8 +145,7 @@ class AwayController:
     async def _escalate(self) -> None:
         if not auto_setback_enabled(self.hass, self.entry):
             return
-        state = self.hass.states.get(PRESENCE_GROUP)
-        if state is None or state.state != STATE_NOT_HOME:
+        if self._presence() != STATE_NOT_HOME:
             return  # came back before the timer fired
         target = escalation_target(current_house_mode(self.hass, self.entry))
         if target:

@@ -452,7 +452,15 @@ DEFAULT_AUTO_WAKE_TIME = "08:00:00"
 # After the adults are away this long (while in Casa/Notte) -> Via; when they
 # return and the house is in the auto-set Via, restore Casa. Replaces the legacy
 # automation.clima_backup_via_quando_esco.
-PRESENCE_GROUP = "group.presenza_adulti"  # person.mattia_pontacolone + person.ehi
+# Durable presence source (#7): watch the adult `person.*` entities DIRECTLY.
+# The old `group.presenza_adulti` was a volatile `group.set` group that vanished
+# on every HA restart (silently killing #2c until a boot-recreate automation ran);
+# person entities survive restarts. Aggregate = home if ANY adult is home,
+# not_home if all known adults are away, None if all unknown/unavailable.
+PRESENCE_PERSONS = ("person.mattia_pontacolone", "person.ehi")
+# Legacy — superseded by PRESENCE_PERSONS. Kept for reference only; the boot-recreate
+# automation.sistema_ricrea_group_presenza_adulti_all_avvio can now be retired.
+PRESENCE_GROUP = "group.presenza_adulti"
 OPT_AWAY_HOURS = "away_escalation_hours"
 DEFAULT_AWAY_HOURS = 18
 
