@@ -17,19 +17,32 @@ re-derive verified facts. MASTER_PLAN.md = build checklist. STORY_SEFF.md = the
 adversarially-reviewed per-facade solar spec (all 3 slices SHIPPED). STORY_SPLIT_TRIO.md
 = the split-AC trio spec (SHIPPED v0.45.0).
 
-STATE (2026-07-09): repo == LIVE == v0.45.0 (1418 tests, ruff clean; tagged +
-gh-released 2026-07-09 at 381c515; deployed via HACS + HA restart 2026-07-09
-~12:43, integration loaded, no errors). v0.45.0 = the #6 split-AC trio
-(STORY_SPLIT_TRIO). CRITICAL: the villa is running on NATIVE KNX — `switch.supervisor`
-is OFF (verified via 12h history 2026-07-09), so the WHOLE engine is deploy-dark
-and every opt-in (seff_enabled, split_ac, fan_pacing, duty, pv_bias,
-unified_planner, regime) is OFF. Nothing actuates today; only the read-only
-diagnostics compute (`sensor.hvac_split` live, cantina RH 45%; S_eff on the model
-sensors). Historical note: on 7/6 the HACS index was stale; force "Update
-information" on the Villa HVAC repo in HACS, update, restart HA. Shipped since the
-last live-actuating baseline: v0.40.1+v0.41.0 (morning-defect train: fan lever
-ON/OFF, night wake clock-derived, RUN sizing law run_fan_pct, shading never-raise
-+ SW band), v0.42.0–v0.44.0 (STORY_SEFF), and v0.45.0 (split trio):
+STATE (2026-07-10): repo = v0.51.0 (1461 tests, ruff clean); LIVE = v0.45.0
+(deployed 2026-07-09). Repo is now SIX increments ahead of live — a backlog batch
+built 2026-07-10, all opt-in + deploy-dark:
+  - v0.46.0  #7  durable presence — watch person.* not the volatile group
+  - v0.47.0  P4  Tier-1 feature_graph (sensor.hvac_plan; why did a feature no-op?)
+  - v0.48.0  #6  cooling-compressor run-time KPI (sensor, total_increasing)
+  - v0.49.0  #2  per-room comfort offset (number.*_offset, per-zone trim)
+  - v0.50.0  #3  free-air / windows-open mode (switch.free_air, manual cooling pause)
+  - v0.51.0  #5  VMC free-cooling boost (switch.vmc_auto; 2 units, night flush)
+Tier-1 P5 (deviation-space coalescing) DEFERRED: it needs P3 delete-trio first,
+which is STOP-gated on a live soak of the merged CoolingController — impossible
+while supervisor is OFF. Revisit once supervisor is on and the fold has soaked.
+FOLLOW-UPS from this batch: (a) #2 offset is NOT yet folded into
+plan_center_schedule (unified-planner base) — add before enabling
+switch.unified_planner; (b) VMC thresholds are const defaults — expose in the
+options flow if tuning is wanted; (c) #6 `cycles_since_restart` resets on restart
+(run-time total is restored).
+CRITICAL: the villa still runs on NATIVE KNX — `switch.supervisor` is OFF, so the
+WHOLE engine (incl. all six above) is deploy-dark. Every opt-in (seff_enabled,
+split_ac, fan_pacing, duty, pv_bias, unified_planner, regime, free_air, vmc_auto)
+is OFF. Only read-only diagnostics compute. To light up ANY feature the owner must
+first turn ON switch.supervisor. Historical note: on 7/6 the HACS index was stale;
+force "Update information" on the Villa HVAC repo in HACS, update, restart HA.
+Shipped since the last live-actuating baseline: v0.40.1+v0.41.0 (morning-defect
+train), v0.42.0–v0.44.0 (STORY_SEFF), v0.45.0 (split trio), v0.46.0–v0.51.0
+(this backlog batch):
 
 0-trio. v0.45.0 — #6 split-AC trio (Cantina wine + Palestra comfort). 3 Daikin
    heads (Zennio KLIC-DD, one shared outdoor PdC) as a synchronized COOL-SIDE-ONLY

@@ -136,6 +136,15 @@ do local bang-bang regulation.
   controller** (C1, v0.33.0) emitting `{switch:manuale, fan:pct}` opinions through
   the arbiter — no more direct writes; `active` is derived from Notte+setback+wake
   latch (`state.night_active`), so a reboot-in-Notte re-silences via the controller.
+  **Free-air (v0.50.0)**: `switch.free_air` (manual windows-open) unions the cooled
+  fancoil zones into the `paused` set in `build_house_state` — reuses the #4 pause
+  stack (band yields, BP preset, #2a skips, fail-safe releases).
+- `vmc.py` — **`VmcController` (#5, v0.51.0)**: night free-cooling boost of the two
+  VMC units (`VMC_GROUPS`: ground=`switch.10_5_150_27_boost`, living=`switch.vmc_boost`).
+  EDGE-TRIGGERED off the coordinator tick, deliberately OUTSIDE the reconcile arbiter
+  (writes only on its own decision flip, never re-asserts a manual boost). Pure
+  `vmc_boost_decision` (summer + outdoor < cap + outdoor ≤ indoor−margin, hysteresis).
+  Opt-in `switch.vmc_auto` + master; releases on disable/unload.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool + F4b relax), bounded by a first-class
@@ -149,9 +158,12 @@ do local bang-bang regulation.
   const) so the pure `supervisor/` package stays HA-import-free.
 - `__init__.py` — wires coordinator + engine (policies=PRESET_POLICIES) + the
   legacy controllers; `async_unload_entry`.
-- `sensor.py` — diagnostics: `Cooling demand zones`, `hvac_plan` (#11), per-zone
-  temp/model, `Energy bias`, and `hvac_levers` (B2: per-lever reconcile decision log
-  — state = # levers conceded to manual). `config_flow.py` — single-instance.
+- `sensor.py` — diagnostics: `Cooling demand zones`, **`Cooling compressor runtime`
+  (#6 KPI, v0.48.0: consenso_freddo run-hours, total_increasing/restored — the #9
+  efficiency baseline)**, `hvac_plan` (#11, incl. **`feature_graph`** P4/v0.47.0:
+  per-optimizer {enabled, active, inert_reason} — "why did a feature do nothing"),
+  per-zone temp/model, `Energy bias`, and `hvac_levers` (B2: per-lever reconcile
+  decision log — state = # levers conceded to manual). `config_flow.py` — single-instance.
 
 Control WRITES through the engine's arbiter (idempotent, manual-override-robust),
 never by fighting KNX. **Strict deploy-dark (v0.9.0):** nothing actuates until
@@ -180,10 +192,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        offset, so summer (cooling) offsets are POSITIVE and winter (heating)
        NEGATIVE. Defaults: summer Via +5 / Notte +3, winter Via -2 / Notte -4
        (Casa +0, Vacanza none).
-       - TODO: per-room comfort override. The single house setpoint flattens
-         per-room comfort tuning (matches legacy `temperatura_casa`); add optional
-         per-zone setpoint controls (e.g. a number per zone, or a per-zone offset
-         from the house base) so rooms can differ.
+       - [x] per-room comfort override (v0.49.0): per-zone `number.*_offset`
+         (`SETPOINT_OFFSET_*`, ±3 °C) stacks on the house base center, applied at
+         resolve_center / house_mode #2a / precool. GATE: not yet folded into
+         plan_center_schedule (unified-planner base) — add before enabling
+         `switch.unified_planner`.
        Global `Auto setback` switch (default ON); respects #10 (skips disabled
        zones) and #4 (skips window-paused zones).
        - [x] #2a house-mode → preset driver
@@ -197,11 +210,13 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              BOTH paths gated on `switch.auto_setback` — found OFF 2026-07-08
              (second silent breaker besides the missing presence group, see
              below). Delay in options. See `away.py`.
-             GOTCHA (2026-07-08): `group.presenza_adulti` is a volatile
-             group.set group — it vanishes on HA restart, silently killing #2c.
-             Bridge: automation.sistema_ricrea_group_presenza_adulti_all_avvio
-             recreates it at boot. Durable TODO: watch the person entities
-             directly (PRESENCE_GROUP → list in const.py).
+             GOTCHA (2026-07-08): `group.presenza_adulti` was a volatile
+             group.set group — it vanished on HA restart, silently killing #2c.
+             FIXED (v0.46.0): away.py now watches the adult person entities
+             DIRECTLY (`PRESENCE_PERSONS` in const.py = person.mattia_pontacolone
+             + person.ehi) via pure `aggregate_presence`; survives restarts. The
+             boot-recreate automation.sistema_ricrea_group_presenza_adulti_all_avvio
+             can be retired.
        (Cleanup TODO: delete the now-replaced HA automations/scripts —
        clima_applica_modalita_casa, clima_backup_via_quando_esco,
        clima_rientro_in_casa, clima_risincronizza, notte_guardia_caldo_camera_*,
