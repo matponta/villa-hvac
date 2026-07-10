@@ -179,12 +179,36 @@ async def test_preset_policies_drive_writes_through_engine(hass):
     assert salotto[0].data["preset_mode"] == "comfort"
 
 
+async def test_free_cool_defaults_off_no_suppression(hass):
+    """v0.53.0: free-cooling is opt-in — with switch.free_cooling at its default
+    OFF, a cool evening must NOT suppress the fancoils (no BP forced)."""
+    from custom_components.villa_hvac.policies import PRESET_POLICIES
+
+    entry = await _setup(hass)  # salotto 'cool' -> season summer
+    coordinator = entry.runtime_data
+    assert hass.states.get("switch.free_cooling").state == "off"  # default
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
+    calls = async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=PRESET_POLICIES)
+    await engine._run()
+
+    assert not any(
+        c.data["entity_id"] == CLIMATE
+        and c.data["preset_mode"] == "building_protection"
+        for c in calls
+    )
+
+
 async def test_free_cool_suppresses_fancoil_via_engine(hass):
     """#5: summer + cool outside -> the engine forces a cooling zone to BP."""
     from custom_components.villa_hvac.policies import PRESET_POLICIES
 
     entry = await _setup(hass)  # salotto 'cool' -> season summer
     coordinator = entry.runtime_data
+    hass.states.async_set("switch.free_cooling", "on")  # v0.53.0: opt-in switch
     hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})
     calls = async_mock_service(hass, "climate", "set_preset_mode")
@@ -567,6 +591,7 @@ async def test_free_cool_forces_bp_and_band_yields_via_engine(hass):
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
     hass.states.async_set("switch.fan_pacing", "on")  # band enabled, but must yield
+    hass.states.async_set("switch.free_cooling", "on")  # v0.53.0: opt-in switch
     presets = async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
     async_mock_service(hass, "switch", "turn_off")

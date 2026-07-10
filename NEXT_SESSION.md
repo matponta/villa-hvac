@@ -123,9 +123,17 @@ NEXT STEPS (in order):
    (e) padronale morning + at-peak behaviors unchanged. Then consider
    DEFAULT_SEFF_ENABLED=True in a follow-up release.
 3. THEN backlog: per-room occupancy roster (ep_occ mapped, no consumer;
-   Gabriele case), "free-air/windows-open" mode (Via does NOT stop cooling),
-   night-guard threshold, fix group.presenza_adulti, VMC boost, per-room
-   setpoints, KPI energia, legacy cleanup → v1.0.0.
+   Gabriele case), night-guard threshold, legacy cleanup → v1.0.0.
+   NEW (owner ask 2026-07-10): **merge free-cooling (#5 auto-coast,
+   switch.free_cooling) with the free-air/windows-open concept (#3,
+   switch.free_air)** — both mean "the outside air is doing the cooling", one
+   automatic, one manual. Design TBD once we understand how the two intertwine
+   live (candidates: one "outside air" mode; free-cool conditions + occupied →
+   notify "good time to open the windows"; free_air ON auto-implies free-cool
+   logic; shared threshold/gating). Deliberately NOT designed yet — gather a
+   few weeks of live behavior with both switches first.
+   DONE from the old list: free-air (v0.50.0), presenza_adulti (v0.46.0), VMC
+   boost (v0.51/52), per-room offsets (v0.49.0), KPI energia (v0.48.0).
 
 TIER-1 TRAIN (STOP-gated on the live soak of the deployed train): P3
 delete-trio (the trio still carries all law changes verbatim; sequence AFTER

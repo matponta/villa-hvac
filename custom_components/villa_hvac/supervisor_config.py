@@ -31,7 +31,6 @@ from .const import (
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
     DEFAULT_DUTY_PEAK_OUTDOOR,
-    DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_MIN_COMPRESSOR_OFF,
     DEFAULT_MIN_COMPRESSOR_ON,
@@ -75,7 +74,6 @@ from .const import (
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
     OPT_DUTY_PEAK_OUTDOOR,
-    OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_MIN_COMPRESSOR_OFF,
     OPT_MIN_COMPRESSOR_ON,
@@ -138,8 +136,7 @@ class SupervisorConfig:
     duty_cooloff: timedelta
     duty_comfort_max: float
     duty_peak_outdoor: float
-    # #5 free-cool
-    free_cool_enabled: bool
+    # #5 free-cool (the ENABLE is switch.free_cooling, read by the engine — v0.53.0)
     free_cool_outdoor: float
     # #6 shading
     shading_enabled: bool
@@ -208,7 +205,6 @@ class SupervisorConfig:
             duty_peak_outdoor=_f(
                 options, OPT_DUTY_PEAK_OUTDOOR, DEFAULT_DUTY_PEAK_OUTDOOR, 24, 42
             ),
-            free_cool_enabled=_b(options, OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED),
             free_cool_outdoor=_f(
                 options, OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR, 10, 30
             ),

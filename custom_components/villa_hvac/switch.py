@@ -53,6 +53,7 @@ async def async_setup_entry(
         SplitAcSwitch(entry),
         FreeAirSwitch(entry),
         VmcAutoSwitch(entry),
+        FreeCoolSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -201,6 +202,46 @@ class FreeAirSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_free_air"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class FreeCoolSwitch(SwitchEntity, RestoreEntity):
+    """#5 free-cooling auto-coast (default OFF).
+
+    When on (and the master is on): in summer, whenever the outside air drops
+    below the free-cool threshold (default 22 °C), active cooling is suppressed
+    and the house coasts on the cool air. v0.53.0: was an always-on options
+    toggle; now an explicit opt-in — the owner decides whether a cool evening
+    pauses the AC. Entity: switch.free_cooling (unique suffix free_cool).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Free cooling"
+    _attr_icon = "mdi:weather-windy"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_free_cool"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:

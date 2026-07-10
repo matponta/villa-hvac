@@ -31,7 +31,6 @@ from .const import (
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
     DEFAULT_DUTY_PEAK_OUTDOOR,
-    DEFAULT_FREE_COOL_ENABLED,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
@@ -71,7 +70,6 @@ from .const import (
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
     OPT_DUTY_PEAK_OUTDOOR,
-    OPT_FREE_COOL_ENABLED,
     OPT_FREE_COOL_OUTDOOR,
     OPT_MODEL_ENABLED,
     OPT_NIGHT_THRESHOLD,
@@ -185,12 +183,6 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         SEASON_OFFSET_DEFAULTS[SEASON_WINTER][HOUSE_MODE_NIGHT],
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
-                vol.Optional(
-                    OPT_FREE_COOL_ENABLED,
-                    default=options.get(
-                        OPT_FREE_COOL_ENABLED, DEFAULT_FREE_COOL_ENABLED
-                    ),
-                ): bool,
                 vol.Optional(
                     OPT_FREE_COOL_OUTDOOR,
                     default=options.get(

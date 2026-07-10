@@ -18,7 +18,6 @@ def test_defaults_when_empty():
     assert cfg.duty_comfort_max == DEFAULT_DUTY_COMFORT_MAX
     assert cfg.duty_max_stint == timedelta(minutes=DEFAULT_DUTY_MAX_STINT)
     assert cfg.weather_entity == WEATHER_ENTITY_DEFAULT
-    assert cfg.free_cool_enabled is True
     assert cfg.regime_enabled is False
 
 

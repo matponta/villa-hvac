@@ -109,6 +109,7 @@ from .controller import (
     fan_min,
     fan_pacing_enabled,
     free_air_enabled,
+    free_cool_enabled,
     is_zone_disabled,
     mode_offset,
     pv_bias_enabled,
@@ -666,7 +667,8 @@ def build_house_state(
         auto_setback=setback_on,
         house_setpoint=house_setpoint,
         mode_offset=house_offset,
-        free_cool_enabled=cfg.free_cool_enabled,
+        # v0.53.0: the free-cool enable is an opt-in switch (was an options toggle).
+        free_cool_enabled=free_cool_enabled(hass, entry),
         free_cool_threshold=cfg.free_cool_outdoor,
         outdoor_temp=outdoor,
         solar=ghi,

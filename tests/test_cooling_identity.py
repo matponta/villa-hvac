@@ -864,6 +864,7 @@ async def test_ab_free_cool_bp_and_band_yields(hass):
     hass.states.async_set("sensor.gw3000a_outdoor_temperature", "20.0")  # < 22
     entry = await _setup_ab_entry(hass)
     hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.free_cooling", "on")  # v0.53.0: opt-in switch
 
     stream_new, stream_old = await _ab_streams(hass, entry)
 

@@ -363,6 +363,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        #5 DONE (v0.10.0): `free_cool_policy` — summer + `gw3000a_outdoor_temperature`
        below `OPT_FREE_COOL_OUTDOOR` (default 22) → force fancoils to
        building_protection (priority disabled>window>free_cool>house_mode).
+       v0.53.0: the ENABLE moved from an always-on options toggle to the opt-in
+       `switch.free_cooling` (default OFF, restore; unique suffix `free_cool`) —
+       owner wants explicit control of the auto-coast. BACKLOG (owner 2026-07-10):
+       merge free-cooling with #3 free-air/windows-open into one "outside air"
+       concept once live behavior shows how the two intertwine (see NEXT_SESSION).
        #6 DONE (v0.11.0): `shading_policy` shades a sun-facing cover when summer +
        sun above horizon + azimuth in the facade's band + `gw3000a_solar_radiation`
        > `OPT_SHADING_SOLAR` (200). Covers resolved at runtime (`shadeable_covers`:

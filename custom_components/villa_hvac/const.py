@@ -477,9 +477,12 @@ DEFAULT_AWAY_HOURS = 18
 # Summer: when it's cool enough outside, suppress the fancoils (force
 # building_protection) and let the house coast — fewer/shorter compressor runs.
 # (Winter "free heating from sun" is a separate concern, tied to #6/#7.)
-OPT_FREE_COOL_ENABLED = "free_cool_enabled"
+# v0.53.0: the enable moved from an options-flow toggle (OPT_FREE_COOL_ENABLED,
+# default ON) to an opt-in switch `switch.free_cooling` (default OFF, restore) —
+# owner wants explicit control over the auto-coast. A stale free_cool_enabled key
+# in stored entry options is simply ignored. TODO(backlog): merge this with the
+# #3 free-air/windows-open concept once we understand how the two intertwine.
 OPT_FREE_COOL_OUTDOOR = "free_cool_outdoor"
-DEFAULT_FREE_COOL_ENABLED = True
 DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
 
 # --- #5 VMC boost (night free-cooling ventilation) ---------------------------

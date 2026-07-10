@@ -269,6 +269,14 @@ def vmc_boost_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "vmc_auto") == STATE_ON
 
 
+def free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the #5 free-cooling switch is on (opt-in, on top of the master).
+
+    v0.53.0: replaced the always-on options toggle — the owner wants explicit
+    control over the auto-coast (cool outside -> suppress the fancoils)."""
+    return _switch_state(hass, entry, "free_cool") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF
