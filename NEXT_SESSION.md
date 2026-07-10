@@ -17,8 +17,8 @@ re-derive verified facts. MASTER_PLAN.md = build checklist. STORY_SEFF.md = the
 adversarially-reviewed per-facade solar spec (all 3 slices SHIPPED). STORY_SPLIT_TRIO.md
 = the split-AC trio spec (SHIPPED v0.45.0).
 
-STATE (2026-07-10): repo = v0.51.0 (1461 tests, ruff clean); LIVE = v0.45.0
-(deployed 2026-07-09). Repo is now SIX increments ahead of live — a backlog batch
+STATE (2026-07-10): repo = v0.52.0 (1465 tests, ruff clean); LIVE = v0.45.0
+(deployed 2026-07-09). Repo is now SEVEN increments ahead of live — a backlog batch
 built 2026-07-10, all opt-in + deploy-dark:
   - v0.46.0  #7  durable presence — watch person.* not the volatile group
   - v0.47.0  P4  Tier-1 feature_graph (sensor.hvac_plan; why did a feature no-op?)
@@ -26,6 +26,8 @@ built 2026-07-10, all opt-in + deploy-dark:
   - v0.49.0  #2  per-room comfort offset (number.*_offset, per-zone trim)
   - v0.50.0  #3  free-air / windows-open mode (switch.free_air, manual cooling pause)
   - v0.51.0  #5  VMC free-cooling boost (switch.vmc_auto; 2 units, night flush)
+  - v0.52.0  #5  VMC night-quiet gate — bedroom unit (VMC 2) silent during Notte
+                 while occupied; empty house flushes freely; ground unit never gated
 Tier-1 P5 (deviation-space coalescing) DEFERRED: it needs P3 delete-trio first,
 which is STOP-gated on a live soak of the merged CoolingController — impossible
 while supervisor is OFF. Revisit once supervisor is on and the fold has soaked.
