@@ -138,7 +138,9 @@ do local bang-bang regulation.
   latch (`state.night_active`), so a reboot-in-Notte re-silences via the controller.
   **Free-air (v0.50.0)**: `switch.free_air` (manual windows-open) unions the cooled
   fancoil zones into the `paused` set in `build_house_state` — reuses the #4 pause
-  stack (band yields, BP preset, #2a skips, fail-safe releases).
+  stack (band yields, BP preset, #2a skips, fail-safe releases). BACKLOG: evolves
+  into per-room "Open windows" attached to to-be-installed window contacts (see #4
+  roadmap note + NEXT_SESSION).
 - `vmc.py` — **`VmcController` (#5, v0.51.0)**: night free-cooling boost of the two
   VMC units (`VMC_GROUPS`: ground=`switch.10_5_150_27_boost`, living=`switch.vmc_boost`).
   EDGE-TRIGGERED off the coordinator tick, deliberately OUTSIDE the reconcile arbiter
@@ -236,6 +238,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        `binary_sensor.up_sense_contact` exist). Add a `window` key per zone as
        contact sensors get fitted. Known edge: night heat-guard can still run the
        fan in a window-open bedroom during Notte.
+       BACKLOG (owner 2026-07-10): when contacts get installed on the cooled
+       rooms, the #3 free_air switch evolves into per-room "Open windows"
+       (rename + one switch per cooled zone + sensor-attached via this #4
+       mechanism; manual switch = fallback for sensor-less rooms). Design
+       together with the free-cool "outside air" merge — see NEXT_SESSION.
    NOTE — build is now organized as a **Supervisor / single-organism** refactor
    (one arbiter, priority policy stack, idempotent writes) then features as
    policies. Canonical plan: `../hvac-implementation-plan.html`; build checklist:

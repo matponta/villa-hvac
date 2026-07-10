@@ -132,6 +132,16 @@ NEXT STEPS (in order):
    notify "good time to open the windows"; free_air ON auto-implies free-cool
    logic; shared threshold/gating). Deliberately NOT designed yet — gather a
    few weeks of live behavior with both switches first.
+   NEW (owner ask 2026-07-10, evening): **free_air evolves into per-room "Open
+   windows"** — (a) rename switch.free_air → "Open windows"; (b) make it
+   PER-ROOM (one switch per cooled zone, pausing just that zone — today it's
+   house-wide); (c) attach each room to a physical WINDOW CONTACT SENSOR once
+   those get INSTALLED on the cooled rooms (today only the 3 vasistas on
+   radiant rooms exist — the known #4 gap). The #4 WindowController already
+   handles contact→pause debounce/restore, so a fitted sensor slots into the
+   existing `window` key per zone; the manual per-room switch is the fallback
+   for rooms still without a sensor (and the override). Sequence/design
+   TOGETHER with the free-cool merge above — same "outside air" concept.
    DONE from the old list: free-air (v0.50.0), presenza_adulti (v0.46.0), VMC
    boost (v0.51/52), per-room offsets (v0.49.0), KPI energia (v0.48.0).
 
