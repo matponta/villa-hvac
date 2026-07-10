@@ -17,19 +17,22 @@ import logging
 import math
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_NOT_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 
+from .away import aggregate_presence
 from .const import (
+    HOUSE_MODE_NIGHT,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
+    PRESENCE_PERSONS,
     SEASON_SUMMER,
     VMC_BOOST_HYSTERESIS,
     VMC_BOOST_MARGIN,
     VMC_BOOST_OUTDOOR_MAX,
     VMC_GROUPS,
 )
-from .controller import current_season, vmc_boost_enabled
+from .controller import current_house_mode, current_season, vmc_boost_enabled
 from .supervisor import vmc_boost_decision
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,6 +76,15 @@ class VmcController:
         v = self._num(OUTDOOR_TEMP)
         return v if v is not None else self._num(OUTDOOR_TEMP_FALLBACK)
 
+    def _occupied(self) -> bool:
+        """Is anyone home? Reuses the #7 durable presence fuse. Unknown -> treat as
+        occupied (the safe/quiet default: don't risk a loud night boost blindly)."""
+        presence = aggregate_presence(
+            self.hass.states.get(p).state if self.hass.states.get(p) else None
+            for p in PRESENCE_PERSONS
+        )
+        return presence != STATE_NOT_HOME
+
     def _indoor(self, zones: tuple[str, ...]) -> float | None:
         """Warmest served-room fused temp this cycle (None if none available)."""
         temps = (self.entry.runtime_data.data or {}).get("zone_temps") or {}
@@ -95,8 +107,13 @@ class VmcController:
             return
         is_summer = current_season(self.hass, self.entry) == SEASON_SUMMER
         outdoor = self._outdoor()
+        # A bedroom-serving unit stays quiet during Notte WHILE the house is
+        # occupied; an empty house lets it flush at night (owner rule 2026-07-10).
+        night = current_house_mode(self.hass, self.entry) == HOUSE_MODE_NIGHT
+        occupied = self._occupied()
         for group, cfg in VMC_GROUPS.items():
             on_now = self._commanded.get(group, False)
+            quiet = bool(cfg.get("night_quiet")) and night and occupied
             decision = vmc_boost_decision(
                 is_summer=is_summer,
                 outdoor=outdoor,
@@ -105,6 +122,7 @@ class VmcController:
                 outdoor_max=VMC_BOOST_OUTDOOR_MAX,
                 margin=VMC_BOOST_MARGIN,
                 hysteresis=VMC_BOOST_HYSTERESIS,
+                quiet=quiet,
             )
             if decision != on_now:  # edge only — never re-assert
                 await self._write(group, cfg["boost_switch"], decision)

@@ -599,6 +599,7 @@ def vmc_boost_decision(
     outdoor_max: float,
     margin: float,
     hysteresis: float,
+    quiet: bool = False,
 ) -> bool:
     """Should this VMC group boost right now?
 
@@ -606,8 +607,11 @@ def vmc_boost_decision(
     worth pulling in) AND at least `margin` °C cooler than the warmest served room
     (`indoor`). While already boosting the required gap shrinks by `hysteresis` so
     it doesn't flap around the threshold. Unknown outdoor/indoor -> False (can't
-    tell, don't run the fan blindly).
+    tell, don't run the fan blindly). `quiet` (a bedroom-serving unit at night
+    while the house is occupied) hard-vetoes the boost regardless of temps.
     """
+    if quiet:
+        return False
     if not is_summer or outdoor is None or indoor is None:
         return False
     if outdoor >= outdoor_max:

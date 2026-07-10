@@ -489,17 +489,23 @@ DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
 # next day). Edge-triggered + opt-in — see vmc.py. VMC 2's native integration
 # times out, so its RELIABLE actuator is the KNX boost switch (switch.vmc_boost),
 # not switch.vmc_cucina_e_casa_boost.
+# `night_quiet`: this unit serves a bedroom, so its 100% boost is suppressed
+# during Notte WHILE the house is occupied (don't run a loud fan over sleepers).
+# When the house is empty it boosts freely at night. VMC 1 (ground floor, no
+# bedrooms) is never gated.
 VMC_GROUPS: dict[str, dict] = {
     "ground": {  # VMC 1 — ground floor (humidity-prone), Salda Smarty integration
         "boost_switch": "switch.10_5_150_27_boost",
         "zones": ("cantina_vini", "bagno_ingresso", "bagno_palestra", "palestra"),
+        "night_quiet": False,
     },
-    "living": {  # VMC 2 — living spaces; KNX boost switch (native integ times out)
+    "living": {  # VMC 2 — living spaces (incl. the master suite); KNX boost switch
         "boost_switch": "switch.vmc_boost",
         "zones": (
             "kitchen", "office", "studio_v", "main_bedroom",
             "bagno_padronale_01", "bagno_padronale_02",
         ),
+        "night_quiet": True,
     },
 }
 VMC_BOOST_OUTDOOR_MAX = 24.0   # °C: above this the outside air isn't cool enough

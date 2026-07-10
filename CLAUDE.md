@@ -144,7 +144,10 @@ do local bang-bang regulation.
   EDGE-TRIGGERED off the coordinator tick, deliberately OUTSIDE the reconcile arbiter
   (writes only on its own decision flip, never re-asserts a manual boost). Pure
   `vmc_boost_decision` (summer + outdoor < cap + outdoor ≤ indoor−margin, hysteresis).
-  Opt-in `switch.vmc_auto` + master; releases on disable/unload.
+  Opt-in `switch.vmc_auto` + master; releases on disable/unload. **Night-quiet gate
+  (v0.52.0):** a `night_quiet` unit (VMC 2, serves the master suite) is hard-vetoed
+  during Notte WHILE the house is occupied (reuses #7 `aggregate_presence`); an empty
+  house flushes freely at night; VMC 1 (ground floor) is never gated.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool + F4b relax), bounded by a first-class

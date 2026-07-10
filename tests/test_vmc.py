@@ -52,6 +52,11 @@ def test_unknown_temps_never_boost():
     assert _dec(indoor=None) is False
 
 
+def test_quiet_hard_vetoes_boost():
+    # thermally it WOULD boost (20 vs 25), but quiet wins
+    assert _dec(outdoor=20.0, indoor=25.0, quiet=True) is False
+
+
 # --- controller (edge-triggered, deploy-dark, release) -----------------------
 
 async def _setup(hass):
@@ -127,3 +132,54 @@ async def test_disable_releases(hass):
     hass.states.async_set("switch.vmc_auto", "off")
     await vmc._evaluate()
     assert any(c.data["entity_id"] == GROUND for c in off)
+
+
+def _persons(hass, home: bool) -> None:
+    for p in ("person.mattia_pontacolone", "person.ehi"):
+        hass.states.async_set(p, "home" if home else "not_home")
+
+
+async def _armed(hass):
+    """Setup + master/opt-in on + cool outside + both groups warm."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    on = async_mock_service(hass, "switch", "turn_on")
+    hass.states.async_set("switch.supervisor", "on")
+    hass.states.async_set("switch.vmc_auto", "on")
+    hass.states.async_set(OUTDOOR_TEMP, "18")
+    coordinator.data = {"zone_temps": {
+        "main_bedroom": {"value": 26.0},  # VMC 2 (bedroom-serving) warm
+        "palestra": {"value": 26.0},      # VMC 1 (ground) warm
+    }}
+    return entry, coordinator.vmc, on
+
+
+async def test_bedroom_unit_quiet_during_occupied_notte(hass):
+    entry, vmc, on = await _armed(hass)
+    hass.states.async_set("select.house_mode", "Notte")
+    _persons(hass, home=True)                       # someone home
+
+    await vmc._evaluate()
+
+    assert any(c.data["entity_id"] == GROUND for c in on)      # ground still flushes
+    assert not any(c.data["entity_id"] == LIVING for c in on)  # bedroom unit stays quiet
+
+
+async def test_bedroom_unit_boosts_when_empty_at_night(hass):
+    entry, vmc, on = await _armed(hass)
+    hass.states.async_set("select.house_mode", "Notte")
+    _persons(hass, home=False)                      # house free -> no quiet veto
+
+    await vmc._evaluate()
+
+    assert any(c.data["entity_id"] == LIVING for c in on)
+
+
+async def test_bedroom_unit_boosts_daytime_occupied(hass):
+    entry, vmc, on = await _armed(hass)
+    hass.states.async_set("select.house_mode", "Casa")   # not Notte
+    _persons(hass, home=True)
+
+    await vmc._evaluate()
+
+    assert any(c.data["entity_id"] == LIVING for c in on)  # quiet only during Notte
