@@ -132,6 +132,17 @@ NEXT STEPS (in order):
    notify "good time to open the windows"; free_air ON auto-implies free-cool
    logic; shared threshold/gating). Deliberately NOT designed yet — gather a
    few weeks of live behavior with both switches first.
+   NEW (owner ask 2026-07-10, night): **#2b heat-guard must deliver real
+   cooling, not just air** — today the guard only starts the fan at 33%
+   (NIGHT_GUARD_FAN_PCT) when a bedroom holds >26 °C for 3 min, but the
+   chilled-water valve stays with the KNX thermostat whose Notte setpoint is
+   27 (24+3) — so in the 26–27 band the fan circulates warm air with the
+   valve CLOSED. Fix: while the guard is active, ALSO nudge that room's
+   setpoint down (e.g. to threshold−0.5, or reuse the band slam) so the valve
+   opens; release the setpoint with the guard (10-min-below hysteresis) /
+   auto-wake / fail-safe. Mind the interaction with #2a's Notte setpoint push
+   (arbiter: guard opinion must outrank house_mode on that lever, like the
+   band does) and never fight camere-silenziose's own manuale hold.
    NEW (owner ask 2026-07-10, evening): **free_air evolves into per-room "Open
    windows"** — (a) rename switch.free_air → "Open windows"; (b) make it
    PER-ROOM (one switch per cooled zone, pausing just that zone — today it's

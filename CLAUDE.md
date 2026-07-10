@@ -209,6 +209,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
              + fan off + heat-guard hysteresis; threshold + auto-wake in options
              flow (defaults 26 °C / 08:00). See `night.py`.
+             BACKLOG (owner 2026-07-10): the heat-guard only spins the FAN (33%)
+             — the valve stays with the KNX thermostat at the Notte setpoint 27
+             (24+3), so in the 26–27 band it circulates warm air with the valve
+             CLOSED (legacy-inherited). Fix: guard-active → also nudge the room
+             setpoint down so the valve opens; release with the guard/auto-wake/
+             fail-safe. See NEXT_SESSION backlog for the arbiter notes.
        - [x] #2c away auto-escalation (presenza_adulti not_home 18h → Via;
              home → Casa from ANY Via — manual or auto (restore_target checks
              mode==Via only, no origin tracking); Notte/Vacanza never touched.
