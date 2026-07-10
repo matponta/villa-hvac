@@ -13,6 +13,7 @@ from .engine import RoomModelStore, SupervisorEngine
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
 from .returnhome import ReturnHomeManager
+from .vmc import VmcController
 from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
@@ -74,6 +75,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     engine.start()
     entry.async_on_unload(engine.stop)
     entry.async_on_unload(engine.async_fail_safe)
+
+    # #5 VMC free-cooling boost: a self-contained, edge-triggered controller off
+    # the coordinator tick (opt-in switch.vmc_auto + master; deploy-dark). Kept
+    # outside the reconcile arbiter so a manual boost is never fought; async_stop
+    # unsubscribes AND hands back any boost it set.
+    vmc = VmcController(hass, entry)
+    coordinator.vmc = vmc
+    vmc.start()
+    entry.async_on_unload(vmc.async_stop)
 
     # Safety hooks that config-entry *unload* does not cover:
     #  - HA shutdown/reboot fires EVENT_HOMEASSISTANT_STOP but does NOT run the

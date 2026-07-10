@@ -581,3 +581,36 @@ def split_dwell(
     if (now - since) < need:
         return prev_on, since      # hold — not enough dwell to flip yet
     return desired_on, now
+
+
+# --- #5 VMC boost (night free-cooling ventilation) ---------------------------
+# Boost a mechanical-ventilation unit to flush its served rooms with cool outdoor
+# air. Pure decision only; the edge-triggered actuation + manual-override respect
+# live in vmc.py (a self-contained controller, NOT the reconcile arbiter — a
+# ventilation switch the owner also touches must never be re-asserted against).
+
+
+def vmc_boost_decision(
+    *,
+    is_summer: bool,
+    outdoor: float | None,
+    indoor: float | None,
+    on_now: bool,
+    outdoor_max: float,
+    margin: float,
+    hysteresis: float,
+) -> bool:
+    """Should this VMC group boost right now?
+
+    Summer only; the outside air must be below `outdoor_max` (cool enough to be
+    worth pulling in) AND at least `margin` °C cooler than the warmest served room
+    (`indoor`). While already boosting the required gap shrinks by `hysteresis` so
+    it doesn't flap around the threshold. Unknown outdoor/indoor -> False (can't
+    tell, don't run the fan blindly).
+    """
+    if not is_summer or outdoor is None or indoor is None:
+        return False
+    if outdoor >= outdoor_max:
+        return False
+    need = margin - hysteresis if on_now else margin
+    return outdoor <= indoor - need

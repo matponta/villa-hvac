@@ -482,6 +482,30 @@ OPT_FREE_COOL_OUTDOOR = "free_cool_outdoor"
 DEFAULT_FREE_COOL_ENABLED = True
 DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
 
+# --- #5 VMC boost (night free-cooling ventilation) ---------------------------
+# Two independent VMC (mechanical ventilation) machines. When it's summer and the
+# outside air is meaningfully cooler than the warmest served room, boost the unit
+# to flush the rooms with cool air (a free night-flush that banks coolth for the
+# next day). Edge-triggered + opt-in — see vmc.py. VMC 2's native integration
+# times out, so its RELIABLE actuator is the KNX boost switch (switch.vmc_boost),
+# not switch.vmc_cucina_e_casa_boost.
+VMC_GROUPS: dict[str, dict] = {
+    "ground": {  # VMC 1 — ground floor (humidity-prone), Salda Smarty integration
+        "boost_switch": "switch.10_5_150_27_boost",
+        "zones": ("cantina_vini", "bagno_ingresso", "bagno_palestra", "palestra"),
+    },
+    "living": {  # VMC 2 — living spaces; KNX boost switch (native integ times out)
+        "boost_switch": "switch.vmc_boost",
+        "zones": (
+            "kitchen", "office", "studio_v", "main_bedroom",
+            "bagno_padronale_01", "bagno_padronale_02",
+        ),
+    },
+}
+VMC_BOOST_OUTDOOR_MAX = 24.0   # °C: above this the outside air isn't cool enough
+VMC_BOOST_MARGIN = 2.0         # °C: outside must be >= this much cooler than inside
+VMC_BOOST_HYSTERESIS = 0.5     # °C: widen the keep-on band to stop flapping
+
 # --- #6 Solar shading --------------------------------------------------------
 # Summer: close a sun-facing shutter when the sun is on its facade and it's
 # bright, to cut the solar gain on the cooled rooms (the proven lever for the

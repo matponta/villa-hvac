@@ -52,6 +52,7 @@ async def async_setup_entry(
         UnifiedPlannerSwitch(entry),
         SplitAcSwitch(entry),
         FreeAirSwitch(entry),
+        VmcAutoSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -220,6 +221,45 @@ class FreeAirSwitch(SwitchEntity, RestoreEntity):
         engine = getattr(self._entry.runtime_data, "engine", None)
         if engine is not None:
             await engine.request_run()
+
+
+class VmcAutoSwitch(SwitchEntity, RestoreEntity):
+    """#5 VMC auto-boost (default OFF).
+
+    When on (and the master is on), the VMC controller boosts each ventilation
+    machine to flush its rooms with cool outdoor air when summer + outside is
+    meaningfully cooler than inside (a free night-flush). Edge-triggered, respects
+    a manual boost. The actuator is the separate KNX switch.vmc_boost.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "VMC auto"
+    _attr_icon = "mdi:fan-plus"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_vmc_auto"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        vmc = getattr(self._entry.runtime_data, "vmc", None)
+        if vmc is not None:
+            await vmc.async_release()  # stop managing -> hand the boost back
 
 
 class FanPacingSwitch(SwitchEntity, RestoreEntity):

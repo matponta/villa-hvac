@@ -261,6 +261,14 @@ def free_air_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "free_air") == STATE_ON
 
 
+def vmc_boost_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the #5 VMC auto-boost switch is on (opt-in, on top of the master).
+
+    NOTE the actuator is the separate KNX `switch.vmc_boost`; this is the
+    automation opt-in `switch.vmc_auto`, so the names don't collide."""
+    return _switch_state(hass, entry, "vmc_auto") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF
