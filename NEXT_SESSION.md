@@ -17,9 +17,10 @@ re-derive verified facts. MASTER_PLAN.md = build checklist. STORY_SEFF.md = the
 adversarially-reviewed per-facade solar spec (all 3 slices SHIPPED). STORY_SPLIT_TRIO.md
 = the split-AC trio spec (SHIPPED v0.45.0).
 
-STATE (2026-07-10): repo = v0.52.0 (1465 tests, ruff clean); LIVE = v0.45.0
-(deployed 2026-07-09). Repo is now SEVEN increments ahead of live — a backlog batch
-built 2026-07-10, all opt-in + deploy-dark:
+STATE (2026-07-10): repo == LIVE == v0.52.0 (1465 tests, ruff clean; DEPLOYED via
+HACS + restart 2026-07-10 ~11:51, integration loaded, no ERROR logs, switch.supervisor
+still OFF, new opt-in entities present + OFF, cooling_compressor_runtime accumulating).
+The 2026-07-10 backlog batch (all opt-in + deploy-dark):
   - v0.46.0  #7  durable presence — watch person.* not the volatile group
   - v0.47.0  P4  Tier-1 feature_graph (sensor.hvac_plan; why did a feature no-op?)
   - v0.48.0  #6  cooling-compressor run-time KPI (sensor, total_increasing)
