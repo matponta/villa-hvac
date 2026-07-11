@@ -310,18 +310,18 @@ def test_guard_no_nudge_when_base_unknown():
         assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
 
 
-def test_guard_no_nudge_while_free_cooling():
+def test_guard_fully_silent_while_free_cooling():
     """Free-cooling holds the fancoils in building_protection — a setpoint under
-    that BP is inert but displaced; the guard yields the lever and stays
-    fan-only (the free-cool × guard escalation belongs to the outside-air
+    that BP is inert but displaced, and the 33% stage could only stir warm room
+    air against a shut valve. The guard yields BOTH levers (v0.55.0: the fan
+    matches the v0.54.0 nudge yield; escalation belongs to the outside-air
     merge design)."""
-    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
     from custom_components.villa_hvac.supervisor import fan_lever
 
     out = _guard_cooling(_night_ctrl(), free_cooling=True)
     assert _temp_levers(out) == {}
     for _zid, zone in bedrooms():
-        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+        assert out[fan_lever(zone["fancoils"][0])] == 0
 
 
 def test_guard_no_nudge_when_season_unknown():
@@ -344,18 +344,37 @@ def test_guard_no_nudge_in_winter():
         assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
 
 
-def test_guard_no_nudge_on_disabled_or_paused_zones():
-    """A #10-disabled / #4-paused bedroom is building_protection-owned by the
-    higher preset policies — never push a setpoint under it. The legacy fan
-    stage is unchanged (the known, accepted #4 edge)."""
+def test_guard_no_nudge_on_disabled_zone_fan_unchanged():
+    """A #10-disabled bedroom is building_protection-owned by the disable
+    policy — never push a setpoint under it. The legacy fan stage stays."""
     from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
     from custom_components.villa_hvac.supervisor import fan_lever
 
-    for kw in ({"enabled": False}, {"paused": True}):
-        out = _guard_cooling(_night_ctrl(), **kw)
-        assert _temp_levers(out) == {}
-        for _zid, zone in bedrooms():
-            assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+    out = _guard_cooling(_night_ctrl(), enabled=False)
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_guard_fully_silent_on_paused_zone():
+    """v0.55.0 (window contacts): a #4-paused bedroom gets NO nudge AND no fan —
+    the guard used to blow warm air into the open window (the old accepted #4
+    edge, closed now that the bedrooms have real contacts). Closing the window
+    resumes the stage: the hysteresis kept advancing."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    c = _night_ctrl()
+    out = _guard_cooling(c, paused=True)
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == 0
+    # window closes -> paused clears -> stage (and nudge) resume immediately
+    hot = {"main_bedroom": 26.5, "gabriroom": 26.5}
+    out = c(_night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH + timedelta(minutes=1)))
+    assert _temp_levers(out) != {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
 
 
 def test_guard_silence_drops_the_nudge():

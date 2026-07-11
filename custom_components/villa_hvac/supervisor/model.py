@@ -158,6 +158,13 @@ class HouseState:
     mode_offset: float | None = None   # season-aware offset for house_mode
     free_cool_enabled: bool = False    # #5 outdoor free-cooling shutoff
     free_cool_threshold: float | None = None  # outdoor below this -> suppress
+    # Windows → free-cool inference (v0.56.0): open window-CONTACT count + zone
+    # ids, and the resolved "the house is being aired" verdict (switch on +
+    # summer + count ≥ threshold + outdoor ≤ indoor − margin), computed by
+    # build_house_state. `windows_free_cool` ORs into `_is_free_cooling`, so the
+    # whole #5 coast stack follows it.
+    windows_open: tuple[str, ...] = () # zone ids with an OPEN window contact
+    windows_free_cool: bool = False    # airing verdict -> coast like #5
     outdoor_temp: float | None = None  # Ecowitt gw3000a
     solar: float | None = None         # Ecowitt solar radiation W/m²
     consenso_freddo: str | None = None
@@ -202,6 +209,10 @@ _SEASON_SUMMER = "summer"
 
 
 def _is_free_cooling(state: HouseState) -> bool:
+    # v0.56.0: an open-windows airing verdict (owner rule 2) coasts exactly like
+    # the #5 outdoor threshold — one free-cool concept downstream.
+    if state.windows_free_cool:
+        return True
     return (
         state.free_cool_enabled
         and state.season == _SEASON_SUMMER

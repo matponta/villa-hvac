@@ -177,6 +177,8 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 |---|---|---|
 | #2b heat-guard **chilled water** | **v0.54.0** | Guard-active also slams the bedroom setpoint to threshold−0.5 (summer only, ≤ a COMPUTABLE #2a mode target, skips disabled/paused/free-cooling) so the EV valve opens — the legacy guard circulated warm air valve-CLOSED in the 26–27 dead-band (padronale, first live night). Released by guard hysteresis / auto-wake / Notte exit / `async_fail_safe` restoring the NUDGE-TIME snapshot (`night.failsafe_setpoints` — live reads are gone on the unload path; fail-safe SHA pin updated deliberately). 21-agent adversarial review: 2 majors found+fixed pre-tag (unload-path restore, free-cool interplay). |
 
+| Window contacts (#4 + owner rules) | **v0.55.0** | 6 Shelly BLU contacts wired as ZONES `window` keys (Porta Cucina → living_room leader; ingresso radiant); #2b guard fan-0 on paused bedrooms (edge closed); windows→free-cool inference behind opt-in `switch.windows_free_cooling` (count 3 + outdoor ≤ indoor−1.0, ORed into the ONE `_is_free_cooling`, policies duplicate deleted); long-open contact alert → Mattia+Ehi (30 min, once/episode, airing-suppressed). STORY_WINDOWS.md. |
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve

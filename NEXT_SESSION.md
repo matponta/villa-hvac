@@ -16,10 +16,10 @@ First read CLAUDE.md in full (verified facts: zone map, EV-FAN-valve cooling cha
 BLOCCO polarity on=block, supervisor architecture, F1/F2/F3/F4 notes). Don't
 re-derive verified facts. MASTER_PLAN.md = build checklist.
 
-STATE (2026-07-11): repo == v0.54.0 (1481 tests, ruff clean). LIVE = v0.53.0
-until the owner deploys v0.54.0 (HACS update + restart, then verify: supervisor
-back ON, hvac_levers=0, no ERROR logs, and on the NEXT Notte night check the
-padronale valve actually opens when the heat-guard fires).
+STATE (2026-07-11): repo == v0.55.0 (1500+ tests, ruff clean). LIVE = v0.53.0
+until the owner deploys (HACS update + restart, then verify: supervisor back
+ON, hvac_levers=0, no ERROR logs; on the NEXT Notte night check the padronale
+valve opens when the heat-guard fires; open a window and watch its zone pause).
 ⚡ THE SUPERVISOR IS LIVE: switch.supervisor + auto_setback + vmc_auto ON since
 2026-07-10 evening — the engine ACTUATES the villa. Any change to the
 #2/#2b/#4/free-air/VMC paths changes LIVE behavior the household relies on
@@ -41,6 +41,18 @@ free-cool interplay). The fail-safe SHA pin in test_engine was updated
 deliberately, per that test's own protocol. Golden tests pin the legacy
 silence/release/fan behavior; an engine-level test proves chilled-water
 delivery through the real cycle (mutation-verified).
+
+v0.55.0 (WINDOW CONTACTS — owner ask 2026-07-11, STORY_WINDOWS.md): 6 Shelly
+BLU contacts wired as #4 `window` keys (main_bedroom, gabriroom, studio_v =
+binary_sensor.aaa_window, office, ingresso radiant, Porta Cucina → living_room
+LEADER — kitchen has no thermostat, open space); #2b guard now fan-0 on paused
+bedrooms (old warm-air edge CLOSED); windows→free-cool inference behind opt-in
+switch.windows_free_cooling (default OFF: ≥3 contacts open + outdoor ≤ leaders'
+mean − 1.0 °C → ORed into the ONE _is_free_cooling; policies duplicate
+deleted); long-open contact alert (30 min, once/episode, Italian push to
+matphone16 + pixel_10, suppressed while deliberately airing; vasistas never
+page). Options: windows_free_cool_count/margin + window_alert_minutes.
+NOT wired: cantina_impianti door (plant room), up_sense_contact (unmapped).
 
 FIRST NIGHT (7/10→11) verified clean from the recorder: mode bridge propagated
 Chiudi-notte in 11 ms; #2b silence latched same-second; heat-guard fired 00:17
@@ -77,11 +89,11 @@ BACKLOG (priority order — pick from the top unless the owner redirects):
    schedule base — a HARD GATE before switch.unified_planner can ever be
    enabled. Mechanical, well-scoped.
 
-3. FREE_AIR → PER-ROOM "OPEN WINDOWS" (owner ask): rename switch.free_air →
-   "Open windows"; one switch per cooled zone (pausing just that zone);
-   window CONTACT SENSORS to be installed on the cooled rooms later slot into
-   the existing #4 `window` key/WindowController (manual switch = fallback for
-   sensor-less rooms). The switch layer can ship BEFORE the sensors exist.
+3. FREE_AIR → PER-ROOM "OPEN WINDOWS" (owner ask, PARTIALLY superseded by
+   v0.55.0): the 6 main rooms now have REAL contacts wired into #4. Remaining:
+   per-room manual switches for the sensor-less cooled rooms (salotto windows,
+   sala_giochi, rack) + the free_air rename — decide whether still wanted now
+   that contacts cover the main rooms.
 
 4. LEGACY CLEANUP → v1.0.0: after ~1 week of clean supervisor nights, DELETE
    the disabled automations + the buonanotte/sveglia scripts' climate branches
@@ -97,15 +109,22 @@ BACKLOG (priority order — pick from the top unless the owner redirects):
    behavior), then P3 → P5 (R2 deviation-space) → P6 (R3 REST-quorum + boot
    manuale sweep). P4 feature_graph already shipped (v0.47.0).
 
-6. OUTSIDE-AIR MERGE (free-cooling × open-windows, owner ask): deliberately
-   UNDESIGNED until weeks of live data show how the two intertwine.
-   Candidates noted in CLAUDE.md #5.
+6. OUTSIDE-AIR MERGE (free-cooling × open-windows × VMC, owner ask): the
+   v0.55.0 windows→free-cool inference is the merge's FIRST CONCRETE PIECE
+   (owner's own rule). Remaining design after live data: free-cool conditions
+   + occupied → "open the windows" notification; VMC interplay; free_air fold.
 
-Smaller follow-ups: VMC thresholds (const → options flow) · #6
+Smaller follow-ups (v0.55.0 review deferrals): window-pause vs auto_setback
+gate (rule 1 inert when setback off — page warns honestly; exemption needs a
+restore-path redesign) · window-alert quiet hours / bedroom-during-Notte
+deferral (owner decision) · close→restore debounce if wind-flap observed ·
+grouped digest for multi-window pages · VMC thresholds (const → options flow) · #6
 cycles_since_restart resets on restart (total is restored — cosmetic) ·
 night-guard threshold tuning on real nights (26.0 default) · watch the first
 v0.54.0 guard night: valve open minutes + did the room actually get driven
-below threshold (25.5 target) without overshoot complaints.
+below threshold (25.5 target) without overshoot complaints · watch the first
+v0.55.0 window events: pause/restore latency, alert timing, no page spam ·
+owner may flip switch.windows_free_cooling when ready (default OFF).
 
 LIVE-OPS for the owner (not build work — support if asked): watch S_eff
 geometry on the Modello tab → flip seff_enabled → STORY_SEFF §8 gates ~1wk;

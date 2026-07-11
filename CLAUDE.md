@@ -251,17 +251,36 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        mode; stays paused across mode changes (apply_house_mode skips paused
        zones). Wired: the 3 `cover.vasistas_*` → their radiant zones
        (vasistas_gabriele is in **bagno_gabriele** NOT gabriroom; bagno_sala_giochi
-       → bagno_giochi; vasistas_lavanderia → lavanderia). NOTE: all 3 are radiant
-       (no summer cooling to pause — useful in winter); the main cooled fancoil
-       rooms have NO window sensor (only those 3 covers + 1 mystery
-       `binary_sensor.up_sense_contact` exist). Add a `window` key per zone as
-       contact sensors get fitted. Known edge: night heat-guard can still run the
-       fan in a window-open bedroom during Notte.
-       BACKLOG (owner 2026-07-10): when contacts get installed on the cooled
-       rooms, the #3 free_air switch evolves into per-room "Open windows"
-       (rename + one switch per cooled zone + sensor-attached via this #4
-       mechanism; manual switch = fallback for sensor-less rooms). Design
-       together with the free-cool "outside air" merge — see NEXT_SESSION.
+       → bagno_giochi; vasistas_lavanderia → lavanderia) **+ v0.55.0 the 6 Shelly
+       BLU window CONTACTS** (owner-installed 2026-07-11; STORY_WINDOWS.md):
+       main_bedroom, gabriroom, studio_v (`binary_sensor.aaa_window` = device
+       "Finestra V"), office, ingresso (radiant — winter value), and **Porta
+       Cucina → the `living_room` LEADER** (kitchen has no thermostat; open
+       space = one air volume, so the pause takes Salotto+Cucina together).
+       BTHome contacts: `on`=open, `unavailable` ignored (dead battery never
+       pauses/un-pauses). The old known edge is CLOSED: the #2b guard now emits
+       fan 0 for a paused bedroom (no more warm air into an open window).
+       v0.55.0 also added (owner rules 2+3, same story):
+       - **Windows→free-cool inference**: opt-in `switch.windows_free_cooling`
+         (default OFF) + ≥ `OPT_WINDOWS_FREE_COOL_COUNT` (3) contacts open +
+         summer + outdoor ≤ leaders' mean fused temp − `OPT_WINDOWS_FREE_COOL_
+         MARGIN` (1.0) → `state.windows_free_cool`, ORed into `_is_free_cooling`
+         so the WHOLE #5 coast stack follows (policies `_free_cooling` now
+         delegates to the one model predicate — the duplicate is gone).
+         Feature-graph row + `windows_open` on sensor.hvac_plan.
+       - **Long-open alert**: a contact open ≥ `OPT_WINDOW_ALERT_MINUTES` (30,
+         0=off) pages Mattia (`notify.mobile_app_matphone16`) + Ehi
+         (`notify.mobile_app_pixel_10`; override via `OPT_WINDOW_ALERT_TARGETS`)
+         once per opening episode, in Italian, tagged per zone; suppressed while
+         deliberately airing (free_air on, or windows_free_cool armed + count
+         met). Vasistas never page. Year-round.
+       Still open on #4: sensor-less cooled rooms (salotto own windows, sala
+       giochi, rack) keep the global `free_air` switch as the manual fallback;
+       per-room manual "Open windows" switches + the full outside-air merge
+       (free-cooling × windows × VMC) stay backlog — rule 2 is the merge's
+       first concrete piece. `binary_sensor.up_sense_contact` still unmapped;
+       `binary_sensor.cantina_impianti_porta_cantina_window` deliberately NOT
+       wired (plant-room door).
    NOTE — build is now organized as a **Supervisor / single-organism** refactor
    (one arbiter, priority policy stack, idempotent writes) then features as
    policies. Canonical plan: `../hvac-implementation-plan.html`; build checklist:

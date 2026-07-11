@@ -116,7 +116,7 @@ class PlanView:
     season: str | None
     house_mode: str | None
     cooling: bool               # consenso_freddo on right now
-    free_cool: bool             # #5 coasting (cool enough outside)
+    free_cool: bool             # #5 coasting (cool outside OR windows-airing)
     precool: bool               # #9 banking coolth ahead of a peak
     at_peak: bool               # hot now -> peak-skip (let the PdC run)
     forecast_peak: float | None
@@ -147,6 +147,9 @@ class PlanView:
     # facade curves) or "ghi" (house curve). Divergence from the live band's
     # domain must be visible, never silent.
     solar_domain: str = "ghi"
+    # v0.56.0: zones whose window CONTACT reads open this cycle (owner rule 2
+    # observability — the count feeds the windows_free_cool feature row).
+    windows_open: tuple[str, ...] = ()
     # F4c Phase 1: per-leader band-center composition (base + active feature +
     # floor) for observability — zone_id -> CenterComposition. Computed read-only
     # every cycle (even deploy-dark) so the composition is visible before go-live.
@@ -171,7 +174,8 @@ class PlanView:
 
 # Display order (the sensor lists rows in this order).
 FEATURE_ORDER: tuple[str, ...] = (
-    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool", "free_air",
+    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool",
+    "windows_free_cool", "free_air",
     "comfort_windows", "pv_bias", "unified_planner", "shading", "night",
 )
 
@@ -234,6 +238,13 @@ def build_feature_graph(
             "free_cool",
             plan.free_cool,
             "not cooling season" if not summer else "outdoor not cool enough",
+        ),
+        # v0.56.0 owner rule 2: open-window count + cooler-outside inference.
+        "windows_free_cool": row(
+            "windows_free_cool",
+            state.windows_free_cool,
+            "not cooling season" if not summer
+            else f"{len(state.windows_open)} window(s) open / not cooler outside",
         ),
         # #3: on == pausing the cooled zones (windows-open); there is no
         # enabled-but-inert state (row() only reaches is_active when enabled+master).
@@ -468,6 +479,7 @@ def build_plan(
         house_mode=state.house_mode,
         cooling=cooling,
         free_cool=free_cool,
+        windows_open=state.windows_open,
         precool=run_plan.precool,
         at_peak=at_peak,
         forecast_peak=run_plan.forecast_peak,

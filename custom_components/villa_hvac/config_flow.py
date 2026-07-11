@@ -33,6 +33,9 @@ from .const import (
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_OUTDOOR,
     DEFAULT_NIGHT_THRESHOLD,
+    DEFAULT_WINDOW_ALERT_MINUTES,
+    DEFAULT_WINDOWS_FREE_COOL_COUNT,
+    DEFAULT_WINDOWS_FREE_COOL_MARGIN,
     DEFAULT_PRECOOL_LOOKAHEAD_HOURS,
     DEFAULT_PRECOOL_MARGIN,
     DEFAULT_PRECOOL_MAX_DEPTH,
@@ -72,6 +75,9 @@ from .const import (
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_OUTDOOR,
     OPT_MODEL_ENABLED,
+    OPT_WINDOW_ALERT_MINUTES,
+    OPT_WINDOWS_FREE_COOL_COUNT,
+    OPT_WINDOWS_FREE_COOL_MARGIN,
     OPT_NIGHT_THRESHOLD,
     OPT_NOTIFY_TARGET,
     OPT_PRECOOL_LOOKAHEAD_HOURS,
@@ -189,6 +195,24 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=10, max=30)),
+                vol.Optional(
+                    OPT_WINDOWS_FREE_COOL_COUNT,
+                    default=options.get(
+                        OPT_WINDOWS_FREE_COOL_COUNT, DEFAULT_WINDOWS_FREE_COOL_COUNT
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=9)),
+                vol.Optional(
+                    OPT_WINDOWS_FREE_COOL_MARGIN,
+                    default=options.get(
+                        OPT_WINDOWS_FREE_COOL_MARGIN, DEFAULT_WINDOWS_FREE_COOL_MARGIN
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=5)),
+                vol.Optional(
+                    OPT_WINDOW_ALERT_MINUTES,
+                    default=options.get(
+                        OPT_WINDOW_ALERT_MINUTES, DEFAULT_WINDOW_ALERT_MINUTES
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=240)),
                 vol.Optional(
                     OPT_SHADING_ENABLED,
                     default=options.get(OPT_SHADING_ENABLED, DEFAULT_SHADING_ENABLED),

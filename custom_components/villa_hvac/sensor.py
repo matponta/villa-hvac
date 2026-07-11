@@ -333,6 +333,7 @@ class HvacPlanSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "house_mode": plan.house_mode,
             "cooling": plan.cooling,
             "free_cool": plan.free_cool,
+            "windows_open": list(plan.windows_open),
             "precool": plan.precool,
             "at_peak": plan.at_peak,
             "forecast_peak": plan.forecast_peak,

@@ -32,6 +32,8 @@ from .const import (
     DEFAULT_DUTY_MAX_STINT,
     DEFAULT_DUTY_PEAK_OUTDOOR,
     DEFAULT_FREE_COOL_OUTDOOR,
+    DEFAULT_WINDOWS_FREE_COOL_COUNT,
+    DEFAULT_WINDOWS_FREE_COOL_MARGIN,
     DEFAULT_MIN_COMPRESSOR_OFF,
     DEFAULT_MIN_COMPRESSOR_ON,
     DEFAULT_MODEL_ENABLED,
@@ -75,6 +77,8 @@ from .const import (
     OPT_DUTY_MAX_STINT,
     OPT_DUTY_PEAK_OUTDOOR,
     OPT_FREE_COOL_OUTDOOR,
+    OPT_WINDOWS_FREE_COOL_COUNT,
+    OPT_WINDOWS_FREE_COOL_MARGIN,
     OPT_MIN_COMPRESSOR_OFF,
     OPT_MIN_COMPRESSOR_ON,
     OPT_MODEL_ENABLED,
@@ -138,6 +142,9 @@ class SupervisorConfig:
     duty_peak_outdoor: float
     # #5 free-cool (the ENABLE is switch.free_cooling, read by the engine — v0.53.0)
     free_cool_outdoor: float
+    # Windows → free-cool inference (the ENABLE is switch.windows_free_cooling)
+    windows_free_cool_count: int
+    windows_free_cool_margin: float
     # #6 shading
     shading_enabled: bool
     shading_solar: float
@@ -207,6 +214,14 @@ class SupervisorConfig:
             ),
             free_cool_outdoor=_f(
                 options, OPT_FREE_COOL_OUTDOOR, DEFAULT_FREE_COOL_OUTDOOR, 10, 30
+            ),
+            windows_free_cool_count=int(_f(
+                options, OPT_WINDOWS_FREE_COOL_COUNT,
+                DEFAULT_WINDOWS_FREE_COOL_COUNT, 1, 9,
+            )),
+            windows_free_cool_margin=_f(
+                options, OPT_WINDOWS_FREE_COOL_MARGIN,
+                DEFAULT_WINDOWS_FREE_COOL_MARGIN, 0, 5,
             ),
             shading_enabled=_b(options, OPT_SHADING_ENABLED, DEFAULT_SHADING_ENABLED),
             shading_solar=_f(options, OPT_SHADING_SOLAR, DEFAULT_SHADING_SOLAR, 50, 1000),

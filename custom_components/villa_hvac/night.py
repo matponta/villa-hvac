@@ -207,6 +207,7 @@ class NightSilenceController:
         if not state.night_active:
             return self._release(state)
         threshold = self._threshold()
+        free_cooling = _is_free_cooling(state)
         out: dict = {}
         for zid, zone in bedrooms():
             z = state.zones.get(zid)
@@ -216,8 +217,19 @@ class NightSilenceController:
             )
             self._guards[zid] = new_state
             out[switch_lever(zone["manuale_switch"])] = "on"
+            # v0.55.0: a #4-paused bedroom (window OPEN, now on a real contact)
+            # stays fully silent — "stop the AC in that room" includes the guard
+            # fan, which used to circulate warm air into the open window (the
+            # known #4 edge, closed now that the bedrooms have contacts). Same
+            # while FREE-COOLING coasts (outdoor or windows-airing): the zone is
+            # BP with the valve shut, so the stage could only stir warm room air
+            # at night (the v0.54.0 nudge already yields there — the fan now
+            # matches). The hysteresis still advances, so the stage resumes on
+            # the next cycle once the pause/coast ends.
+            paused = z is not None and z.paused
             out[fan_lever(zone["fancoils"][0])] = (
-                NIGHT_GUARD_FAN_PCT if new_state.cooling else 0
+                NIGHT_GUARD_FAN_PCT
+                if (new_state.cooling and not paused and not free_cooling) else 0
             )
             # v0.54.0 chilled water: guard-active ALSO owns the room setpoint
             # (controllers merge before the pure policies, so this outranks

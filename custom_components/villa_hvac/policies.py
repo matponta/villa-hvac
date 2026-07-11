@@ -89,6 +89,7 @@ from .const import (
     SHADING_PROP_TEMP_WEIGHT,
 )
 from .supervisor import (
+    _is_free_cooling,
     BLOCCO_BLOCK,
     BLOCCO_LEVER,
     BLOCCO_RELEASE,
@@ -147,14 +148,13 @@ def _controllable(zone: ZoneSnapshot) -> bool:
 
 
 def _free_cooling(state: HouseState) -> bool:
-    """True when #5 is suppressing active cooling (summer + cool enough outside)."""
-    return (
-        state.free_cool_enabled
-        and state.season == SEASON_SUMMER
-        and state.outdoor_temp is not None
-        and state.free_cool_threshold is not None
-        and state.outdoor_temp < state.free_cool_threshold
-    )
+    """True when free-cooling is suppressing active cooling — the #5 outdoor
+    threshold OR the v0.56.0 windows-airing verdict. Delegates to the ONE model
+    predicate (`_is_free_cooling`) so the preset policies and the band/planner
+    can never diverge on what "free-cooling" means (they duplicated the check
+    pre-v0.56.0; a verdict added to one and not the other would BP the zones
+    without yielding the band, or vice versa)."""
+    return _is_free_cooling(state)
 
 
 def disabled_zones_policy(state: HouseState) -> Desired:

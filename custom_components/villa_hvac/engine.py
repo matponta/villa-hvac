@@ -97,6 +97,8 @@ from .const import (
     SPLIT_GROUP,
     STALE_TEMP_CYCLES,
     WEATHER_ENTITY_DEFAULT,
+    WINDOW_OPEN_STATES,
+    WINDOWS_FREE_COOL_DWELL,
     ZONES,
 )
 from .controller import (
@@ -119,6 +121,7 @@ from .controller import (
     split_ac_enabled,
     supervisor_enabled,
     unified_planner_enabled,
+    windows_free_cool_enabled,
 )
 from .policies import (
     CoolingController,
@@ -637,6 +640,51 @@ def build_house_state(
     )
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
+    season = current_season(hass, entry)
+    # Windows → free-cool inference (v0.56.0, owner rule 2): enough window
+    # CONTACTS open + outdoor meaningfully cooler than the house indoor mean →
+    # the house is being aired deliberately; `_is_free_cooling` ORs the verdict
+    # in, so the whole #5 coast stack follows (BP, band yield, #2b fan-only).
+    # Contacts only (binary_sensor `window` keys — the bathroom vasistas covers
+    # are not "airing the house" signals); unavailable (dead BLE battery)
+    # counts as CLOSED, never a false coast.
+    windows_open = tuple(
+        zid for zid, zone in ZONES.items()
+        if (w := zone.get("window")) and w.startswith("binary_sensor.")
+        and (ws := hass.states.get(w)) is not None
+        and ws.state in WINDOW_OPEN_STATES
+    )
+    leader_temps = [
+        z.temp for z in zones.values()
+        # #10-disabled zones are long-term parked (often hot) — they are not
+        # "the house" for the airing verdict and would skew the mean.
+        if _is_cooling_leader(z) and z.enabled and z.temp is not None
+    ]
+    indoor_mean = sum(leader_temps) / len(leader_temps) if leader_temps else None
+    windows_fc_raw = (
+        windows_free_cool_enabled(hass, entry)
+        and season == SEASON_SUMMER
+        and len(windows_open) >= cfg.windows_free_cool_count
+        and outdoor is not None
+        and indoor_mean is not None
+        and outdoor <= indoor_mean - cfg.windows_free_cool_margin
+    )
+    # ENTRY DWELL (adversarial review): the raw conditions must hold for
+    # WINDOWS_FREE_COOL_DWELL before the house-wide coast engages — a 30 s
+    # kitchen-door transit that momentarily makes the count must never slam
+    # every zone to BP and cycle the compressor. Exit is immediate (resuming
+    # cooling is the safe direction). The anchor lives on the engine so the
+    # dwell survives across cycles; None engine (bare tests) = no dwell.
+    windows_free_cool = False
+    if eng is not None:
+        if windows_fc_raw:
+            if eng.windows_fc_since is None:
+                eng.windows_fc_since = now
+            windows_free_cool = now - eng.windows_fc_since >= WINDOWS_FREE_COOL_DWELL
+        else:
+            eng.windows_fc_since = None
+    else:
+        windows_free_cool = windows_fc_raw
     plan = _make_run_plan(cfg, forecast, now, outdoor)
     return HouseState(
         now=now,
@@ -662,7 +710,7 @@ def build_house_state(
         night_active=night_active,
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
         comfort_enabled=comfort is not None,
-        season=current_season(hass, entry),
+        season=season,
         house_mode=mode,
         auto_setback=setback_on,
         house_setpoint=house_setpoint,
@@ -670,6 +718,8 @@ def build_house_state(
         # v0.53.0: the free-cool enable is an opt-in switch (was an options toggle).
         free_cool_enabled=free_cool_enabled(hass, entry),
         free_cool_threshold=cfg.free_cool_outdoor,
+        windows_open=windows_open,
+        windows_free_cool=windows_free_cool,
         outdoor_temp=outdoor,
         solar=ghi,
         config=cfg,
@@ -777,6 +827,9 @@ class SupervisorEngine:
         # PV/energy-aware pre-cool: last decision (diagnostic) + min-dwell anchor.
         self._pv_decision = None
         self._pv_since = None
+        # Windows→free-cool entry-dwell anchor (v0.55.0): first cycle the raw
+        # airing conditions held; the verdict engages only after the dwell.
+        self.windows_fc_since = None
         # F4c Phase 6: the cached unified band-center reference schedule. Recomputed
         # at the forecast cadence (or on a mode change), read forward by the fast
         # loop — a SLOW-moving reference, NOT recomputed every 30 s tick.
@@ -1102,6 +1155,7 @@ class SupervisorEngine:
                 "regime": bool(cfg and cfg.regime_enabled),
                 "precool": state.duty_enabled,
                 "free_cool": state.free_cool_enabled,
+                "windows_free_cool": windows_free_cool_enabled(self.hass, self.entry),
                 "free_air": free_air_enabled(self.hass, self.entry),
                 "comfort_windows": state.comfort_enabled,
                 "pv_bias": (

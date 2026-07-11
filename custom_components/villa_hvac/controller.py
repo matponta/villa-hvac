@@ -277,6 +277,16 @@ def free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "free_cool") == STATE_ON
 
 
+def windows_free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the windows->free-cool inference switch is on (opt-in).
+
+    Owner rule 2 (2026-07-11): with enough window contacts open and the outside
+    air cooler than the house, the house is being aired deliberately -> coast
+    like #5 free-cooling. The switch keeps the auto-coast an explicit choice
+    (same discipline as switch.free_cooling, v0.53.0)."""
+    return _switch_state(hass, entry, "windows_free_cool") == STATE_ON
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF

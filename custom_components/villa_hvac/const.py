@@ -185,6 +185,9 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_626794_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_626794_occupancy",
         "emitter": "fancoil",  # summer
+        # Porta Cucina contact: the kitchen has NO thermostat (open space follows
+        # Salotto, one air volume) — pausing the LEADER closes both valves (#4).
+        "window": "binary_sensor.shelly_blu_door_window_b50c_window",
     },
     "kitchen": {
         "name": "Kitchen",
@@ -208,6 +211,7 @@ ZONES: dict[str, dict] = {
         "emitter": "fancoil",
         "bedroom": True,  # camere silenziose (#2b)
         "manuale_switch": "switch.fancoil_camera_padronale_manuale",
+        "window": "binary_sensor.main_bedroom_finestra_piccola_bedroom_window",
     },
     "gabriroom": {
         "name": "Camera Gabriele",
@@ -220,6 +224,7 @@ ZONES: dict[str, dict] = {
         "emitter": "fancoil",
         "bedroom": True,  # camere silenziose (#2b)
         "manuale_switch": "switch.fancoil_camera_gabriele_manuale",
+        "window": "binary_sensor.gabri_room_finestra_g_window",
     },
     "studio_v": {
         "name": "Studio V",
@@ -230,6 +235,8 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_a8c910_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_a8c910_occupancy",
         "emitter": "fancoil",
+        # Device "Finestra V" (entity id kept its placeholder name in HA).
+        "window": "binary_sensor.aaa_window",
     },
     "sala_giochi": {
         "name": "Sala Giochi",
@@ -250,6 +257,7 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_a8c850_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_a8c850_occupancy",
         "emitter": "fancoil",
+        "window": "binary_sensor.shelly_blu_door_window_9756_window",
     },
     "stairs_p1": {
         "name": "Pianerottolo P1",
@@ -289,6 +297,7 @@ ZONES: dict[str, dict] = {
         "ep_temp": None,
         "ep_occ": None,
         "emitter": "radiant",
+        "window": "binary_sensor.entrance_porta_vetri_ingresso_window",  # porta vetri
     },
     "lavanderia": {
         "name": "Lavanderia",
@@ -493,6 +502,49 @@ DEFAULT_AWAY_HOURS = 18
 # #3 free-air/windows-open concept once we understand how the two intertwine.
 OPT_FREE_COOL_OUTDOOR = "free_cool_outdoor"
 DEFAULT_FREE_COOL_OUTDOOR = 22.0  # °C: outdoor below this -> no active cooling
+
+# --- Windows → free-cooling inference (owner rule 2, 2026-07-11; v0.56.0) -----
+# With the opt-in `switch.windows_free_cool` ON: when at least COUNT window
+# CONTACTS are open (the binary_sensor entries in ZONES — the 3 bathroom
+# vasistas covers are NOT "airing the house" signals) AND the outdoor air is at
+# least MARGIN cooler than the house indoor mean (fused temps of the cooled
+# leaders), the house is being aired deliberately → treat exactly as #5
+# free-cooling (OR into `_is_free_cooling`): BP the cooled zones, band yields,
+# #2b guard goes fan-only, plan regime reads free_cool. Threshold-only (no
+# hysteresis), the same accepted trade-off as #5 — the count is discrete and
+# both temperatures move slowly.
+OPT_WINDOWS_FREE_COOL_COUNT = "windows_free_cool_count"
+DEFAULT_WINDOWS_FREE_COOL_COUNT = 3
+OPT_WINDOWS_FREE_COOL_MARGIN = "windows_free_cool_margin"
+DEFAULT_WINDOWS_FREE_COOL_MARGIN = 1.0  # °C: outdoor ≤ indoor − this → coast
+# The raw conditions must HOLD this long before the verdict engages (entry
+# dwell): a 30 s kitchen-door transit that momentarily makes the count must
+# never slam the whole house to BP and cycle the compressor (adversarial
+# review 2026-07-11). Exit is immediate — resuming cooling is the safe
+# direction, and a real airing ends when the windows close.
+WINDOWS_FREE_COOL_DWELL = timedelta(minutes=5)
+
+# --- Long-open window alert (owner rule 3, 2026-07-11; v0.57.0) ---------------
+# A window CONTACT open longer than this (while the house is NOT deliberately
+# airing: free_air off, windows-free-cool not engaged) → one push notification
+# per opening episode to Mattia + Ehi. 0 disables. Contacts only — the bathroom
+# vasistas pause their zone via #4 but never page anyone. Year-round (an open
+# window wastes heating in winter too).
+OPT_WINDOW_ALERT_MINUTES = "window_alert_minutes"
+DEFAULT_WINDOW_ALERT_MINUTES = 30
+OPT_WINDOW_ALERT_TARGETS = "window_alert_targets"  # comma-separated notify.* names
+WINDOW_ALERT_TARGETS = (
+    # Resolved 2026-07-11 from person.mattia_pontacolone / person.ehi trackers.
+    "notify.mobile_app_matphone16",   # Mattia (iPhone 16)
+    "notify.mobile_app_pixel_10",     # Ehi (Pixel 10)
+)
+WINDOW_ALERT_TAG = "villa_hvac_window_open"  # mobile_app tag: replaces, no pile-up
+# Alert display-name overrides per OPENING (else the zone name): the kitchen
+# door pauses the living_room LEADER, but the page must name the door, not
+# "Salotto" (adversarial review 2026-07-11).
+WINDOW_ALERT_NAMES: dict[str, str] = {
+    "binary_sensor.shelly_blu_door_window_b50c_window": "Porta Cucina",
+}
 
 # --- #5 VMC boost (night free-cooling ventilation) ---------------------------
 # Two independent VMC (mechanical ventilation) machines. When it's summer and the

@@ -54,6 +54,7 @@ async def async_setup_entry(
         FreeAirSwitch(entry),
         VmcAutoSwitch(entry),
         FreeCoolSwitch(entry),
+        WindowsFreeCoolSwitch(entry),
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -242,6 +243,48 @@ class FreeCoolSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_free_cool"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+
+class WindowsFreeCoolSwitch(SwitchEntity, RestoreEntity):
+    """Windows -> free-cooling inference (owner rule 2, default OFF).
+
+    When on (and the master is on): in summer, with at least
+    OPT_WINDOWS_FREE_COOL_COUNT window contacts open and the outdoor air at
+    least OPT_WINDOWS_FREE_COOL_MARGIN cooler than the house indoor mean, the
+    house is being aired deliberately -> the whole cooling stack coasts exactly
+    like #5 free-cooling. Entity: switch.windows_free_cooling (unique suffix
+    windows_free_cool).
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Windows free cooling"
+    _attr_icon = "mdi:window-open-variant"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_windows_free_cool"
         self._attr_is_on = False
 
     async def async_added_to_hass(self) -> None:
