@@ -13,6 +13,20 @@ manual-override tracking) instead of direct service calls. `active` is DERIVED
 from the house mode (== Notte) + Auto-setback + a wake latch, so a reboot-in-Notte
 re-enters silence via the controller (no startup-resync special case).
 
+CHILLED WATER (v0.54.0): while guard-active (summer) the controller ALSO emits a
+`temperature:` opinion at threshold−NIGHT_GUARD_SETPOINT_DROP (bounded: never
+above the #2a mode target, which must be computable) — the manuale switch only
+holds the FAN %, the EV FAN valve follows the thermostat setpoint, so without
+this the guard circulated warm air with the valve CLOSED whenever the room sat
+between the threshold (26) and the Notte setpoint (27; the whole first live
+night for padronale). Controllers merge before the pure policies, so the opinion
+outranks house_mode #2a on that lever; it yields on disabled/paused zones and
+while free-cooling coasts (never a setpoint under building_protection). Released
+by the guard's below-hysteresis / auto-wake / Notte exit (#2a re-asserts its
+target in the same merge) AND by the engine's `async_fail_safe` via
+`failsafe_setpoints()`, which restores the base RECORDED AT NUDGE TIME (live
+entity reads are gone by the time an unload-path fail-safe runs).
+
 `evaluate_guard` is pure (no HA) so the hysteresis is unit-testable.
 """
 from __future__ import annotations
@@ -33,13 +47,21 @@ from .const import (
     NIGHT_GUARD_FAN_PCT,
     NIGHT_GUARD_HIGH,
     NIGHT_GUARD_LOW,
+    NIGHT_GUARD_SETPOINT_DROP,
     NIGHT_WAKE_DAY_MINUTES,
     OPT_AUTO_WAKE_TIME,
     OPT_NIGHT_THRESHOLD,
+    SEASON_SUMMER,
     ZONES,
 )
 from .controller import current_house_mode
-from .supervisor import fan_lever, in_window, switch_lever
+from .supervisor import (
+    _is_free_cooling,
+    fan_lever,
+    in_window,
+    switch_lever,
+    temperature_lever,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -95,8 +117,9 @@ class NightSilenceController:
 
     Each cycle the engine calls `__call__(state)`; while the house is in Notte
     (`state.night_active`) it returns `{switch:manuale on, fan:pct}` opinions for
-    the 2 bedrooms — silenced (fan 0), or the heat-guard low stage when a room
-    overheats. The engine's reconcile arbiter does the writing, so #2b is no
+    the 2 bedrooms — silenced (fan 0), or the heat-guard low stage (plus the
+    v0.54.0 chilled-water `temperature:` nudge) when a room overheats. The
+    engine's reconcile arbiter does the writing, so #2b is no
     longer a second direct writer. On the Notte-exit cycle it emits a one-shot
     manuale release; placed AFTER FanBandController in the merge, so FanBand
     re-taking a bedroom for pacing wins over that release.
@@ -113,6 +136,17 @@ class NightSilenceController:
         self.coordinator = coordinator
         self._guards: dict[str, GuardState] = {zid: GuardState() for zid, _ in bedrooms()}
         self._managing: set[str] = set()
+        # v0.54.0 chilled water: zone -> the #2a mode base RECORDED AT NUDGE TIME
+        # for every bedroom whose setpoint the guard has written this Notte
+        # episode (the lever may be displaced below that base). The restore
+        # target is snapshotted here — NOT recomputed from live entities at
+        # restore time — because on the unload path the integration's own
+        # select/number entities are already gone when `async_fail_safe` runs
+        # (adversarial review, 2026-07-11). NOT dropped on a mid-night guard
+        # silence (house_mode restores that same cycle, but a fail-safe later
+        # that night must still be able to re-write the base); dropped on the
+        # Notte-exit restore only when #2a is actually re-asserting.
+        self._nudged: dict[str, float] = {}
         self._woken = False
         self._unsub_wake = None
 
@@ -171,7 +205,7 @@ class NightSilenceController:
         if state.house_mode != HOUSE_MODE_NIGHT:
             self._woken = False
         if not state.night_active:
-            return self._release()
+            return self._release(state)
         threshold = self._threshold()
         out: dict = {}
         for zid, zone in bedrooms():
@@ -185,19 +219,108 @@ class NightSilenceController:
             out[fan_lever(zone["fancoils"][0])] = (
                 NIGHT_GUARD_FAN_PCT if new_state.cooling else 0
             )
+            # v0.54.0 chilled water: guard-active ALSO owns the room setpoint
+            # (controllers merge before the pure policies, so this outranks
+            # house_mode #2a) — drives it below the room temp so the KNX
+            # thermostat opens the EV FAN valve and the held 33% fan moves
+            # chilled air, not the 26–27 dead-band warm-air loop of the first
+            # live night. On guard silence the key is simply not emitted and
+            # #2a re-asserts the mode setpoint in the same merge.
+            if new_state.cooling:
+                base = self._mode_base(state, z) if z is not None else None
+                nudge = self._nudge_target(state, z, threshold, base)
+                if nudge is not None:
+                    out[temperature_lever(z.climate)] = nudge
+                    self._nudged[zid] = round(base, 1)  # restore snapshot
             self._managing.add(zid)
         return out
 
-    def _release(self) -> dict:
-        """One-shot hand-back: manuale off for the bedrooms we were silencing."""
+    @staticmethod
+    def _mode_base(state, z) -> float | None:
+        """What #2a would set this zone to right now (house base + mode offset +
+        per-room trim); None when not computable (e.g. Vacanza has no offset)."""
+        if state.house_setpoint is None or state.mode_offset is None:
+            return None
+        return state.house_setpoint + state.mode_offset + z.setpoint_offset
+
+    def _nudge_target(self, state, z, threshold: float, base: float | None) -> float | None:
+        """The chilled-water setpoint for a guard-active bedroom, or None to
+        leave the lever alone (the guard stays fan-only).
+
+        Summer only: in winter the guard stays fan-only — threshold−drop sits
+        ABOVE the winter setback target, and a raised setpoint on a heat-mode
+        thermostat could heat the very room the guard is trying to cool. Skips
+        disabled/#4-paused zones (their building_protection is owned by the
+        higher preset policies; never push a setpoint under a pause) and yields
+        while FREE-COOLING holds the fancoils in building_protection (a setpoint
+        under that BP is inert but displaced; the coast owns cooling — the
+        free-cool × guard escalation question belongs to the outside-air merge
+        design). REQUIRES a computable #2a base and is bounded by it, so the
+        nudge can only ever DEEPEN, never raise — with the base unknown, a raw
+        threshold−drop could RAISE a trimmed room's setpoint (e.g. a −3 °C
+        room trim puts the mode target below 25.5).
+        """
+        if state.season != SEASON_SUMMER:
+            return None
+        if z is None or not z.enabled or z.paused or not z.climate:
+            return None
+        if _is_free_cooling(state):
+            return None
+        if base is None:
+            return None
+        return round(min(threshold - NIGHT_GUARD_SETPOINT_DROP, base), 1)
+
+    def _release(self, state) -> dict:
+        """One-shot hand-back: manuale off — plus any guard-nudged setpoint back
+        to the house-mode base — for the bedrooms we were silencing. (If the #3
+        band re-takes a bedroom this same cycle, its opinion merges first and
+        wins; if #2a is active it keeps re-asserting the same base every cycle.)
+
+        The restore prefers the LIVE #2a base (the mode we are releasing into),
+        falling back to the nudge-time snapshot (e.g. Vacanza: no live offset).
+        The tracking is dropped only when #2a is actually re-asserting the lever
+        (auto_setback on + base computable); otherwise the one-shot write is a
+        single unprotected telegram, so the snapshot is KEPT for the fail-safe.
+        """
         if not self._managing:
             return {}
         out: dict = {}
         for zid, zone in bedrooms():
-            if zid in self._managing:
-                out[switch_lever(zone["manuale_switch"])] = "off"
-                self._guards[zid] = GuardState()
+            if zid not in self._managing:
+                continue
+            out[switch_lever(zone["manuale_switch"])] = "off"
+            if zid in self._nudged:
+                z = state.zones.get(zid)
+                live = self._mode_base(state, z) if z is not None else None
+                base = live if live is not None else self._nudged[zid]
+                out[temperature_lever(zone["climate"])] = round(base, 1)
+                if state.auto_setback and live is not None:
+                    del self._nudged[zid]  # #2a re-asserts from here on
+            self._guards[zid] = GuardState()
         self._managing.clear()
+        return out
+
+    def failsafe_setpoints(self) -> dict[str, float]:
+        """#2b fail-safe: climate entity → the #2a base setpoint RECORDED AT
+        NUDGE TIME for every bedroom the guard nudged this Notte episode.
+        `async_fail_safe` writes these so a guard-displaced setpoint
+        (threshold−drop, colder than asked) never outlives the supervisor.
+
+        Deliberately NO live entity reads: on the unload path the platforms
+        (and with them `number.house_setpoint`/`select.house_mode`) are torn
+        down BEFORE `async_fail_safe` runs, so a restore computed live would
+        silently no-op exactly where it matters most. Clears the tracking for
+        the zones it returns.
+        """
+        if not self._nudged:
+            return {}
+        zones = dict(bedrooms())
+        out: dict[str, float] = {}
+        for zid, base in self._nudged.items():
+            zone = zones.get(zid)
+            if zone and zone.get("climate"):
+                out[zone["climate"]] = base
+        self._nudged.clear()
         return out
 
     def _schedule_wake(self) -> None:

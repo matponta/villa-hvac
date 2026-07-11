@@ -209,12 +209,25 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              is now Studio V office, legacy). Lever = `switch.fancoil_*_manuale`
              + fan off + heat-guard hysteresis; threshold + auto-wake in options
              flow (defaults 26 °C / 08:00). See `night.py`.
-             BACKLOG (owner 2026-07-10): the heat-guard only spins the FAN (33%)
-             — the valve stays with the KNX thermostat at the Notte setpoint 27
-             (24+3), so in the 26–27 band it circulates warm air with the valve
-             CLOSED (legacy-inherited). Fix: guard-active → also nudge the room
-             setpoint down so the valve opens; release with the guard/auto-wake/
-             fail-safe. See NEXT_SESSION backlog for the arbiter notes.
+             CHILLED WATER (v0.54.0, closed the 2026-07-10 owner backlog): the
+             manuale switch holds only the FAN — the EV valve follows the
+             thermostat setpoint, so the legacy guard circulated warm air with
+             the valve CLOSED in the threshold→Notte-setpoint band (26–27;
+             padronale's whole first live night). Guard-active now ALSO emits a
+             `temperature:` opinion at threshold−`NIGHT_GUARD_SETPOINT_DROP`
+             (0.5), SUMMER only, bounded ≤ the #2a mode target which must be
+             COMPUTABLE (never raise — a raw fallback could lift a trim-cooled
+             room), skipped on #10-disabled/#4-paused zones AND while
+             free-cooling coasts (guard stays fan-only under BP; the free-cool ×
+             guard escalation question belongs to the outside-air merge design).
+             Controllers merge before pure policies → outranks house_mode on
+             that lever. Release: guard below-hysteresis / auto-wake / Notte
+             exit (#2a re-asserts in the same merge) + `async_fail_safe`
+             restores the base RECORDED AT NUDGE TIME via
+             `night.failsafe_setpoints()` — snapshot, NOT live reads: on the
+             unload path the select/number entities are torn down before the
+             fail-safe runs (adversarial-review MAJOR). Fail-safe SHA pin
+             updated per that test's own protocol.
        - [x] #2c away auto-escalation (presenza_adulti not_home 18h → Via;
              home → Casa from ANY Via — manual or auto (restore_target checks
              mode==Via only, no origin tracking); Notte/Vacanza never touched.

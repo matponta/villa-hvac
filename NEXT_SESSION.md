@@ -16,15 +16,31 @@ First read CLAUDE.md in full (verified facts: zone map, EV-FAN-valve cooling cha
 BLOCCO polarity on=block, supervisor architecture, F1/F2/F3/F4 notes). Don't
 re-derive verified facts. MASTER_PLAN.md = build checklist.
 
-STATE (2026-07-11): repo == LIVE == v0.53.0 (1466 tests, ruff clean).
+STATE (2026-07-11): repo == v0.54.0 (1481 tests, ruff clean). LIVE = v0.53.0
+until the owner deploys v0.54.0 (HACS update + restart, then verify: supervisor
+back ON, hvac_levers=0, no ERROR logs, and on the NEXT Notte night check the
+padronale valve actually opens when the heat-guard fires).
 ⚡ THE SUPERVISOR IS LIVE: switch.supervisor + auto_setback + vmc_auto ON since
-2026-07-10 evening — the engine ACTUATES the villa. This is NO LONGER a
-deploy-dark codebase: any change to the #2/#2b/#4/free-air/VMC paths changes
-LIVE behavior the household relies on nightly. Small increments, pre-tag
-adversarial review, never weaken the fail-safe invariants. Deploys (HACS +
-restart) now restart a live-actuating supervisor — safe by design (fail-safe on
-unload, switches restore), but verify after: supervisor back ON, hvac_levers=0,
-no ERROR logs.
+2026-07-10 evening — the engine ACTUATES the villa. Any change to the
+#2/#2b/#4/free-air/VMC paths changes LIVE behavior the household relies on
+nightly. Small increments, pre-tag adversarial review, never weaken the
+fail-safe invariants.
+
+v0.54.0 (#2b HEAT-GUARD CHILLED WATER — closed the top owner backlog item):
+guard-active now ALSO slams the bedroom setpoint to threshold−0.5
+(NIGHT_GUARD_SETPOINT_DROP; summer only, bounded ≤ a COMPUTABLE #2a mode
+target — never raise, skips disabled/paused/free-cooling zones) so the EV
+valve opens and the held 33% fan moves CHILLED air — the legacy guard
+circulated warm air valve-CLOSED in the 26–27 dead-band (padronale's whole
+first night). Releases: guard 10-min-below hysteresis / auto-wake / Notte exit
+(#2a re-asserts in the same merge) + async_fail_safe restoring the NUDGE-TIME
+snapshot (night.failsafe_setpoints — deliberately NO live entity reads: the
+select/number platforms are torn down before an unload-path fail-safe; found
+as a MAJOR by the 21-agent pre-tag adversarial review, along with the
+free-cool interplay). The fail-safe SHA pin in test_engine was updated
+deliberately, per that test's own protocol. Golden tests pin the legacy
+silence/release/fan behavior; an engine-level test proves chilled-water
+delivery through the real cycle (mutation-verified).
 
 FIRST NIGHT (7/10→11) verified clean from the recorder: mode bridge propagated
 Chiudi-notte in 11 ms; #2b silence latched same-second; heat-guard fired 00:17
@@ -48,57 +64,48 @@ HA-SIDE STATE (not in this repo — applied live 2026-07-10 ~23:20):
 
 BACKLOG (priority order — pick from the top unless the owner redirects):
 
-1. #2b HEAT-GUARD CHILLED WATER [RECOMMENDED FIRST: small, owner-asked,
-   evidence in hand]. Today the guard only spins the fan (33%) above 26 °C;
-   the valve stays with the KNX thermostat at the Notte setpoint 27 (24+3), so
-   the 26–27 band is warm-air circulation with the valve CLOSED. First-night
-   evidence: padronale crossed 26.0 at 00:04 and climbed to 26.8 by 02:40 —
-   whole night in the dead-band, no chilled water. Fix: guard-active → ALSO
-   nudge that room's setpoint down (e.g. threshold−0.5 or reuse the band slam)
-   so the valve opens; release with the guard's 10-min-below hysteresis, the
-   08:00 auto-wake, AND async_fail_safe. Design constraints: the guard's
-   temperature-lever opinion must outrank house_mode #2a in the arbiter merge
-   (same precedence mechanism the band uses — NightSilenceController is already
-   a merge controller, C1); never fight camere-silenziose's own manuale hold;
-   this path is LIVE — golden-test current behavior first, then change.
+1. PER-ROOM OCCUPANCY ROSTER (#2 evolution): every zone has ep_occ mapped in
+   ZONES but NOTHING consumes it (only #6 palestra comfort reads occupied).
+   Goal: a vacant room relaxes toward its own setback (the Gabriele case:
+   empty bedroom on comfort schedule all day). EP occupancy is flappy →
+   debounce/latch like presence. Design first (small story doc): per-zone
+   opt-in? offset-based relax vs preset? interaction with #2b bedrooms +
+   comfort windows (F4b).
 
-2. PER-ROOM OCCUPANCY ROSTER (#2 evolution): every zone has ep_occ mapped in
-   ZONES but NOTHING consumes it. Goal: a vacant room relaxes toward its own
-   setback (the Gabriele case: empty bedroom on comfort schedule all day).
-   EP occupancy is flappy → debounce/latch like presence. Design first (small
-   story doc): per-zone opt-in? offset-based relax vs preset? interaction with
-   #2b bedrooms + comfort windows (F4b).
-
-3. #2 OFFSET INTO plan_center_schedule: the per-room offset (v0.49.0) is
+2. #2 OFFSET INTO plan_center_schedule: the per-room offset (v0.49.0) is
    applied at resolve_center/house_mode/precool but NOT in the unified-planner
    schedule base — a HARD GATE before switch.unified_planner can ever be
    enabled. Mechanical, well-scoped.
 
-4. FREE_AIR → PER-ROOM "OPEN WINDOWS" (owner ask): rename switch.free_air →
+3. FREE_AIR → PER-ROOM "OPEN WINDOWS" (owner ask): rename switch.free_air →
    "Open windows"; one switch per cooled zone (pausing just that zone);
    window CONTACT SENSORS to be installed on the cooled rooms later slot into
    the existing #4 `window` key/WindowController (manual switch = fallback for
    sensor-less rooms). The switch layer can ship BEFORE the sensors exist.
 
-5. LEGACY CLEANUP → v1.0.0: after ~1 week of clean supervisor nights, DELETE
+4. LEGACY CLEANUP → v1.0.0: after ~1 week of clean supervisor nights, DELETE
    the disabled automations + the buonanotte/sveglia scripts' climate branches
    + automation.sistema_ricrea_group_presenza_adulti_all_avvio (obsolete since
-   v0.46.0 watches person.* directly). Consider rewiring the physical buttons
-   to select.house_mode directly and retiring the bridge last.
+   v0.46.0 watches person.* directly). NOTE: the 3 notte_guardia_caldo_camera_*
+   automations are now doubly-superseded (v0.54.0 guard does fan AND valve).
+   Consider rewiring the physical buttons to select.house_mode directly and
+   retiring the bridge last.
 
-6. TIER-1 TRAIN (STORY_TIER1): P3 delete-trio is STOP-gated on the live soak
+5. TIER-1 TRAIN (STORY_TIER1): P3 delete-trio is STOP-gated on the live soak
    of the merged CoolingController — the soak STARTED 2026-07-10 when the
    supervisor went live; give it 1–2 clean weeks (watch hvac_levers + nightly
    behavior), then P3 → P5 (R2 deviation-space) → P6 (R3 REST-quorum + boot
    manuale sweep). P4 feature_graph already shipped (v0.47.0).
 
-7. OUTSIDE-AIR MERGE (free-cooling × open-windows, owner ask): deliberately
+6. OUTSIDE-AIR MERGE (free-cooling × open-windows, owner ask): deliberately
    UNDESIGNED until weeks of live data show how the two intertwine.
    Candidates noted in CLAUDE.md #5.
 
 Smaller follow-ups: VMC thresholds (const → options flow) · #6
 cycles_since_restart resets on restart (total is restored — cosmetic) ·
-night-guard threshold tuning on real nights (26.0 default).
+night-guard threshold tuning on real nights (26.0 default) · watch the first
+v0.54.0 guard night: valve open minutes + did the room actually get driven
+below threshold (25.5 target) without overshoot complaints.
 
 LIVE-OPS for the owner (not build work — support if asked): watch S_eff
 geometry on the Modello tab → flip seff_enabled → STORY_SEFF §8 gates ~1wk;
@@ -109,9 +116,11 @@ RULES unchanged: pytest + ruff green on the pinned target
 (pytest-homeassistant-custom-component==0.13.324 = HA 2026.4.3 / Py 3.14);
 small commit + tag + gh release per increment; pre-tag adversarial review
 (workflow if budget allows, else inline 3-lens + refutation); fail-safe
-invariants byte-preserved; HA connector for live diagnosis (read-only unless
-the owner asks); owner-visible behavior changes get a household-manual update
-(artifact 8d1ef72b + PDF in repo root). Known quirks: ~40s KNX unavailable
+invariants byte-preserved (the SHA-pin test's own update protocol applies);
+HA connector for live diagnosis (read-only unless the owner asks);
+owner-visible behavior changes get a household-manual update (artifact
+8d1ef72b + PDF in repo root — v0.54.0 manual update PENDING, do it from the
+Cowork session that owns the artifact). Known quirks: ~40s KNX unavailable
 blips (nightly ~03:00 backup) — ignore singles; the ThermalEstimator gap guard
 covers the long ones.
 ```

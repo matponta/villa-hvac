@@ -141,7 +141,12 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
 
 # --- C1: NightSilenceController as a merge controller ------------------------
 
-def _night_state(*, mode="Notte", night_active=True, temps=None, now=T0):
+def _night_state(
+    *, mode="Notte", night_active=True, temps=None, now=T0,
+    season="summer", house_setpoint=24.0, mode_offset=3.0,
+    enabled=True, paused=False, setpoint_offset=0.0,
+    auto_setback=False, free_cooling=False,
+):
     from custom_components.villa_hvac.supervisor import HouseState, ZoneSnapshot
 
     temps = temps or {}
@@ -150,9 +155,17 @@ def _night_state(*, mode="Notte", night_active=True, temps=None, now=T0):
         zones[zid] = ZoneSnapshot(
             zone_id=zid, name=zone["name"], climate=zone.get("climate"),
             emitter="fancoil", temp=temps.get(zid), bedroom=True,
+            enabled=enabled, paused=paused, setpoint_offset=setpoint_offset,
             fancoil_units=((zone["fancoils"][0], zone["manuale_switch"]),),
         )
-    return HouseState(now=now, zones=zones, house_mode=mode, night_active=night_active)
+    return HouseState(
+        now=now, zones=zones, house_mode=mode, night_active=night_active,
+        season=season, house_setpoint=house_setpoint, mode_offset=mode_offset,
+        auto_setback=auto_setback,
+        free_cool_enabled=free_cooling,
+        free_cool_threshold=22.0 if free_cooling else None,
+        outdoor_temp=20.0 if free_cooling else None,
+    )
 
 
 def _night_ctrl():
@@ -196,6 +209,313 @@ def test_night_controller_releases_once_on_exit():
 def test_night_controller_yields_when_inactive_and_unmanaged():
     # Never entered Notte -> no opinion at all (doesn't fight FanBand for bedrooms).
     assert _night_ctrl()(_night_state(mode="Casa", night_active=False)) == {}
+
+
+# --- GOLDEN (pinned pre-v0.54.0, LIVE path): behavior that must NOT change ---
+
+def _guard_cooling(ctrl, temps=None, **kw):
+    """Advance a controller into guard-cooling; returns the cooling-cycle output."""
+    hot = temps or {"main_bedroom": 26.5, "gabriroom": 26.5}
+    ctrl(_night_state(temps=hot, now=T0, **kw))                # starts the above-timer
+    return ctrl(_night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH, **kw))
+
+
+def test_golden_silence_emits_manuale_and_fan_only():
+    """Silenced bedroom (cool room): exactly {manuale on, fan 0} — the silence
+    path must never grow a setpoint opinion."""
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    out = _night_ctrl()(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}))
+    expected = set()
+    for _zid, zone in bedrooms():
+        expected |= {switch_lever(zone["manuale_switch"]), fan_lever(zone["fancoils"][0])}
+    assert set(out) == expected
+
+
+def test_golden_guard_fan_stage_and_manuale_unchanged():
+    """Guard-active keeps the legacy fan lever exactly: manuale on + fan 33%."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    out = _guard_cooling(_night_ctrl())
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "on"
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_golden_release_without_guard_is_manuale_off_only():
+    """Notte-exit hand-back for a never-guarded night: exactly the one-shot
+    manuale off per bedroom (no fan, no setpoint opinions)."""
+    from custom_components.villa_hvac.supervisor import switch_lever
+
+    c = _night_ctrl()
+    c(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}))
+    out = c(_night_state(mode="Casa", night_active=False))
+    expected = {switch_lever(zone["manuale_switch"]) for _zid, zone in bedrooms()}
+    assert set(out) == expected
+    assert all(v == "off" for v in out.values())
+    assert c(_night_state(mode="Casa", night_active=False)) == {}
+
+
+# --- v0.54.0: chilled water — guard-active also owns the setpoint ------------
+
+def _temp_levers(out):
+    return {k: v for k, v in out.items() if k.startswith("temperature:")}
+
+
+def test_guard_cooling_nudges_setpoint_below_threshold():
+    """Guard-active in summer: the setpoint is driven to threshold−drop so the
+    EV FAN valve opens and the held 33% fan moves CHILLED air — the first-night
+    26–27 dead-band fix. Fan + manuale stay exactly the legacy levers."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_SETPOINT_DROP
+    from custom_components.villa_hvac.supervisor import temperature_lever
+
+    out = _guard_cooling(_night_ctrl())  # base 24+3=27 > 25.5 -> bound inactive
+    for _zid, zone in bedrooms():
+        assert (
+            out[temperature_lever(zone["climate"])]
+            == THRESHOLD - NIGHT_GUARD_SETPOINT_DROP
+        )
+
+
+def test_guard_nudge_never_raises_above_mode_base():
+    from custom_components.villa_hvac.supervisor import temperature_lever
+
+    # house 22 + Notte +3 = 25 < 25.5 -> bounded at the #2a target (never raise;
+    # the valve is already open at that base, so the nudge must not lift it).
+    out = _guard_cooling(_night_ctrl(), house_setpoint=22.0)
+    for _zid, zone in bedrooms():
+        assert out[temperature_lever(zone["climate"])] == 25.0
+
+
+def test_guard_nudge_bound_includes_room_trim():
+    from custom_components.villa_hvac.supervisor import temperature_lever
+
+    # per-room trim −3: base 24+3−3 = 24 -> the bound tracks what #2a would set
+    out = _guard_cooling(_night_ctrl(), setpoint_offset=-3.0)
+    for _zid, zone in bedrooms():
+        assert out[temperature_lever(zone["climate"])] == 24.0
+
+
+def test_guard_no_nudge_when_base_unknown():
+    """No computable #2a base -> NO nudge (guard stays fan-only). A raw
+    threshold−drop fallback could RAISE a trimmed room's setpoint (a −3 °C room
+    trim puts the mode target below 25.5) — never raise, so never emit blind."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    out = _guard_cooling(_night_ctrl(), house_setpoint=None)
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_guard_no_nudge_while_free_cooling():
+    """Free-cooling holds the fancoils in building_protection — a setpoint under
+    that BP is inert but displaced; the guard yields the lever and stays
+    fan-only (the free-cool × guard escalation belongs to the outside-air
+    merge design)."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    out = _guard_cooling(_night_ctrl(), free_cooling=True)
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_guard_no_nudge_when_season_unknown():
+    # HouseState.season defaults to None in production until detected — treat
+    # exactly like winter: fan-only.
+    out = _guard_cooling(_night_ctrl(), season=None)
+    assert _temp_levers(out) == {}
+
+
+def test_guard_no_nudge_in_winter():
+    """Winter guard stays fan-only: threshold−drop sits ABOVE the winter setback
+    target, and a raised setpoint on a heat-mode thermostat could heat the very
+    room the guard is trying to cool."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    out = _guard_cooling(_night_ctrl(), season="winter", mode_offset=-4.0)
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_guard_no_nudge_on_disabled_or_paused_zones():
+    """A #10-disabled / #4-paused bedroom is building_protection-owned by the
+    higher preset policies — never push a setpoint under it. The legacy fan
+    stage is unchanged (the known, accepted #4 edge)."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    for kw in ({"enabled": False}, {"paused": True}):
+        out = _guard_cooling(_night_ctrl(), **kw)
+        assert _temp_levers(out) == {}
+        for _zid, zone in bedrooms():
+            assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+
+
+def test_guard_silence_drops_the_nudge():
+    """Below threshold for NIGHT_GUARD_LOW -> silence: the temperature key is
+    simply not emitted, so #2a re-asserts the Notte setpoint in the same merge
+    (valve closes at the mode target; chilled-water stint over)."""
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    c = _night_ctrl()
+    _guard_cooling(c)                                  # nudging at 25.5
+    cool = {"main_bedroom": 25.0, "gabriroom": 25.0}
+    t1 = T0 + NIGHT_GUARD_HIGH + timedelta(minutes=1)
+    mid = c(_night_state(temps=cool, now=t1))          # below-timer starts
+    assert _temp_levers(mid) != {}                     # still cooling -> still nudged
+    out = c(_night_state(temps=cool, now=t1 + NIGHT_GUARD_LOW))
+    assert _temp_levers(out) == {}
+    for _zid, zone in bedrooms():
+        assert out[fan_lever(zone["fancoils"][0])] == 0
+
+
+def test_release_restores_nudged_setpoint_once():
+    """Auto-wake / Notte exit while the guard is nudging: the one-shot hand-back
+    also writes the house-mode base back (manuale off as before). With #2a
+    re-asserting from here on (auto_setback on, base computable), the snapshot
+    tracking is dropped."""
+    from custom_components.villa_hvac.supervisor import switch_lever, temperature_lever
+
+    c = _night_ctrl()
+    _guard_cooling(c)
+    out = c(_night_state(night_active=False, auto_setback=True))  # woken, in Notte
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert out[temperature_lever(zone["climate"])] == 27.0  # 24 + 3
+    assert c._nudged == {}                                    # #2a owns it now
+    assert c(_night_state(night_active=False, auto_setback=True)) == {}  # one-shot
+
+
+def test_release_restores_from_snapshot_and_keeps_tracking_when_unprotected():
+    """Release into a state where #2a will NOT re-assert (Vacanza: no offset;
+    auto_setback off): the restore still goes out — from the base RECORDED at
+    nudge time — but it is a single unprotected telegram, so the snapshot is
+    KEPT for the fail-safe."""
+    from custom_components.villa_hvac.supervisor import switch_lever, temperature_lever
+
+    c = _night_ctrl()
+    _guard_cooling(c)                                  # records base 27.0
+    out = c(_night_state(mode="Vacanza", night_active=False, mode_offset=None))
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert out[temperature_lever(zone["climate"])] == 27.0  # snapshot, not live
+    assert set(c._nudged) == {"main_bedroom", "gabriroom"}  # fail-safe can restore
+
+
+def test_guard_setpoint_outranks_house_mode_in_the_merge():
+    """The engine merges controllers before the pure policies: the guard's
+    temperature opinion must win the lever over house_mode #2a."""
+    from dataclasses import replace as dc_replace
+
+    from custom_components.villa_hvac.policies import house_mode_policy
+    from custom_components.villa_hvac.supervisor import merge_desired, temperature_lever
+
+    c = _night_ctrl()
+    hot = {"main_bedroom": 26.5, "gabriroom": 26.5}
+    c(_night_state(temps=hot, now=T0))
+    state = dc_replace(
+        _night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH), auto_setback=True
+    )
+    night_out = c(state)
+    house_out = house_mode_policy(state)
+    lever = temperature_lever(dict(bedrooms())["main_bedroom"]["climate"])
+    assert house_out[lever] == 27.0                      # #2a wants the Notte base
+    assert merge_desired([night_out, house_out])[lever] == 25.5  # the guard wins
+
+
+async def test_failsafe_restores_snapshot_even_after_platform_teardown(hass):
+    """async_fail_safe writes the base RECORDED AT NUDGE TIME back for
+    guard-nudged bedrooms (manuale just went AUTO ~100%: a lingering
+    threshold−drop setpoint would overcool a bedroom loudly all night).
+
+    Regression for the adversarial-review MAJOR: on the unload path the
+    integration's own select/number entities are torn down BEFORE
+    async_fail_safe runs, so a restore computed from live reads silently
+    no-ops. The snapshot must survive that teardown — simulated here by
+    removing both entities before the hand-back."""
+    from custom_components.villa_hvac.supervisor import LeverState, temperature_lever
+
+    await hass.config.async_set_time_zone("UTC")
+    entry = await _setup(hass)
+    seed_thermostats(hass)                       # salotto 'cool' -> season summer
+    coordinator = entry.runtime_data
+    night = coordinator.night
+    engine = coordinator.engine
+    # Drive the guard into a nudge through the controller's public path
+    # (records the restore snapshot: 24 + Notte +3 = 27.0 per bedroom).
+    out = _guard_cooling(night)
+    assert _temp_levers(out) != {}
+    # Simulate the unload ordering: platform entities gone before the fail-safe.
+    hass.states.async_remove("select.house_mode")
+    hass.states.async_remove("number.house_setpoint")
+    # A lever state committed by an actuating cycle must be dropped by the
+    # hand-back so a queued cycle can't re-assert the nudge.
+    lever = temperature_lever("climate.camera_padronale_termostato_2")
+    engine._lever_states[lever] = LeverState(written="25.5")
+    async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "switch", "turn_off")
+    temps = async_mock_service(hass, "climate", "set_temperature")
+
+    await engine.async_fail_safe()
+
+    targeted = {c.data["entity_id"]: c.data["temperature"] for c in temps}
+    assert targeted == {
+        "climate.camera_padronale_termostato_2": 27.0,   # snapshot, not a live read
+        "climate.camera_gabriele_termostato_2": 27.0,
+    }
+    assert night._nudged == {}
+    assert lever not in engine._lever_states
+
+
+async def test_engine_cycle_delivers_chilled_water(hass):
+    """LIVE path (adversarial-review gap): a hot bedroom in Notte must drive
+    climate.set_temperature to threshold−drop through the REAL engine cycle —
+    controller opinion → controllers-before-policies merge (beating
+    house_mode's 27) → reconcile diff → service call — not just as a
+    controller output dict."""
+    await hass.config.async_set_time_zone("UTC")
+    with freeze_time("2026-07-04 23:30:00") as frozen:
+        entry = await _setup(hass)
+        seed_thermostats(hass, temperature=27.0)     # Notte base already applied
+        hass.states.async_set("number.house_setpoint", "24.0")
+        for fan, man in (
+            ("fan.fancoil_camera_padronale", "switch.fancoil_camera_padronale_manuale"),
+            ("fan.fancoil_camera_gabriele", "switch.fancoil_camera_gabriele_manuale"),
+        ):
+            hass.states.async_set(fan, "on", {"percentage": 100})
+            hass.states.async_set(man, "on")         # silence already latched
+        hass.states.async_set("sensor.clima_camera", "26.5")   # padronale hot
+        hass.states.async_set("sensor.clima_gabri", "25.0")    # gabriele fine
+        await entry.runtime_data.async_refresh()               # fuse the temps
+        async_mock_service(hass, "climate", "set_preset_mode")
+        async_mock_service(hass, "fan", "turn_on")
+        async_mock_service(hass, "fan", "turn_off")
+        async_mock_service(hass, "fan", "set_percentage")
+        temps = async_mock_service(hass, "climate", "set_temperature")
+        await enable_supervisor(hass)
+
+        await _select_mode(hass, "Notte")            # pass 1: above-timer starts
+        frozen.move_to("2026-07-04 23:34:00")        # > NIGHT_GUARD_HIGH later
+        await entry.runtime_data.engine._run()       # pass 2: guard fires
+        await hass.async_block_till_done()
+
+    padronale = [
+        c.data["temperature"] for c in temps
+        if c.data["entity_id"] == "climate.camera_padronale_termostato_2"
+    ]
+    assert 25.5 in padronale                         # chilled water: valve opens
+    gabriele = [
+        c.data["temperature"] for c in temps
+        if c.data["entity_id"] == "climate.camera_gabriele_termostato_2"
+    ]
+    assert 25.5 not in gabriele                      # cool room stays at the base
 
 
 # --- Fix 1b (2026-07-04): the wake is clock-derived, not latch-only ----------

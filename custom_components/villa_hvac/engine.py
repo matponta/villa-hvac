@@ -1834,6 +1834,31 @@ class SupervisorEngine:
                         await self._call_switch(manuale, on=False)
                     except Exception:  # noqa: BLE001 - fail-safe must not raise
                         _LOGGER.exception("Fail-safe: could not release %s", manuale)
+            # #2b (v0.54.0): restore any bedroom setpoint the night heat-guard
+            # nudged for chilled water — a guard-displaced setpoint (threshold−
+            # drop, colder than the mode target) must not outlive the supervisor
+            # (with the manuale just released the fan is back in AUTO ~100%, so a
+            # lingering cold setpoint would overcool a bedroom LOUDLY all night).
+            night = getattr(self.coordinator, "night", None)
+            if night is not None:
+                try:
+                    targets = night.failsafe_setpoints()
+                except Exception:  # noqa: BLE001 - fail-safe must not raise
+                    _LOGGER.exception("Fail-safe: night-guard setpoint targets failed")
+                    targets = {}
+                for climate, target in targets.items():
+                    try:
+                        await self._call(
+                            CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                            {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: float(target)},
+                        )
+                    except Exception:  # noqa: BLE001 - fail-safe must not raise
+                        _LOGGER.exception(
+                            "Fail-safe: could not restore the setpoint for %s", climate
+                        )
+                    # Drop our lever state so a cycle queued behind the hand-back
+                    # can't re-assert the nudge afterwards (split fail-safe pattern).
+                    self._lever_states.pop(temperature_lever(climate), None)
             # B1: un-stick any zone left in building_protection (skip #10-disabled +
             # window-paused, which SHOULD stay in it) -> neutral `auto` preset.
             await self._restore_presets()

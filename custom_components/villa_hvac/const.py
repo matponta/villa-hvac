@@ -445,6 +445,15 @@ NIGHT_GUARD_HIGH = timedelta(minutes=3)   # above threshold this long -> low coo
 NIGHT_GUARD_LOW = timedelta(minutes=10)   # below threshold this long -> silence
 NIGHT_GUARD_FAN_PCT = 33                  # lowest fancoil stage
 
+# v0.54.0 chilled water: while the guard is ACTIVE (summer only) the room
+# setpoint is ALSO driven to threshold − this drop (bounded: never above the #2a
+# mode target), so the KNX thermostat opens the EV FAN valve and the held 33%
+# fan moves CHILLED air. First live night (2026-07-10) proved the need: with the
+# Notte setpoint at 27, padronale spent 00:04–08:00 climbing 26.0→26.8 in the
+# 26–27 dead-band — fan spinning, valve CLOSED. 0.5 clears the thermostat's
+# ~±0.3 internal hysteresis at the moment the guard fires (temp > threshold).
+NIGHT_GUARD_SETPOINT_DROP = 0.5
+
 # #2b clock-derived wake: within [wake_time, wake_time + this) the night silence
 # is lifted even if the in-memory wake latch was lost to a reboot/reload in
 # Notte (a restart after 08:00 must NOT re-silence the bedrooms until the mode

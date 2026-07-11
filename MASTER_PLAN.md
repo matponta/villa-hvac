@@ -171,6 +171,12 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 > | P5 | R2 deviation-space coalescing (ANCHOR/BANK, crossing cap, relax single-count) | v0.42.0 |
 > | P6 | R3 REST-quorum + plan-view classification unification + boot manuale sweep | v0.43.0 |
 
+## Post-go-live increments (supervisor LIVE since 2026-07-10)
+
+| Item | Release | Notes |
+|---|---|---|
+| #2b heat-guard **chilled water** | **v0.54.0** | Guard-active also slams the bedroom setpoint to threshold−0.5 (summer only, ≤ a COMPUTABLE #2a mode target, skips disabled/paused/free-cooling) so the EV valve opens — the legacy guard circulated warm air valve-CLOSED in the 26–27 dead-band (padronale, first live night). Released by guard hysteresis / auto-wake / Notte exit / `async_fail_safe` restoring the NUDGE-TIME snapshot (`night.failsafe_setpoints` — live reads are gone on the unload path; fail-safe SHA pin updated deliberately). 21-agent adversarial review: 2 majors found+fixed pre-tag (unload-path restore, free-cool interplay). |
+
 ## Live-verify gates (supervised, at deploy — never headless)
 
 BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve

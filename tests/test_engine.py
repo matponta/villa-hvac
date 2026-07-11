@@ -1261,7 +1261,10 @@ def test_failsafe_functions_byte_identical():
     allowed changes are the two pinned hardening commits (P2 per-lever epoch
     check in _cycle, P6 boot manuale sweep in async_release_blocco) plus the #6
     split-trio hand-back (async_fail_safe now calls `_split_fail_safe`, a no-op
-    unless a split was managed — never perturbs the oracle A/B soak). If this
+    unless a split was managed — never perturbs the oracle A/B soak) and the #2b
+    chilled-water restore (v0.54.0: async_fail_safe writes the house-mode base
+    back over any guard-NUDGED bedroom setpoint via night.failsafe_setpoints —
+    a no-op unless the guard displaced a setpoint this Notte episode). If this
     fails, either the change is unintended (revert it) or it is a NEW deliberate
     hardening: own commit, own pin, update the hash here in that same commit."""
     import hashlib
@@ -1271,7 +1274,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
         "async_fail_safe":
-            "756fcb88e808a4104e773222ae29ee3e0f6557d12862ee9de75c3f5ea8a302d0",
+            "e6e520a433d678b6f2618252a9799931968d93b503f5d52029a8ae3984698524",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":
