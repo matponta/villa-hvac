@@ -173,11 +173,20 @@ on all numeric ingest; `asyncio.Lock` serialising `_cycle` + cancellable tick +
 
 ## Post-go-live increments (supervisor LIVE since 2026-07-10)
 
+**LIVE = v0.55.0, deployed 2026-07-12 00:42** (HACS update from v0.53.0 + restart;
+hvac_levers=0, 36 levers satisfied at boot). Switches ON: supervisor, auto_setback,
+vmc_auto, **split_ac**, **free_air**. OFF: fan_pacing, duty_cycle, pv_bias,
+free_cooling, windows_free_cooling, unified_planner. split_ac precondition met
+(automation.circolazione_aria_cantina_vini disabled). v0.54.0/v0.55.0 behaviors
+unverified until the first full night (7/12→13).
+
 | Item | Release | Notes |
 |---|---|---|
 | #2b heat-guard **chilled water** | **v0.54.0** | Guard-active also slams the bedroom setpoint to threshold−0.5 (summer only, ≤ a COMPUTABLE #2a mode target, skips disabled/paused/free-cooling) so the EV valve opens — the legacy guard circulated warm air valve-CLOSED in the 26–27 dead-band (padronale, first live night). Released by guard hysteresis / auto-wake / Notte exit / `async_fail_safe` restoring the NUDGE-TIME snapshot (`night.failsafe_setpoints` — live reads are gone on the unload path; fail-safe SHA pin updated deliberately). 21-agent adversarial review: 2 majors found+fixed pre-tag (unload-path restore, free-cool interplay). |
 
 | Window contacts (#4 + owner rules) | **v0.55.0** | 6 Shelly BLU contacts wired as ZONES `window` keys (Porta Cucina → living_room leader; ingresso radiant); #2b guard fan-0 on paused bedrooms (edge closed); windows→free-cool inference behind opt-in `switch.windows_free_cooling` (count 3 + outdoor ≤ indoor−1.0, ORed into the ONE `_is_free_cooling`, policies duplicate deleted); long-open contact alert → Mattia+Ehi (30 min, once/episode, airing-suppressed). STORY_WINDOWS.md. |
+
+| **Dead-fan-at-wake** hotfix | **v0.56.0** | NEW verified fact: a KNX fancoil in AUTO does NOT restart a fan whose switch object was written OFF (only an explicit ON revives it) + the interlock holds the valve CLOSED → any hand-back that releases `manuale` but leaves the fan OFF strands the zone INVISIBLY (padronale dead 09:31→16:04 on 2026-07-12, mild night ⇒ guard never fired). Three fixes: (1) `NightSilenceController._release` emits a one-shot fan turn-on (`NIGHT_GUARD_FAN_PCT`) for a bedroom the silence left OFF, skipping #4-paused/free-cooling zones; guard-fired release byte-identical. (2) `async_fail_safe` re-arms any fan the supervisor switched off (tracked `_fans_turned_off`; fail-safe SHA pin updated). (3) engine self-heal watchdog `_stranded_fan_watchdog` (cooled leader, manuale off, fan OFF + valve CLOSED, temp > live setpoint, 10 cycles → one turn_on, retried, WARN once; can never fire below setpoint). Mutation-verified; pre-tag adversarial review. |
 
 ## Live-verify gates (supervised, at deploy — never headless)
 

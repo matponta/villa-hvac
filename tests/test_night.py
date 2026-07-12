@@ -115,6 +115,7 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     # retained speed so a wall-press ON resumes silent.
     fan_off = async_mock_service(hass, "fan", "turn_off")
     fan_pct = async_mock_service(hass, "fan", "set_percentage")
+    fan_on = async_mock_service(hass, "fan", "turn_on")
 
     await _select_mode(hass, "Notte")
 
@@ -127,16 +128,24 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     disarmed = {c.data["entity_id"] for c in fan_pct if c.data.get("percentage") == 0}
     assert disarmed == silenced  # every turn_off is paired with a 0% disarm
 
-    # Simulate the manuale writes landing (mocked services don't update state), so
-    # the wake cycle sees "on" and writes the release.
+    # Simulate the silence writes landing (mocked services don't update state):
+    # manuale ON + the fan switched OFF — the exact dead-fan state at wake.
     hass.states.async_set("switch.fancoil_camera_padronale_manuale", "on")
     hass.states.async_set("switch.fancoil_camera_gabriele_manuale", "on")
+    hass.states.async_set("fan.fancoil_camera_padronale", "off", {"percentage": 0})
+    hass.states.async_set("fan.fancoil_camera_gabriele", "off", {"percentage": 0})
 
     await _select_mode(hass, "Casa")
 
     off_targets = {c.data["entity_id"] for c in sw_off}
     assert "switch.fancoil_camera_padronale_manuale" in off_targets
     assert "switch.fancoil_camera_gabriele_manuale" in off_targets
+    # v0.56.0 dead-fan-at-wake: waking a mild-night silence (fan left OFF) also
+    # re-arms the fan, so KNX AUTO gets a LIVE fan to drive, not a dead switch.
+    rearmed = {c.data["entity_id"] for c in fan_on}
+    assert rearmed == {
+        "fan.fancoil_camera_padronale", "fan.fancoil_camera_gabriele",
+    }
 
 
 # --- C1: NightSilenceController as a merge controller ------------------------
@@ -243,18 +252,69 @@ def test_golden_guard_fan_stage_and_manuale_unchanged():
         assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
 
 
-def test_golden_release_without_guard_is_manuale_off_only():
-    """Notte-exit hand-back for a never-guarded night: exactly the one-shot
-    manuale off per bedroom (no fan, no setpoint opinions)."""
-    from custom_components.villa_hvac.supervisor import switch_lever
+def test_release_without_guard_rearms_fan():
+    """v0.56.0 dead-fan-at-wake: a never-guarded night silenced the fan (its KNX
+    ON/OFF object written OFF); KNX AUTO will NOT restart it, so the Notte-exit
+    hand-back ALSO re-arms it with a one-shot fan turn-on (NIGHT_GUARD_FAN_PCT;
+    AUTO re-drives the % once alive). Exactly {manuale off, fan 33} per bedroom —
+    no setpoint opinion (never nudged). (Was test_golden_release_..._manuale_off_
+    only pre-v0.56.0: the deliberate behavior change that fixes the dead fan.)"""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
 
     c = _night_ctrl()
-    c(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}))
+    c(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}))  # silence, no guard
     out = c(_night_state(mode="Casa", night_active=False))
-    expected = {switch_lever(zone["manuale_switch"]) for _zid, zone in bedrooms()}
+    expected = set()
+    for _zid, zone in bedrooms():
+        expected |= {switch_lever(zone["manuale_switch"]), fan_lever(zone["fancoils"][0])}
     assert set(out) == expected
-    assert all(v == "off" for v in out.values())
-    assert c(_night_state(mode="Casa", night_active=False)) == {}
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert out[fan_lever(zone["fancoils"][0])] == NIGHT_GUARD_FAN_PCT
+    assert c(_night_state(mode="Casa", night_active=False)) == {}  # one-shot
+
+
+def test_guard_fired_release_does_not_rearm_fan():
+    """GOLDEN (v0.56.0): a guard actively cooling at hand-back already has a LIVE
+    fan (33%), so the release must NOT emit a fan lever — the guard-fired
+    Notte-exit stays byte-identical to pre-v0.56.0 (manuale off + the v0.54.0
+    setpoint restore). Only a fan the silence left OFF is re-armed."""
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    c = _night_ctrl()
+    _guard_cooling(c)                                    # guard cooling -> fan alive
+    out = c(_night_state(mode="Casa", night_active=False))
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert fan_lever(zone["fancoils"][0]) not in out  # already live -> no re-arm
+
+
+def test_release_paused_bedroom_skips_fan_rearm():
+    """A bedroom still #4-paused at hand-back stays quiet: building_protection
+    holds the zone, and a fan would only stir warm air into the open window. The
+    manuale is released; NO fan turn-on is emitted (the engine self-heal watchdog
+    re-arms it once the window closes and the pause clears)."""
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    c = _night_ctrl()
+    c(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}, paused=True))
+    out = c(_night_state(mode="Casa", night_active=False, paused=True))
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert fan_lever(zone["fancoils"][0]) not in out
+
+
+def test_release_free_cooling_skips_fan_rearm():
+    """While free-cooling coasts (BP, valve shut) the hand-back skips the fan
+    re-arm too — the watchdog re-arms once the coast ends."""
+    from custom_components.villa_hvac.supervisor import fan_lever
+
+    c = _night_ctrl()
+    c(_night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0}, free_cooling=True))
+    out = c(_night_state(mode="Casa", night_active=False, free_cooling=True))
+    for _zid, zone in bedrooms():
+        assert fan_lever(zone["fancoils"][0]) not in out
 
 
 # --- v0.54.0: chilled water — guard-active also owns the setpoint ------------
@@ -491,6 +551,50 @@ async def test_failsafe_restores_snapshot_even_after_platform_teardown(hass):
     }
     assert night._nudged == {}
     assert lever not in engine._lever_states
+
+
+async def test_failsafe_revives_supervisor_silenced_fan(hass):
+    """Dead-fan-at-wake (v0.56.0): async_fail_safe re-arms any fan the supervisor
+    itself switched off (a #2b silence), so 'fans -> AUTO' hands back a LIVE fan.
+    A KNX fancoil in AUTO will NOT restart a fan whose switch object was left off,
+    so releasing manuale alone would strand the zone (valve interlocked shut)."""
+    from custom_components.villa_hvac.const import NIGHT_GUARD_FAN_PCT
+
+    await hass.config.async_set_time_zone("UTC")
+    with freeze_time("2026-07-04 23:30:00"):
+        entry = await _setup(hass)
+        await enable_supervisor(hass)
+        seed_thermostats(hass)                       # salotto 'cool' -> summer
+        for fan, man in (
+            ("fan.fancoil_camera_padronale", "switch.fancoil_camera_padronale_manuale"),
+            ("fan.fancoil_camera_gabriele", "switch.fancoil_camera_gabriele_manuale"),
+        ):
+            hass.states.async_set(fan, "on", {"percentage": 100})
+            hass.states.async_set(man, "off")
+        async_mock_service(hass, "climate", "set_preset_mode")
+        async_mock_service(hass, "climate", "set_temperature")
+        async_mock_service(hass, "switch", "turn_on")
+        async_mock_service(hass, "switch", "turn_off")
+        async_mock_service(hass, "fan", "turn_off")
+        async_mock_service(hass, "fan", "set_percentage")
+        fan_on = async_mock_service(hass, "fan", "turn_on")
+
+        await _select_mode(hass, "Notte")            # silence -> fan.turn_off dispatched
+        engine = entry.runtime_data.engine
+        assert engine._fans_turned_off == {
+            "fan.fancoil_camera_padronale", "fan.fancoil_camera_gabriele",
+        }
+
+        await engine.async_fail_safe()
+
+    rearmed = {
+        c.data["entity_id"] for c in fan_on
+        if c.data.get("percentage") == NIGHT_GUARD_FAN_PCT
+    }
+    assert rearmed == {
+        "fan.fancoil_camera_padronale", "fan.fancoil_camera_gabriele",
+    }
+    assert engine._fans_turned_off == set()          # cleared after the hand-back
 
 
 async def test_engine_cycle_delivers_chilled_water(hass):

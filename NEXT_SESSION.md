@@ -1,4 +1,38 @@
-# Next session — kickstart prompt (BACKLOG build)
+# Next session — kickstart prompts
+
+## ✅ DONE — dead-fan-at-wake hotfix (v0.56.0, shipped 2026-07-12)
+
+The 2026-07-12 incident (padronale a DEAD ZONE 09:31→16:04, hvac_levers=0
+throughout — a mild night meant the #2b heat-guard never fired, so nothing
+re-armed the fan the 00:11 silence had switched OFF) is FIXED in **v0.56.0**.
+
+NEW VERIFIED FACT recorded in CLAUDE.md: a KNX fancoil in AUTO does NOT restart
+a fan whose switch object was written OFF — only an explicit ON revives it — and
+the interlock holds the EV valve CLOSED meanwhile, so a `manuale`-only hand-back
+strands the zone INVISIBLY.
+
+Three fixes shipped (all with tests, mutation-verified, pre-tag adversarial
+review):
+1. `NightSilenceController._release` emits a one-shot fan turn-on
+   (`NIGHT_GUARD_FAN_PCT`) for a bedroom the silence left OFF, SKIPPING
+   #4-paused / free-cooling zones; a guard actively cooling at hand-back already
+   has a live fan → no turn-on (guard-fired release byte-identical).
+2. `async_fail_safe` re-arms any fan the supervisor switched off this session
+   (tracked in-memory in `_fans_turned_off`, populated in `_dispatch_write`);
+   fail-safe SHA pin updated per the test's own protocol.
+3. Engine self-heal watchdog `_stranded_fan_watchdog` (closes the whole class):
+   a cooled leader we are NOT managing (manuale off) whose fan reads OFF + valve
+   CLOSED while genuinely above its live thermostat setpoint (summer, enabled,
+   un-paused, not free-cooling, not a Notte bedroom) for `STRANDED_FAN_CYCLES`
+   (10) → one `fan.turn_on` (retried every 10 cycles) + WARN once. Gated on temp
+   > setpoint so it can never fight a legitimate satisfied-stop.
+
+⚠️ AFTER THE OWNER DEPLOYS v0.56.0 (live-verify, read-only HA connector): next
+morning confirm **manuale OFF at 08:00 AND the fan alive** (or the valve opening
+on first demand) on BOTH bedrooms; and check **gabriroom retroactively** for the
+same dead pattern on 7/12 (was it also silenced mild + stranded?).
+
+## Backlog session prompt (after the hotfix)
 
 Paste the block below as the first message in a fresh Claude Code session to resume
 this work with full context. Durable source of truth: [`CLAUDE.md`](./CLAUDE.md)
@@ -16,12 +50,14 @@ First read CLAUDE.md in full (verified facts: zone map, EV-FAN-valve cooling cha
 BLOCCO polarity on=block, supervisor architecture, F1/F2/F3/F4 notes). Don't
 re-derive verified facts. MASTER_PLAN.md = build checklist.
 
-STATE (2026-07-11): repo == v0.55.0 (1500+ tests, ruff clean). LIVE = v0.53.0
-until the owner deploys (HACS update + restart, then verify: supervisor back
-ON, hvac_levers=0, no ERROR logs; on the NEXT Notte night check the padronale
-valve opens when the heat-guard fires; open a window and watch its zone pause).
-⚡ THE SUPERVISOR IS LIVE: switch.supervisor + auto_setback + vmc_auto ON since
-2026-07-10 evening — the engine ACTUATES the villa. Any change to the
+STATE (2026-07-12): repo == v0.56.0 (1516 tests, ruff clean). LIVE = v0.55.0 —
+DEPLOYED 2026-07-12 00:42 (HACS update from v0.53.0 + restart). v0.56.0 is the
+dead-fan-at-wake HOTFIX (see the DONE section at the top of this file) — NOT yet
+deployed; owner deploys via HACS + restart. AFTER DEPLOY verify: manuale OFF at
+08:00 AND the fan alive on BOTH bedrooms; the padronale valve opens when the #2b
+heat-guard fires; open a window and watch its zone pause.
+⚡ THE SUPERVISOR IS LIVE: switch.supervisor + auto_setback + vmc_auto + split_ac
++ free_air ON — the engine ACTUATES the villa. Any change to the
 #2/#2b/#4/free-air/VMC paths changes LIVE behavior the household relies on
 nightly. Small increments, pre-tag adversarial review, never weaken the
 fail-safe invariants.
@@ -58,8 +94,10 @@ FIRST NIGHT (7/10→11) verified clean from the recorder: mode bridge propagated
 Chiudi-notte in 11 ms; #2b silence latched same-second; heat-guard fired 00:17
 (3-min debounce); auto-wake released at exactly 08:00:00; hvac_levers=0 all
 night; zero errors; VMC2 bedroom unit stayed silent (night-quiet veto held),
-VMC1 flushed once 00:40–00:50. Still OFF (owner's pace): fan_pacing, duty,
-pv_bias, free_cooling, free_air, split_ac, unified_planner, regime, seff.
+VMC1 flushed once 00:40–00:50. ENABLED since (owner; confirmed live 2026-07-12):
+split_ac + free_air — both OFF on this first night, turned on afterward. Still
+OFF (owner's pace): fan_pacing, duty, pv_bias, free_cooling, windows_free_cooling,
+unified_planner, regime, seff.
 
 HA-SIDE STATE (not in this repo — applied live 2026-07-10 ~23:20):
 - automation.clima_bridge_modalita_casa_supervisor_one_way: ONE-WAY bridge
@@ -128,8 +166,11 @@ owner may flip switch.windows_free_cooling when ready (default OFF).
 
 LIVE-OPS for the owner (not build work — support if asked): watch S_eff
 geometry on the Modello tab → flip seff_enabled → STORY_SEFF §8 gates ~1wk;
-fan_pacing daytime trial; free_cooling opt-in when wanted; split_ac AFTER
-disabling automation.circolazione_aria_cantina_vini.
+fan_pacing daytime trial (lowest-risk next lever; also unlocks pv_bias);
+free_cooling opt-in when wanted; split_ac DONE — LIVE
+(automation.circolazione_aria_cantina_vini confirmed disabled ✓);
+windows_free_cooling only AFTER the first clean nights of v0.55.0 raw window
+pause/alert behavior.
 
 RULES unchanged: pytest + ruff green on the pinned target
 (pytest-homeassistant-custom-component==0.13.324 = HA 2026.4.3 / Py 3.14);

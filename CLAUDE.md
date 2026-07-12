@@ -39,6 +39,17 @@ dropped 3.13; venv + CI must be 3.14). Single instance, config-flow.
   approach→maintain past a configurable extended-run threshold). It is the
   per-room EXECUTOR of #9, not a separate feature. (In AUTO the % is noisy and ~100%
   — only manual holds a value; see the manual-override re-assert guardrail below.)
+- **A KNX fancoil in AUTO does NOT restart a fan whose switch object was written
+  OFF (VERIFIED live 2026-07-12).** Only an explicit ON write (wall press / bus /
+  our `fan.turn_on`) revives it — the fancoil controller does NOT re-arm the fan
+  on its own when the room calls for cooling. Combined with the interlock (fan OFF
+  ⇒ EV valve held CLOSED, proven 2026-07-02/03), any hand-back that releases the
+  `manuale` switch but leaves the fan's ON/OFF object OFF strands the zone: it
+  silently never cools, and the lever model reads all-satisfied throughout (the
+  dead state is INVISIBLE). Padronale was a dead zone 09:31→16:04 on 2026-07-12
+  (mild night ⇒ #2b heat-guard never fired ⇒ nothing re-armed the fan at wake).
+  ⇒ every path that turns a fan OFF must have a matching re-arm (v0.56.0 fixes the
+  #2b release, the fail-safe, + an engine self-heal watchdog — see #2b + Guardrails).
 - KNX climates: `hvac_modes: [cool, heat]` (no `off`), `supported_features: 17`
   (target temp + preset), presets `[building_protection, auto, economy, comfort,
   standby]`. Fan speed is a **separate `fan.*` entity**, not on the climate.
@@ -228,6 +239,20 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              unload path the select/number entities are torn down before the
              fail-safe runs (adversarial-review MAJOR). Fail-safe SHA pin
              updated per that test's own protocol.
+             DEAD-FAN-AT-WAKE (v0.56.0, closed the 2026-07-12 incident): every
+             #2b hand-back restored the `manuale` switch but NOT the fan's own
+             ON/OFF object, and KNX AUTO does NOT restart an OFF fan (new
+             verified fact above) — so a mild night (guard never fired) or a
+             window-paused bedroom left the fan DEAD at 08:00 wake, valve
+             interlocked shut, INVISIBLY (padronale dead 09:31→16:04,
+             hvac_levers=0). Fix: `_release` now emits a one-shot fan turn-on
+             (`NIGHT_GUARD_FAN_PCT`; AUTO re-drives the % once alive) for a
+             bedroom the silence left OFF, SKIPPING #4-paused / free-cooling
+             zones (BP holds them; the watchdog covers them once the pause/coast
+             ends). A guard actively cooling at hand-back already has a live fan
+             → no turn-on (guard-fired release byte-identical). Belt-and-braces:
+             `async_fail_safe` re-arms any fan the supervisor switched off
+             (tracked in-memory) + an engine self-heal watchdog (see Guardrails).
        - [x] #2c away auto-escalation (presenza_adulti not_home 18h → Via;
              home → Casa from ANY Via — manual or auto (restore_target checks
              mode==Via only, no origin tracking); Notte/Vacanza never touched.
@@ -495,6 +520,16 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   `auto`, skipping #10-disabled + window-paused). An **epoch counter** invalidates any
   cycle queued behind an in-flight hand-back so it can't re-block/re-slam afterwards
   (esp. the master-OFF path, where nothing else would clear a re-asserted block).
+  **"fans → AUTO" must mean a LIVE fan (v0.56.0):** since KNX AUTO won't restart an
+  OFF fan, releasing `manuale` alone can strand a zone — so the fail-safe ALSO
+  re-arms any fan the supervisor switched off (tracked in `_fans_turned_off`,
+  populated in `_dispatch_write`; in-memory, live reads gone on unload). And a
+  running **self-heal watchdog** (`_stranded_fan_watchdog`) revives ANY stranded
+  fan on actuating cycles: a cooled leader we are NOT managing (`manuale` off) whose
+  fan reads OFF + valve CLOSED while genuinely above its LIVE thermostat setpoint
+  (summer, enabled, un-paused, not free-cooling, not a Notte bedroom) for
+  `STRANDED_FAN_CYCLES` (10) → one `fan.turn_on` (retried every 10 cycles) + WARN
+  once. Gated on temp > setpoint so it can NEVER fight a legitimate satisfied-stop.
 - **Test on the deploy target**: pin `pytest-homeassistant-custom-component` to HA
   2026.4.3 (the venv was stale at 2025.1.4 — ~1yr API drift). CI on target; supervised
   smoke-test on live 2026.4.3 before lighting up any policy.

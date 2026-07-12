@@ -293,16 +293,36 @@ class NightSilenceController:
         The tracking is dropped only when #2a is actually re-asserting the lever
         (auto_setback on + base computable); otherwise the one-shot write is a
         single unprotected telegram, so the snapshot is KEPT for the fail-safe.
+
+        DEAD-FAN-AT-WAKE (v0.56.0): the silence wrote each bedroom fan's KNX
+        ON/OFF object OFF, and a KNX fancoil in AUTO does NOT restart a fan whose
+        switch object was left off — only an explicit ON revives it, while the
+        interlock holds the EV valve shut. So releasing manuale alone hands KNX a
+        DEAD fan (the room floats warm, valve closed, invisibly — padronale
+        2026-07-12). The hand-back therefore ALSO re-arms the fan with a one-shot
+        turn-on (NIGHT_GUARD_FAN_PCT; AUTO re-drives the % once it is alive) for
+        every bedroom the silence had OFF. It SKIPS a bedroom that is still
+        #4-paused or free-cooling — building_protection holds those and a fan
+        would only stir warm air into an open window; the engine self-heal
+        watchdog re-arms them once the pause/coast ends. A guard that was
+        actively cooling at hand-back already has a live fan (33%), so no turn-on
+        is emitted — keeping the guard-fired release byte-identical.
         """
         if not self._managing:
             return {}
+        free_cooling = _is_free_cooling(state)
         out: dict = {}
         for zid, zone in bedrooms():
             if zid not in self._managing:
                 continue
             out[switch_lever(zone["manuale_switch"])] = "off"
+            z = state.zones.get(zid)
+            paused = z is not None and z.paused
+            # Fan was OFF during silence iff the guard was NOT cooling (a cooling
+            # guard held it at 33). Only re-arm when the zone is not held by BP.
+            if not paused and not free_cooling and not self._guards[zid].cooling:
+                out[fan_lever(zone["fancoils"][0])] = NIGHT_GUARD_FAN_PCT
             if zid in self._nudged:
-                z = state.zones.get(zid)
                 live = self._mode_base(state, z) if z is not None else None
                 base = live if live is not None else self._nudged[zid]
                 out[temperature_lever(zone["climate"])] = round(base, 1)

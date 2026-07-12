@@ -426,6 +426,19 @@ STALE_TEMP_CYCLES = 10
 # is off — even though the band thinks it is RUNning. WARN once per fan.
 RUN_FAN_OFF_WARN_CYCLES = 10
 
+# Self-heal watchdog (dead-fan-at-wake, proven live 2026-07-12): a KNX fancoil in
+# AUTO does NOT restart a fan whose switch object was written OFF (a #2b silence /
+# a band REST that then handed the zone back to AUTO) — only an explicit ON write
+# revives it, and the interlock holds the EV valve shut meanwhile, so the room
+# silently never cools while every setpoint reads right (padronale was a dead zone
+# 09:31→16:04 with hvac_levers=0 throughout). When a cooled leader we are NOT
+# managing (manuale off) reads its fan OFF + valve CLOSED while genuinely above its
+# own thermostat setpoint, for this many consecutive actuating cycles, the engine
+# re-arms the fan (and re-tries every this-many cycles until it takes). WARN once
+# per stranding episode. Gated on temp > setpoint so it can never fight KNX's
+# legitimate satisfied-stop.
+STRANDED_FAN_CYCLES = 10
+
 # Measured EP-vs-thermostat offsets (offset = thermostat - EP), live 2026-06-23.
 # UNUSED today: #1 is thermostat-primary, so EP is not the absolute source.
 # Kept for the planned EP-primary revisit. Most zones show a large,

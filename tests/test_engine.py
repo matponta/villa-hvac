@@ -474,6 +474,220 @@ async def test_run_fan_off_watchdog_fires_through_engine_cycles(hass, caplog):
     assert caplog.text.count("but has read OFF") == 1
 
 
+async def _setup_stranded_zone(hass, *, room_temp, setpoint=23.5):
+    """A sala_giochi cooling leader we are NOT managing (manuale off), fan OFF,
+    valve CLOSED, at `room_temp` with the thermostat regulating to `setpoint`.
+    States seeded BEFORE setup so the first coordinator refresh fuses the temp."""
+    hass.states.async_set(
+        "climate.sala_giochi_termostato_2", "cool",
+        {"preset_mode": "comfort", "temperature": setpoint},
+    )
+    hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # season summer
+    hass.states.async_set("sensor.clima_sala_giochi", str(room_temp))
+    hass.states.async_set("binary_sensor.fancoil_sala_giochi_valvola", "off")  # valve CLOSED
+    hass.states.async_set("fan.fancoil_sala_giochi", "off", {"percentage": 0})  # dead fan
+    hass.states.async_set("switch.fancoil_sala_giochi_manuale", "off")          # not managed
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.supervisor", "on")
+    # The actuating cycle also drives house_mode presets/setpoints + switches;
+    # mock them so only the watchdog's fan.turn_on is the signal under test.
+    async_mock_service(hass, "climate", "set_preset_mode")
+    async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "switch", "turn_on")
+    async_mock_service(hass, "switch", "turn_off")
+    return entry
+
+
+async def test_stranded_fan_watchdog_revives_dead_fan(hass, caplog):
+    """v0.56.0 self-heal (dead-fan-at-wake class): a cooled leader we are NOT
+    managing (manuale off) whose fan reads OFF + valve CLOSED while the room sits
+    ABOVE its thermostat setpoint gets ONE fan turn_on after STRANDED_FAN_CYCLES,
+    and WARNs once. Mutation guard: deleting the _stranded_fan_watchdog call in
+    _cycle leaves _stranded_fan empty + fires nothing -> this test fails."""
+    from custom_components.villa_hvac.const import (
+        NIGHT_GUARD_FAN_PCT,
+        STRANDED_FAN_CYCLES,
+    )
+
+    entry = await _setup_stranded_zone(hass, room_temp=26.0)  # warm > 23.5 + tol
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+    lever = "fan:fan.fancoil_sala_giochi"
+
+    for _ in range(STRANDED_FAN_CYCLES - 1):
+        await engine.request_run()
+    assert not fan_on                                    # below threshold -> no revive
+    assert engine._stranded_fan.get(lever) == STRANDED_FAN_CYCLES - 1  # counting
+
+    await engine.request_run()                           # the crossing -> revive + warn
+    assert len(fan_on) == 1
+    assert fan_on[0].data["entity_id"] == "fan.fancoil_sala_giochi"
+    assert fan_on[0].data["percentage"] == NIGHT_GUARD_FAN_PCT
+    assert caplog.text.count("reviving it") == 1
+
+
+async def test_stranded_fan_watchdog_never_fires_when_satisfied(hass):
+    """The watchdog must NEVER fight KNX's legitimate satisfied-stop: a room at or
+    below its setpoint (fan off because it is SATISFIED) never accrues the counter
+    and is never revived."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=23.0, setpoint=24.0)  # satisfied
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES + 3):
+        await engine.request_run()
+    assert not fan_on
+    assert "fan:fan.fancoil_sala_giochi" not in engine._stranded_fan
+
+
+async def test_stranded_fan_watchdog_yields_in_vacanza_deep_setback(hass):
+    """Adversarial-review BLOCKER (2026-07-12): Vacanza (and #8 return-waiting)
+    drives building_protection with NO setpoint push (mode_offset None), so the
+    thermostat's live target stays stale-low and the force-closed valve reads
+    exactly like a stranded fan — but the empty house is MEANT to coast warm. The
+    watchdog must YIELD: never spin a fan in a deliberate deep setback. Mutation
+    guard: dropping `state.mode_offset is not None` from zone_ok makes this fire."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=27.0, setpoint=24.0)  # warm, stale-low sp
+    hass.states.async_set("select.house_mode", "Vacanza")  # BP + mode_offset None
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES + 3):
+        await engine.request_run()
+    assert not fan_on
+    assert "fan:fan.fancoil_sala_giochi" not in engine._stranded_fan
+
+
+async def test_stranded_fan_watchdog_retries_until_it_takes(hass, caplog):
+    """Retry path (adversarial-review): a dropped revive telegram must be RETRIED
+    (the lossy KNX bus is the #1 robustness risk), but WARN only once. With the fan
+    mocked to stay OFF the room stays stranded, so the revive fires at n=10 AND at
+    n=20 (kills a 'fire once, never retry' mutant), never in between (kills a 'fire
+    every cycle' mutant), warning exactly once across all retries."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=26.0)
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES):          # n = 1..10
+        await engine.request_run()
+    assert len(fan_on) == 1                        # fired on the crossing
+    for _ in range(STRANDED_FAN_CYCLES - 1):      # n = 11..19
+        await engine.request_run()
+    assert len(fan_on) == 1                        # NO retry between crossings
+    await engine.request_run()                     # n = 20
+    assert len(fan_on) == 2                        # retried once it stayed dead
+    assert caplog.text.count("reviving it") == 1  # WARN once across retries
+
+
+async def test_stranded_fan_watchdog_yields_while_free_cooling(hass):
+    """Negative gate: while free-cooling coasts the cooled zones (BP, valve shut),
+    the watchdog must not revive them. Mutation guard for the `not free` gate."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=26.0)
+    hass.states.async_set("switch.free_cooling", "on")
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "18.0")  # < 22 threshold
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES + 3):
+        await engine.request_run()
+    assert not fan_on
+    assert "fan:fan.fancoil_sala_giochi" not in engine._stranded_fan
+
+
+async def test_stranded_fan_watchdog_yields_when_paused(hass):
+    """Negative gate: a #4-paused cooled zone (here via the global free_air pause)
+    is held in BP on purpose — never revived. Mutation guard for `not z.paused`."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=26.0)
+    hass.states.async_set("switch.free_air", "on")  # pauses every fancoil zone (#4-style)
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES + 3):
+        await engine.request_run()
+    assert not fan_on
+    assert "fan:fan.fancoil_sala_giochi" not in engine._stranded_fan
+
+
+async def test_stranded_fan_watchdog_yields_zone_parked_in_bp(hass):
+    """Belt-and-braces gate: a zone whose LIVE preset reads building_protection has
+    its valve shut BY DESIGN — never a stranded fan — even while the house is in an
+    active mode (Casa, mode_offset present) where the deep-setback gate does not
+    apply. Mutation guard for the `preset != PRESET_BUILDING_PROTECTION` gate
+    (a conceded manual BP, or production Vacanza where the BP write has landed)."""
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    entry = await _setup_stranded_zone(hass, room_temp=26.0)  # Casa: mode_offset present
+    # The zone is parked in BP (valve shut) while the house stays in Casa.
+    hass.states.async_set(
+        "climate.sala_giochi_termostato_2", "cool",
+        {"preset_mode": "building_protection", "temperature": 23.5},
+    )
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    engine = entry.runtime_data.engine
+
+    for _ in range(STRANDED_FAN_CYCLES + 3):
+        await engine.request_run()
+    assert not fan_on
+    assert "fan:fan.fancoil_sala_giochi" not in engine._stranded_fan
+
+
+async def test_stranded_fan_watchdog_yields_bedroom_during_notte(hass):
+    """Negative gate (highest-value): #2b owns a bedroom during Notte and may hold
+    its fan off DELIBERATELY. The watchdog must never spin an UNMANAGED (manuale
+    off) bedroom fan while night_active — a telegram war on the exact zone this
+    hotfix protects. Mutation guard for the `not (bedroom and night_active)` gate.
+    Frozen to a night hour so night_active derives True; the guard never fires
+    (time is frozen) so any fan.turn_on could only come from the watchdog."""
+    from freezegun import freeze_time
+
+    from custom_components.villa_hvac.const import STRANDED_FAN_CYCLES
+
+    await hass.config.async_set_time_zone("UTC")
+    with freeze_time("2026-07-04 23:30:00"):
+        hass.states.async_set(
+            "climate.camera_padronale_termostato_2", "cool",
+            {"preset_mode": "comfort", "temperature": 24.0},
+        )
+        hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # season summer
+        hass.states.async_set("sensor.clima_camera", "27.0")                # warm bedroom
+        hass.states.async_set("binary_sensor.fancoil_camera_padronale_valvola", "off")
+        hass.states.async_set("fan.fancoil_camera_padronale", "off", {"percentage": 0})
+        hass.states.async_set("switch.fancoil_camera_padronale_manuale", "off")  # UNMANAGED
+        entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        hass.states.async_set("switch.supervisor", "on")
+        hass.states.async_set("select.house_mode", "Notte")
+        async_mock_service(hass, "climate", "set_preset_mode")
+        async_mock_service(hass, "climate", "set_temperature")
+        async_mock_service(hass, "switch", "turn_on")
+        async_mock_service(hass, "switch", "turn_off")
+        async_mock_service(hass, "fan", "turn_off")
+        async_mock_service(hass, "fan", "set_percentage")
+        fan_on = async_mock_service(hass, "fan", "turn_on")
+        engine = entry.runtime_data.engine
+
+        for _ in range(STRANDED_FAN_CYCLES + 3):
+            await engine.request_run()
+
+    assert not [c for c in fan_on if c.data["entity_id"] == "fan.fancoil_camera_padronale"]
+    assert "fan:fan.fancoil_camera_padronale" not in engine._stranded_fan
+
+
 async def test_room_params_mirror_live_sizing_law(hass):
     """Parity pin (mutation-proven hole): the planner sim must run the SAME
     RUN-fan law as the live band — _room_params must pass the live constants,
@@ -1261,12 +1475,16 @@ def test_failsafe_functions_byte_identical():
     allowed changes are the two pinned hardening commits (P2 per-lever epoch
     check in _cycle, P6 boot manuale sweep in async_release_blocco) plus the #6
     split-trio hand-back (async_fail_safe now calls `_split_fail_safe`, a no-op
-    unless a split was managed — never perturbs the oracle A/B soak) and the #2b
+    unless a split was managed — never perturbs the oracle A/B soak), the #2b
     chilled-water restore (v0.54.0: async_fail_safe writes the house-mode base
     back over any guard-NUDGED bedroom setpoint via night.failsafe_setpoints —
-    a no-op unless the guard displaced a setpoint this Notte episode). If this
-    fails, either the change is unintended (revert it) or it is a NEW deliberate
-    hardening: own commit, own pin, update the hash here in that same commit."""
+    a no-op unless the guard displaced a setpoint this Notte episode) and the
+    v0.56.0 dead-fan-at-wake re-arm (async_fail_safe turns back ON any fan the
+    supervisor switched off, tracked in `_fans_turned_off`, so 'fans -> AUTO'
+    hands back a LIVE fan — KNX AUTO will not restart a fan whose switch object
+    was left off). If this fails, either the change is unintended (revert it) or
+    it is a NEW deliberate hardening: own commit, own pin, update the hash here
+    in that same commit."""
     import hashlib
     import inspect
 
@@ -1274,7 +1492,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
         "async_fail_safe":
-            "e6e520a433d678b6f2618252a9799931968d93b503f5d52029a8ae3984698524",
+            "bdc08cab5df1079a43a8a89fd8ffa741890900e4492d0a89e5e7e78a0b40c80d",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":

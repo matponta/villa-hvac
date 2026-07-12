@@ -78,6 +78,7 @@ from .const import (
     COOL_VALVES,
     FORECAST_REFRESH,
     HOUSE_MODE_NIGHT,
+    NIGHT_GUARD_FAN_PCT,
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
     REGIME_K_CONF_MIN,
@@ -96,6 +97,7 @@ from .const import (
     SOLAR_RADIATION,
     SPLIT_GROUP,
     STALE_TEMP_CYCLES,
+    STRANDED_FAN_CYCLES,
     WEATHER_ENTITY_DEFAULT,
     WINDOW_OPEN_STATES,
     WINDOWS_FREE_COOL_DWELL,
@@ -146,6 +148,7 @@ from .supervisor import (
     build_feature_graph,
     build_plan,
     build_room_plans,
+    fan_lever,
     house_load_index,
     in_window,
     merge_desired,
@@ -801,6 +804,16 @@ class SupervisorEngine:
         # while the fan reads OFF (delivered 0) — the KNX interlock keeps that
         # zone's valve closed, so it is not cooling despite a RUN command.
         self._fan_off: dict[str, int] = {}
+        # Self-heal watchdog: consecutive actuating cycles a cooled leader we are
+        # NOT managing (manuale off) has read its fan OFF + valve CLOSED while
+        # above its own thermostat setpoint — a fan KNX AUTO won't restart
+        # (dead-fan-at-wake). Keyed by fan lever.
+        self._stranded_fan: dict[str, int] = {}
+        # Fans the supervisor itself switched OFF this session (a #2b silence / a
+        # band REST). The fail-safe re-arms these after releasing manuale, so
+        # "fans -> AUTO" hands back a LIVE fan, not a dead switch object (KNX AUTO
+        # will not restart one). In-memory: live reads are gone on the unload path.
+        self._fans_turned_off: set[str] = set()
         # R1 loud fallback: leaders already warned about reaching an actuating
         # pass with no resolved band center (annotate_centers lost/misordered).
         self._unresolved_center: set[str] = set()
@@ -1043,10 +1056,16 @@ class SupervisorEngine:
                 self._fan_off = {
                     k: v for k, v in self._fan_off.items() if k in desired
                 }
+                # Self-heal a fan stranded OFF (dead-fan-at-wake class): revive a
+                # cooled leader KNX AUTO won't restart. Same stopped/epoch bail as
+                # the reconcile loop — a hand-back must not be chased by a revive.
+                if not self._stopped and epoch == self._epoch:
+                    await self._stranded_fan_watchdog(state)
             else:
                 # No actuating pass -> no episode continuity either (master-off /
                 # deploy-dark gaps would otherwise freeze a stale count).
                 self._fan_off.clear()
+                self._stranded_fan.clear()
         finally:
             self._lock.release()
 
@@ -1509,6 +1528,99 @@ class SupervisorEngine:
                 lever.partition(":")[2], desired, n,
             )
 
+    async def _stranded_fan_watchdog(self, state: HouseState) -> None:
+        """Self-heal a fan stranded OFF (dead-fan-at-wake class, v0.56.0).
+
+        A KNX fancoil in AUTO does NOT restart a fan whose switch object was
+        written OFF (a #2b silence, or a band REST that then handed the zone
+        back to AUTO), and the interlock holds that zone's EV valve shut — so
+        the room silently never cools while every setpoint reads right
+        (padronale 2026-07-12: a dead zone 09:31→16:04, hvac_levers=0
+        throughout, invisible). Closes the whole class (window-close restore,
+        crash-reboot, any stranding not covered by the #2b / fail-safe re-arms):
+        a cooled leader we are NOT band-managing (manuale off) whose fan reads
+        OFF and whose valve reads CLOSED, while the room is genuinely above its
+        OWN thermostat setpoint, in summer, enabled, un-paused, not
+        free-cooling, NOT parked in building_protection, for STRANDED_FAN_CYCLES
+        consecutive actuating cycles → one fan turn_on (retried every
+        STRANDED_FAN_CYCLES until it takes; KNX AUTO re-drives the % once alive)
+        + WARN once per episode.
+
+        Gated on temp > setpoint + tolerance so it can NEVER fight KNX's
+        legitimate satisfied-stop: a satisfied room reads temp ≤ setpoint, so the
+        counter never accrues. Reuses the _track_fan_off / _stale_temp pattern.
+        """
+        free = _is_free_cooling(state)
+        summer = state.season == SEASON_SUMMER
+        # A deliberate DEEP SETBACK (Vacanza, and #8 return-precond's effective-
+        # Vacanza WAITING phase) drives building_protection with NO setpoint push
+        # (mode_offset is None), so the thermostat's live target stays stale-low
+        # while the force-closed BP valve reads exactly like a stranded fan — yet
+        # the whole house is MEANT to coast warm. Yield the watchdog entirely
+        # there (mirrors _pv_bias_apply / active_cooling_leaders, which all bail
+        # when mode_offset is None). Adversarial review 2026-07-12 (MAJOR): else
+        # it would spin fans in an empty, deep-setback house every ~5 min forever,
+        # invisibly (outside the arbiter) — the exact "fan runs when it shouldn't".
+        active_mode = state.mode_offset is not None
+        seen: set[str] = set()
+        for z in state.zones.values():
+            cs = self.hass.states.get(z.climate) if z.climate else None
+            # A zone parked in building_protection (any source: #10, #4, #5, or a
+            # conceded manual BP with the house still in an active mode) has its
+            # valve intentionally shut — never a stranded fan. Belt-and-braces to
+            # the mode gate above for any BP source reachable with mode_offset set.
+            preset = cs.attributes.get(ATTR_PRESET_MODE) if cs is not None else None
+            zone_ok = (
+                active_mode
+                and _is_cooling_leader(z)
+                and z.enabled
+                and not z.paused
+                and not free
+                and summer
+                and not (z.bedroom and state.night_active)  # #2b owns it at night
+                and not z.manuale_on                        # we are not managing it
+                and preset != PRESET_BUILDING_PROTECTION    # BP-parked: valve shut by design
+                and z.demand is False                       # valve CLOSED (None -> skip)
+                and z.temp is not None
+            )
+            # setpoint the thermostat is regulating to right now (its live target
+            # temperature) — the ground truth for 'is this room calling', not the
+            # band center (which may not even drive this zone with fan_pacing off).
+            setpoint = (
+                _finite(cs.attributes.get(ATTR_TEMPERATURE))
+                if (zone_ok and cs is not None) else None
+            )
+            warm = (
+                setpoint is not None
+                and z.temp > setpoint + DEFAULT_SETPOINT_TOLERANCE
+            )
+            for fan, _manuale in z.fancoil_units:
+                lever = fan_lever(fan)
+                seen.add(lever)
+                stranded = warm and self._read_current(lever) == 0
+                if not stranded:
+                    self._stranded_fan.pop(lever, None)
+                    continue
+                n = self._stranded_fan.get(lever, 0) + 1
+                self._stranded_fan[lever] = n
+                if n % STRANDED_FAN_CYCLES != 0:
+                    continue  # below threshold / between retries
+                if n == STRANDED_FAN_CYCLES:  # once, on the first crossing
+                    _LOGGER.warning(
+                        "Fan %s reads OFF with its valve CLOSED while %s is %.1f°C, "
+                        "above its %.1f°C setpoint, and we are not managing it "
+                        "(manuale off) — reviving it (a KNX fancoil in AUTO will "
+                        "not restart a fan whose switch object was left off)",
+                        fan, z.zone_id, z.temp, setpoint,
+                    )
+                await self._call(
+                    FAN_DOMAIN, SERVICE_TURN_ON,
+                    {ATTR_ENTITY_ID: fan, ATTR_PERCENTAGE: NIGHT_GUARD_FAN_PCT},
+                )
+        # Forget levers no longer in play (season flip / zone released) so a later
+        # episode restarts fresh — mirrors the _fan_off episode-continuity prune.
+        self._stranded_fan = {k: v for k, v in self._stranded_fan.items() if k in seen}
+
     async def _reconcile_lever(self, lever: str, target, state: HouseState) -> None:
         current = self._read_current(lever)
         if lever.startswith("fan:"):
@@ -1641,11 +1753,16 @@ class SupervisorEngine:
             # (wall press) resumes silent, not at the last RUN %.
             pct = int(float(value))
             if pct > 0:
+                # Alive again — no longer a fan the fail-safe must re-arm.
+                self._fans_turned_off.discard(entity)
                 await self._call(
                     FAN_DOMAIN, SERVICE_TURN_ON,
                     {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: pct},
                 )
             else:
+                # Track that WE switched this fan off: KNX AUTO won't restart it,
+                # so the fail-safe must re-arm it on hand-back (dead-fan-at-wake).
+                self._fans_turned_off.add(entity)
                 await self._call(
                     FAN_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: entity}
                 )
@@ -1888,6 +2005,22 @@ class SupervisorEngine:
                         await self._call_switch(manuale, on=False)
                     except Exception:  # noqa: BLE001 - fail-safe must not raise
                         _LOGGER.exception("Fail-safe: could not release %s", manuale)
+            # Dead-fan-at-wake (v0.56.0): releasing manuale returns each fan to
+            # KNX AUTO — but AUTO will NOT restart a fan whose switch object WE
+            # wrote off (a #2b silence / a band REST), so "fans -> AUTO" would
+            # hand back a DEAD fan (valve interlocked shut, the zone silently not
+            # cooling). Re-arm every fan the supervisor switched off this session
+            # (AUTO re-drives the % once it is alive). Tracked in-memory because
+            # the live fan reads are gone on the unload path.
+            for fan in sorted(self._fans_turned_off):
+                try:
+                    await self._call(
+                        FAN_DOMAIN, SERVICE_TURN_ON,
+                        {ATTR_ENTITY_ID: fan, ATTR_PERCENTAGE: NIGHT_GUARD_FAN_PCT},
+                    )
+                except Exception:  # noqa: BLE001 - fail-safe must not raise
+                    _LOGGER.exception("Fail-safe: could not re-arm fan %s", fan)
+            self._fans_turned_off.clear()
             # #2b (v0.54.0): restore any bedroom setpoint the night heat-guard
             # nudged for chilled water — a guard-displaced setpoint (threshold−
             # drop, colder than the mode target) must not outlive the supervisor
