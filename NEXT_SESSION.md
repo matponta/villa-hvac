@@ -114,6 +114,40 @@ HA-SIDE STATE (not in this repo — applied live 2026-07-10 ~23:20):
 
 BACKLOG (priority order — pick from the top unless the owner redirects):
 
+0a. FAN PACING (#3 band control) — MAJOR REWORK (owner-flagged 2026-07-13).
+    Owner turned switch.fan_pacing back OFF after a ~2 h daytime live trial
+    (10:40→12:xx 7/13) and said it "needs major rework". What the trial exposed
+    (see this session's live debug): the band's REST phase (setpoint slammed UP,
+    valve closed, fan → fan_min 0) reads to a human as "the AC is broken / the
+    room's fan is dead" — Gabriele coasted fan-off at 25.3 °C because comfort
+    windows (pre-existing, inert until fan pacing lit it up) had relaxed the
+    bedroom center to 26 while OUTSIDE its night window. The pain points to
+    rework: (1) the many interacting center layers (base + mode offset + per-room
+    offset + comfort_relax + PV + planner) make the resulting setpoint/fan
+    impossible to reason about at a glance — needs a single legible "why is this
+    room doing X" surface + probably fewer/most-simplified layers; (2) REST
+    fan-off + valve-closed coasting is surprising and looks like a fault — decide
+    whether a low circulation floor / different REST presentation is wanted;
+    (3) comfort-windows daytime bedroom relax (default night 22–08) coasting an
+    occupiable room warm all day is arguably wrong (ties to backlog #1 occupancy
+    roster). Scope the rework with the owner before building. fan pacing also
+    GATES pv_bias, so both stay OFF until this lands.
+
+0b. RACK TEMP must drive the shared fancoil (owner-flagged 2026-07-13; live bug).
+    fan.fancoil_locale_rack cools BOTH Rack + Pianerottolo P1 (dual outlet), but
+    only the stairs_p1 LEADER (P1's thermostat) drives it — the rack's own
+    sensor.rack_t_h_temperature is IGNORED. Observed live 7/13: rack 28.4 °C
+    while P1 23.9 °C → P1 satisfied → shared fan idle → the server rack cooks.
+    CLAUDE.md already documents the intended rule ("command = P1 demand OR
+    sensor.rack_t_h_temperature over threshold") — it was never implemented.
+    Fix: fold a rack-temp-over-threshold demand into whatever drives the shared
+    fancoil (a rack threshold option; make the shared fancoil run on P1-demand OR
+    rack-hot). Note the rack zone has climate=None / no thermostat / no #10
+    switch, so it isn't a band leader today — the fix must live where the shared
+    fancoil's run decision is made (band/#2/#9 for stairs_p1) or as a dedicated
+    rack-guard. Small, well-scoped, and higher urgency than the cosmetic items
+    (hardware protection).
+
 1. PER-ROOM OCCUPANCY ROSTER (#2 evolution): every zone has ep_occ mapped in
    ZONES but NOTHING consumes it (only #6 palestra comfort reads occupied).
    Goal: a vacant room relaxes toward its own setback (the Gabriele case:
@@ -166,8 +200,8 @@ owner may flip switch.windows_free_cooling when ready (default OFF).
 
 LIVE-OPS for the owner (not build work — support if asked): watch S_eff
 geometry on the Modello tab → flip seff_enabled → STORY_SEFF §8 gates ~1wk;
-fan_pacing daytime trial (lowest-risk next lever; also unlocks pv_bias);
-free_cooling opt-in when wanted; split_ac DONE — LIVE
+fan_pacing TRIED 2026-07-13 + turned back OFF (needs major rework, backlog 0a —
+so pv_bias stays blocked); free_cooling opt-in when wanted; split_ac DONE — LIVE
 (automation.circolazione_aria_cantina_vini confirmed disabled ✓);
 windows_free_cooling only AFTER the first clean nights of v0.55.0 raw window
 pause/alert behavior.
