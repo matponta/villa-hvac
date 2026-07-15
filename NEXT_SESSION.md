@@ -1,12 +1,103 @@
 # Next session — kickstart prompts
 
-## Local candidate ready — v0.64.0 (2026-07-15)
+## v0.64.0 INSTALLED — HA rebooting (owner report, 2026-07-15)
 
-The full approved fix-pack + steady-governor scope is implemented locally. Tests and
-Ruff are green. Next work is deployment/live validation: install v0.64.0, merge
-`dashboard_v0.64.0_cards.yaml`, keep `paced_living_room` OFF while observing shadow,
-then enable it after owner acceptance. `unified_planner` remains OFF. Legacy
-Buonanotte cleanup still requires a live HA snapshot before deletion.
+Release `v0.64.0` / commit `6069baf` is published and installed through HACS. The
+owner reported HA rebooting after installation. Local verification before release:
+642 tests passing and Ruff clean. The next session begins with post-reboot entity and
+fail-safe verification, then performs the dashboard migration below. Do not repeat
+the implementation or release.
+
+## NEXT SESSION: climate-dashboard migration
+
+### 1. Post-reboot safety check before editing the dashboard
+
+Confirm these entities exist and have the expected restored state:
+
+- `switch.supervisor`: retain the owner's existing restored state;
+- `switch.main_bedroom_night_silence`: ON by default/restored;
+- `switch.gabriroom_night_silence`: ON by default/restored;
+- `switch.rack_guard`: ON by default/restored;
+- `switch.steady_pacing`: OFF by default/restored;
+- `switch.paced_living_room`: OFF by default/restored;
+- `sensor.hvac_room_living_room`: available;
+- `sensor.locale_rack_temperature`: available;
+- `switch.unified_planner`: MUST remain OFF.
+
+Also confirm the boot fail-safe left `switch.ct_blocco_freddo_villa` OFF/ALLOW and
+that no fancoil `manuale` switch was stranded ON by the restart unless an active
+owner-approved controller presently owns it.
+
+### 2. Snapshot before dashboard edits
+
+Export/copy the current climate-dashboard raw configuration before changing it. Do
+not overwrite unrelated lighting, shutter, scene, return-home, VMC, window or house-
+mode controls. Record the exact old card containing the Padronale/Gabriele
+Buonanotte/Sveglia buttons so rollback is one paste.
+
+### 3. Replace only the old bedroom climate buttons
+
+Remove the old *momentary climate* Buonanotte/Sveglia buttons and any dashboard-only
+`input_boolean.notte_silenziosa_*` controls. In the same location insert:
+
+- `switch.main_bedroom_night_silence`, labelled **Camera padronale**;
+- `switch.gabriroom_night_silence`, labelled **Camera Gabriele**.
+
+These are persistent selectors, not immediate sleep actions: ON means that bedroom
+participates whenever `select.house_mode` is `Notte`; OFF excludes it. Changing a
+selector during Notte takes effect immediately. Morning/Notte exit still wakes every
+room that actually participated, releases manual mode, and explicitly re-arms a fan
+left OFF by silence.
+
+Do not yet delete the underlying legacy Buonanotte/Sveglia scripts or automations.
+That cleanup is a separate HA-side operation after snapshotting and one verified
+night; preserve all unrelated light and cover actions.
+
+### 4. Add the living-room governor card
+
+Add the second card from `dashboard_v0.64.0_cards.yaml`:
+
+- `switch.steady_pacing` — **Osserva regolazione**;
+- `switch.paced_living_room` — **Applica al salotto**;
+- `sensor.hvac_room_living_room` — **Stato e spiegazione**.
+
+Safe rollout sequence:
+
+1. Leave both switches OFF while checking the upgrade.
+2. Turn ON only `steady_pacing` to enter SHADOW: calculations/card update, no fan or
+   thermostat writes from the governor.
+3. Keep `paced_living_room` OFF until the owner has reviewed the shadow explanation.
+4. Only after explicit owner acceptance, turn ON `paced_living_room` to actuate.
+5. If comfort, data, noise or legibility is wrong, turn OFF `paced_living_room`; the
+   controller hands both Salotto and Cucina fans alive back to AUTO.
+
+Never add pacing controls for other rooms. Never enable `unified_planner` in this
+session.
+
+### 5. Add rack protection visibility
+
+Add the rack card from `dashboard_v0.64.0_cards.yaml` containing:
+
+- `switch.rack_guard`, labelled **Protezione rack**;
+- `sensor.locale_rack_temperature`, labelled **Temperatura rack**;
+- `sensor.hvac_plan`, labelled **Diagnostica HVAC** (its `feature_graph` contains the
+  rack guard's active/inert reason and command details).
+
+Rack guard should remain ON. It engages above 28 C for 3 minutes, starts the shared
+fan at 67%, and may escalate to 100% only as hardware protection.
+
+### 6. Dashboard acceptance check
+
+- Toggle each bedroom selector once outside Notte and verify it persists after a
+  dashboard reload; restore the owner's desired ON/OFF selection afterward.
+- Verify the living-room sensor state is one of `native`, `shadow`, `paced`,
+  `escalated`, or `demoted`, and its `explanation` attribute is readable in Italian.
+- Verify the rack temperature and guard state are visible.
+- Verify the old climate buttons are gone but unrelated Buonanotte lighting/shutter
+  controls remain.
+- Save a post-edit raw-dashboard snapshot and record the dashboard URL/view name.
+
+The ready-to-paste YAML is [`dashboard_v0.64.0_cards.yaml`](./dashboard_v0.64.0_cards.yaml).
 
 ## ✅ v0.56.0 LIVE + VERIFIED (read-only probe 2026-07-15)
 

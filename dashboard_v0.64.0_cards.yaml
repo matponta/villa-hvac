@@ -22,3 +22,14 @@ cards:
         name: Applica al salotto
       - entity: sensor.hvac_room_living_room
         name: Stato e spiegazione
+
+  - type: entities
+    title: Protezione rack
+    show_header_toggle: false
+    entities:
+      - entity: switch.rack_guard
+        name: Protezione rack
+      - entity: sensor.locale_rack_temperature
+        name: Temperatura rack
+      - entity: sensor.hvac_plan
+        name: Diagnostica HVAC
