@@ -22,7 +22,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
-from .const import ZONES
+from .const import NIGHT_SILENCE_SWITCHES, ZONES
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import shadeable_zones
@@ -45,7 +45,6 @@ async def async_setup_entry(
         AutoSetbackSwitch(entry),
         SupervisorEnableSwitch(entry),
         DutyCycleSwitch(entry),
-        FanPacingSwitch(entry),
         ReturnPrecondSwitch(entry),
         ReturnArmedSwitch(entry),
         PvBiasSwitch(entry),
@@ -55,6 +54,13 @@ async def async_setup_entry(
         VmcAutoSwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
+        RackGuardSwitch(entry),
+        GovernorOptInSwitch(entry, "steady_pacing", "Steady pacing"),
+        GovernorOptInSwitch(entry, "paced_living_room", "Paced living room"),
+    ]
+    entities += [
+        NightSilenceSwitch(entry, zone_id, entity_id)
+        for zone_id, entity_id in NIGHT_SILENCE_SWITCHES.items()
     ]
     entities += [
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
@@ -67,6 +73,106 @@ async def async_setup_entry(
     ]
     async_add_entities(entities)
 
+
+class NightSilenceSwitch(SwitchEntity, RestoreEntity):
+    """Persistent owner selection for a bedroom's Notte silence."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:weather-night"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, entry: VillaHvacConfigEntry, zone_id: str, entity_id: str
+    ) -> None:
+        self._entry = entry
+        self._zone_id = zone_id
+        self._attr_name = entity_id.removeprefix("switch.").replace("_", " ").title()
+        self._attr_unique_id = f"{entry.entry_id}_night_silence_{zone_id}"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _request_run(self) -> None:
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        await self._request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        await self._request_run()
+
+
+class RackGuardSwitch(SwitchEntity, RestoreEntity):
+    """Default-on protection for the shared rack/P1 cooling hardware."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Rack guard"
+    _attr_icon = "mdi:server-network"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_rack_guard"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _set(self, value: bool) -> None:
+        self._attr_is_on = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._set(False)
+
+
+class GovernorOptInSwitch(SwitchEntity, RestoreEntity):
+    """Fresh restored-OFF switch for the v3 steady governor."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:fan-chevron-down"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry, suffix: str, name: str) -> None:
+        self._entry = entry
+        self._attr_name = name
+        self._attr_unique_id = f"{entry.entry_id}_{suffix}"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _set(self, value: bool) -> None:
+        self._attr_is_on = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._set(False)
 
 class AutoSetbackSwitch(SwitchEntity, RestoreEntity):
     """Global enable for the #2 house-mode setback automation (default ON).
@@ -344,44 +450,6 @@ class VmcAutoSwitch(SwitchEntity, RestoreEntity):
         vmc = getattr(self._entry.runtime_data, "vmc", None)
         if vmc is not None:
             await vmc.async_release()  # stop managing -> hand the boost back
-
-
-class FanPacingSwitch(SwitchEntity, RestoreEntity):
-    """Opt-in for #3 fan pacing (default OFF).
-
-    When on (and the master is on), the engine holds each cooling room's fan in
-    MANUAL at a paced speed (pull-down then maintain) during a cooling run.
-    Off by default — the pacing speeds want the live held-low-fan test first.
-    """
-
-    _attr_has_entity_name = True
-    _attr_name = "Fan pacing"
-    _attr_icon = "mdi:fan-auto"
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, entry: VillaHvacConfigEntry) -> None:
-        self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_fan_pacing"
-        self._attr_is_on = False
-
-    async def async_added_to_hass(self) -> None:
-        await super().async_added_to_hass()
-        if (last := await self.async_get_last_state()) is not None:
-            self._attr_is_on = last.state == STATE_ON
-
-    async def async_turn_on(self, **kwargs) -> None:
-        self._attr_is_on = True
-        self.async_write_ha_state()
-        engine = getattr(self._entry.runtime_data, "engine", None)
-        if engine is not None:
-            await engine.request_run()
-
-    async def async_turn_off(self, **kwargs) -> None:
-        self._attr_is_on = False
-        self.async_write_ha_state()
-        engine = getattr(self._entry.runtime_data, "engine", None)
-        if engine is not None:
-            await engine.request_run()
 
 
 class ReturnPrecondSwitch(SwitchEntity, RestoreEntity):

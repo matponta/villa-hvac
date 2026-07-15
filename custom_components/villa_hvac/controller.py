@@ -234,6 +234,19 @@ def fan_pacing_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "fan_pacing") == STATE_ON
 
 
+def rack_guard_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the default-on rack hardware guard is enabled."""
+    return _switch_state(hass, entry, "rack_guard") == STATE_ON
+
+
+def steady_pacing_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    return _switch_state(hass, entry, "steady_pacing") == STATE_ON
+
+
+def paced_living_room_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    return _switch_state(hass, entry, "paced_living_room") == STATE_ON
+
+
 def pv_bias_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """True when the PV/energy-aware pre-cool switch is on (opt-in). It executes via
     the band center, so it also needs fan_pacing on to have any effect."""

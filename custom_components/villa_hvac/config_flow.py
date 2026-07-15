@@ -18,13 +18,7 @@ from .const import (
     DEFAULT_AWAY_HOURS,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
-    DEFAULT_COMFORT_DAY_FROM,
-    DEFAULT_COMFORT_DAY_TO,
-    DEFAULT_COMFORT_ENABLED,
-    DEFAULT_COMFORT_NIGHT_FROM,
     DEFAULT_COMFORT_FLOOR,
-    DEFAULT_COMFORT_NIGHT_TO,
-    DEFAULT_COMFORT_RELAX,
     DEFAULT_FAN_MIN,
     DEFAULT_MODEL_ENABLED,
     DEFAULT_DUTY_COMFORT_MAX,
@@ -47,6 +41,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_POOR,
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_RETURN_MARGIN_MIN,
+    DEFAULT_RACK_TEMP_THRESHOLD,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
     DEFAULT_SEFF_ENABLED,
     DEFAULT_SOLAR_FORECAST,
@@ -61,13 +56,7 @@ from .const import (
     OPT_AWAY_HOURS,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
-    OPT_COMFORT_DAY_FROM,
-    OPT_COMFORT_DAY_TO,
-    OPT_COMFORT_ENABLED,
     OPT_COMFORT_FLOOR,
-    OPT_COMFORT_NIGHT_FROM,
-    OPT_COMFORT_NIGHT_TO,
-    OPT_COMFORT_RELAX,
     OPT_FAN_MIN,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
@@ -91,6 +80,7 @@ from .const import (
     OPT_PV_BIAS_FLOOR_POOR,
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_RETURN_MARGIN_MIN,
+    OPT_RACK_TEMP_THRESHOLD,
     OPT_RETURN_MAX_LEAD_HOURS,
     OPT_SEASON,
     OPT_SEFF_ENABLED,
@@ -149,6 +139,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_NIGHT_THRESHOLD,
                     default=options.get(OPT_NIGHT_THRESHOLD, DEFAULT_NIGHT_THRESHOLD),
                 ): vol.All(vol.Coerce(float), vol.Range(min=22, max=30)),
+                vol.Optional(
+                    OPT_RACK_TEMP_THRESHOLD,
+                    default=options.get(
+                        OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=24, max=35)),
                 vol.Optional(
                     OPT_AUTO_WAKE_TIME,
                     default=options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME),
@@ -306,32 +302,6 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_SEFF_ENABLED,
                     default=options.get(OPT_SEFF_ENABLED, DEFAULT_SEFF_ENABLED),
                 ): bool,
-                vol.Optional(
-                    OPT_COMFORT_ENABLED,
-                    default=options.get(OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED),
-                ): bool,
-                vol.Optional(
-                    OPT_COMFORT_RELAX,
-                    default=options.get(OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX),
-                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=6)),
-                vol.Optional(
-                    OPT_COMFORT_DAY_FROM,
-                    default=options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM),
-                ): str,
-                vol.Optional(
-                    OPT_COMFORT_DAY_TO,
-                    default=options.get(OPT_COMFORT_DAY_TO, DEFAULT_COMFORT_DAY_TO),
-                ): str,
-                vol.Optional(
-                    OPT_COMFORT_NIGHT_FROM,
-                    default=options.get(
-                        OPT_COMFORT_NIGHT_FROM, DEFAULT_COMFORT_NIGHT_FROM
-                    ),
-                ): str,
-                vol.Optional(
-                    OPT_COMFORT_NIGHT_TO,
-                    default=options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO),
-                ): str,
                 # #8 return-home pre-conditioning.
                 vol.Optional(
                     OPT_RETURN_MAX_LEAD_HOURS,

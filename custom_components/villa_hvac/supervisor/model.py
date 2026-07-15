@@ -55,9 +55,6 @@ class ZoneSnapshot:
     # windows (manuale on + known %) — never from AUTO/unknown fan.
     fan_pct: int | None = None
     manuale_on: bool = False
-    # F4b: °C to add to this zone's band center right now (outside its comfort
-    # window). Capped by the engine so center+relax never exceeds duty_comfort_max.
-    comfort_relax: float = 0.0
     # S_eff (STORY_SEFF): the per-zone effective irradiance every b-consumer
     # reads (W/m²-equivalent, GHI scale). While the feature flag is off the
     # engine populates the house GHI here with source/units "ghi", so consumers
@@ -75,7 +72,7 @@ class ZoneSnapshot:
     # band eligibility (not a leader / disabled / paused / free-cool / bedroom
     # under camere silenziose / no base center) keep these defaults.
     resolved_center: float | None = None
-    center_source: str = "none"      # planner|base|pv_bank|pv_coast|precool|comfort_relax
+    center_source: str = "none"      # planner|base|pv_bank|pv_coast|precool
     center_floored: bool = False     # the ladder's comfort floor clamped a lowering feature
     planner_driven: bool = False     # the unified planner reference drove the center
     # Split-AC trio (#6): the standard Daikin `climate` head for this zone + its
@@ -134,6 +131,10 @@ class HouseState:
     band_width: float | None = None    # #3 v2 comfort band B (°C)
     band_slam: float | None = None     # #3 v2 setpoint slam A (°C)
     model_learning_enabled: bool = True  # F2 online estimator observer
+    rack_guard_enabled: bool = True
+    rack_temp_threshold: float = 28.0
+    rack_guard_active: bool = False
+    rack_guard_escalated: bool = False
     duty_enabled: bool = False          # #9 duty-cycle switch
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None
@@ -150,7 +151,10 @@ class HouseState:
     pv_coast_relax: float = 0.0
     night_active: bool = False          # #2b camere silenziose in effect
     fan_pacing_enabled: bool = False    # #3 fan pacing switch
-    comfort_enabled: bool = False       # F4b comfort windows active (for PV COAST)
+    steady_pacing_enabled: bool = False
+    paced_living_room: bool = False
+    kitchen_ep_temp: float | None = None
+    kitchen_ep_fresh: bool = False
     season: str | None = None          # summer / winter
     house_mode: str | None = None      # Casa / Via / Notte / Vacanza
     auto_setback: bool = True          # #2 global Auto setback switch

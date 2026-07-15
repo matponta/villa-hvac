@@ -78,23 +78,6 @@ def test_enabled_but_master_off_reads_supervisor_off():
 
 # --- per-feature active gates (enabled + master on) --------------------------
 
-def test_fan_pacing_active_with_leader_in_summer():
-    g = _graph(_house(zones=[_leader()]), master_on=True, enabled=ALL_ON)
-    assert g["fan_pacing"].active is True and g["fan_pacing"].inert_reason is None
-
-
-def test_fan_pacing_inert_off_season():
-    g = _graph(_house(zones=[_leader()], season="winter"),
-               master_on=True, enabled=ALL_ON)
-    assert g["fan_pacing"].active is False
-    assert g["fan_pacing"].inert_reason == "not cooling season"
-
-
-def test_fan_pacing_inert_no_leader():
-    g = _graph(_house(zones=[]), master_on=True, enabled=ALL_ON)
-    assert g["fan_pacing"].inert_reason == "no active cooling zone"
-
-
 def test_duty_active_when_resting_and_peak_reason():
     g = _graph(_house(zones=[_leader()]), master_on=True, enabled=ALL_ON,
                in_cooloff=True)
@@ -105,15 +88,6 @@ def test_duty_active_when_resting_and_peak_reason():
     assert g2["duty_cycle"].inert_reason == "peak: PdC free-runs"
 
 
-def test_regime_active_only_in_medium():
-    g = _graph(_house(zones=[_leader()]), master_on=True, enabled=ALL_ON,
-               regime="medium")
-    assert g["regime"].active is True
-    g2 = _graph(_house(zones=[_leader()]), master_on=True, enabled=ALL_ON,
-                regime="peak")
-    assert g2["regime"].active is False and "peak" in g2["regime"].inert_reason
-
-
 def test_precool_free_cool_shading_night_active():
     house = _house(zones=[_leader()], night_active=True)
     g = _graph(house, master_on=True, enabled=ALL_ON,
@@ -122,12 +96,6 @@ def test_precool_free_cool_shading_night_active():
     assert g["free_cool"].active is True
     assert g["shading"].active is True
     assert g["night"].active is True
-
-
-def test_comfort_windows_active_on_relax():
-    house = _house(zones=[_leader(comfort_relax=1.0)])
-    g = _graph(house, master_on=True, enabled=ALL_ON)
-    assert g["comfort_windows"].active is True
 
 
 def test_pv_bias_active_on_bank():

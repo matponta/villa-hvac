@@ -68,6 +68,7 @@ async def async_setup_entry(
         EnergyBiasSensor(coordinator, entry),
         HvacLeversSensor(coordinator, entry),
         HvacSplitSensor(coordinator, entry),
+        LivingRoomGovernorSensor(coordinator, entry),
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
@@ -80,6 +81,55 @@ async def async_setup_entry(
         if zone.get("climate") and zone.get("emitter") == "fancoil"
     ]
     async_add_entities(entities)
+
+
+class LivingRoomGovernorSensor(
+    CoordinatorEntity[VillaHvacCoordinator], SensorEntity
+):
+    """Italian explanation surface for the living-room steady governor."""
+
+    _attr_has_entity_name = True
+    _attr_name = "HVAC room living room"
+    _attr_icon = "mdi:sofa-outline"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_hvac_room_living_room"
+
+    @property
+    def _view(self) -> dict:
+        governor = getattr(self.coordinator, "governor", None)
+        return getattr(governor, "view", {})
+
+    @property
+    def native_value(self) -> str:
+        return str(self._view.get("state", "NATIVE")).lower()
+
+    def _sentence(self) -> str:
+        view = self._view
+        state = view.get("state", "NATIVE")
+        target = view.get("target")
+        actual = view.get("actual")
+        fan = view.get("proposed_fan")
+        context = view.get("house_context", "-")
+        reason = view.get("reason") or "nessuna azione"
+        duty = view.get("valve_duty")
+        duty_text = f"{duty * 100:.0f}%" if isinstance(duty, (int, float)) else "-"
+        return (
+            f"Salotto {state.lower()}: obiettivo {target if target is not None else '-'} °C, "
+            f"reale {actual if actual is not None else '-'} °C, "
+            f"ventola proposta {fan if fan is not None else '-'}%, "
+            f"valvola {duty_text} negli ultimi 45 minuti, contesto {context}; {reason}"
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        view = dict(self._view)
+        next_eval = view.get("next_evaluation")
+        if isinstance(next_eval, datetime):
+            view["next_evaluation"] = next_eval.isoformat()
+        view["explanation"] = self._sentence()
+        return view
 
 
 def _num_state(hass: HomeAssistant, entity_id: str) -> float | None:

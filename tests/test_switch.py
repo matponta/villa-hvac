@@ -45,6 +45,8 @@ async def test_switch_created_only_for_zones_with_climate(hass):
     # Radiant zones (e.g. lavanderia) are excluded even though they have a climate.
     assert hass.states.get("switch.lavanderia_enabled") is None
     assert hass.states.get(SWITCH).state == "on"
+    assert hass.states.get("switch.steady_pacing").state == "off"
+    assert hass.states.get("switch.paced_living_room").state == "off"
 
 
 async def test_turn_off_forces_building_protection(hass):

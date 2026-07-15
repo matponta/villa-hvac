@@ -482,11 +482,31 @@ NIGHT_GUARD_SETPOINT_DROP = 0.5
 # leaves Notte). 12 h = the "day"; an early-evening Notte re-silences normally.
 NIGHT_WAKE_DAY_MINUTES = 720
 
+# Persistent owner selection for #2b.  Keep this explicit instead of deriving
+# entity ids from zone names: the integration and dashboard share these stable
+# object ids, while the entity unique id remains entry-scoped.
+NIGHT_SILENCE_SWITCHES = {
+    "main_bedroom": "switch.main_bedroom_night_silence",
+    "gabriroom": "switch.gabriroom_night_silence",
+}
+
 # Options-flow tunables (entry.options) + defaults.
 OPT_NIGHT_THRESHOLD = "night_heat_threshold"
 OPT_AUTO_WAKE_TIME = "auto_wake_time"
 DEFAULT_NIGHT_THRESHOLD = 26.0            # °C (was input_number.soglia_caldo_notte)
 DEFAULT_AUTO_WAKE_TIME = "08:00:00"
+
+# Rack hardware guard (shared Locale Rack / Pianerottolo P1 fancoil).
+OPT_RACK_TEMP_THRESHOLD = "rack_temp_threshold"
+DEFAULT_RACK_TEMP_THRESHOLD = 28.0
+RACK_GUARD_RELEASE_DROP = 1.0
+RACK_GUARD_EMERGENCY_RISE = 2.0
+RACK_GUARD_ENGAGE = timedelta(minutes=3)
+RACK_GUARD_RELEASE = timedelta(minutes=10)
+RACK_GUARD_INITIAL_FAN_PCT = 67
+RACK_GUARD_EMERGENCY_FAN_PCT = 100
+RACK_GUARD_NO_RESPONSE = timedelta(minutes=20)
+RACK_GUARD_MIN_DROP = 0.3
 
 # --- Away auto-escalation (#2c) ----------------------------------------------
 # After the adults are away this long (while in Casa/Notte) -> Via; when they
@@ -803,18 +823,6 @@ FORECASTSOLAR_GHI_FACTOR = 0.18
 # above duty_comfort_max and NEVER suppresses a real comfort breach (the band
 # still cools above the relaxed center). Bedrooms use the night window, day rooms
 # the day window — matching the owner's "bedrooms 22-08, living areas 08-23".
-OPT_COMFORT_ENABLED = "comfort_windows_enabled"
-OPT_COMFORT_RELAX = "comfort_relax"
-OPT_COMFORT_DAY_FROM = "comfort_day_from"
-OPT_COMFORT_DAY_TO = "comfort_day_to"
-OPT_COMFORT_NIGHT_FROM = "comfort_night_from"
-OPT_COMFORT_NIGHT_TO = "comfort_night_to"
-DEFAULT_COMFORT_ENABLED = False
-DEFAULT_COMFORT_RELAX = 2.0          # °C the center rises outside the window (capped)
-DEFAULT_COMFORT_DAY_FROM = "08:00"
-DEFAULT_COMFORT_DAY_TO = "23:00"
-DEFAULT_COMFORT_NIGHT_FROM = "22:00"
-DEFAULT_COMFORT_NIGHT_TO = "08:00"
 # Coalescing band hysteresis (separate enter/exit so house RUN/REST doesn't flap):
 COALESCE_ENTER_FRACTION = 0.5        # enter RUN at center + ENTER_FRACTION*B/2 above
 COALESCE_EXIT_FRACTION = 0.5         # exit REST only when leader <= center - EXIT*B/2

@@ -686,6 +686,22 @@ def test_blend_uses_prior_below_confidence_learned_above():
     assert above.a > 0.08 and above.k < 0.7  # mostly the learned values
 
 
+def test_blend_keeps_learned_k_stored_but_uses_prior_until_abc_identified():
+    prior = seed_params(0.03, 0.0008, 0.0, 1.2, p0_passive=(1, 1e-4, 4), p0_k=4)
+    learned = replace(prior, k=0.5, n=400, n_k=200, s_hi=0.0)
+    gated = blend_params(
+        learned, prior, abc_conf_min=40, k_conf_min=20,
+        solar_excitation_min=150.0,
+    )
+    assert gated.k == prior.k
+    identified = replace(learned, s_hi=500.0)
+    trusted = blend_params(
+        identified, prior, abc_conf_min=40, k_conf_min=20,
+        solar_excitation_min=150.0,
+    )
+    assert trusted.k < prior.k
+
+
 def test_confidence_monotone():
     p = replace(_seed(), n=40, n_k=20)
     assert abs(abc_confidence(p, conf_min=40) - 0.5) < 1e-9

@@ -3,7 +3,7 @@
 P1 test gate (STORY_TIER1_COOLING_CONTROLLER §2):
   (a) golden matrix: resolve_center == the direct planner_ref + compose_center
       wiring it replaces (precedence + single clamp site), across
-      {pv} × {precool} × {relax} × {planner-eligible} × {schedule} × {mode};
+      {pv} × {precool} × {planner-eligible} × {schedule} × {mode};
   (b) engine-level end-to-end pre-cool pin (the function matrix cannot see the
       _cycle wiring order);
   (c) engine ordering pins: the resolution reflects pv_mode / the schedule, so
@@ -43,10 +43,10 @@ CEIL = 27.0
 FLOOR = 22.0
 
 
-def _leader(zid="a", *, temp=25.0, relax=0.0, eligible=False, **kw):
+def _leader(zid="a", *, temp=25.0, eligible=False, **kw):
     base = dict(
         zone_id=zid, name=zid, climate=f"climate.{zid}", emitter="fancoil",
-        temp=temp, comfort_relax=relax, model_planner_eligible=eligible,
+        temp=temp, model_planner_eligible=eligible,
         fancoil_units=((f"fan.{zid}", f"switch.{zid}_man"),),
     )
     base.update(kw)
@@ -68,7 +68,7 @@ def _house(zones, **kw):
         season="summer", house_mode="Casa", house_setpoint=24.0, mode_offset=0.0,
         duty_enabled=True, precool=False, precool_offset=1.5,
         duty_comfort_max=CEIL, comfort_floor=FLOOR,
-        comfort_enabled=True, fan_pacing_enabled=True,
+        fan_pacing_enabled=True,
         unified_planner_enabled=True,
     )
     args.update(kw)
@@ -85,7 +85,6 @@ def _old_wiring(zone, state):
         base=base,
         pv_mode=state.pv_mode, pv_floor=state.pv_floor,
         pv_coast_relax=state.pv_coast_relax,
-        comfort_enabled=state.comfort_enabled, comfort_relax=zone.comfort_relax,
         precool=state.precool, precool_offset=state.precool_offset,
         duty_enabled=state.duty_enabled,
         comfort_ceiling=state.duty_comfort_max,
@@ -107,18 +106,17 @@ def _old_wiring(zone, state):
 
 _PV = (None, "bank", "coast", "hold")
 _PRECOOL = (False, True)
-_RELAX = (0.0, 1.0)
 _ELIGIBLE = (False, True)
 _SCHEDULE = ("fresh", "stale", "none")
 _MODE = ("comfort", "setback")
 
 
 @pytest.mark.parametrize(
-    "pv, precool, relax, eligible, schedule, mode",
-    list(itertools.product(_PV, _PRECOOL, _RELAX, _ELIGIBLE, _SCHEDULE, _MODE)),
+    "pv, precool, eligible, schedule, mode",
+    list(itertools.product(_PV, _PRECOOL, _ELIGIBLE, _SCHEDULE, _MODE)),
 )
-def test_resolve_center_matches_old_wiring(pv, precool, relax, eligible, schedule, mode):
-    zone = _leader(relax=relax, eligible=eligible)
+def test_resolve_center_matches_old_wiring(pv, precool, eligible, schedule, mode):
+    zone = _leader(eligible=eligible)
     sched = {
         "fresh": _sched("a", 23.0, created=T0),
         "stale": _sched("a", 23.0, created=T0 - timedelta(hours=3)),  # > 90 min
@@ -209,7 +207,7 @@ def test_annotate_identity_without_base():
 
 # --- engine-level pins (b)/(c)/(d): the _cycle wiring the matrix cannot see ----
 
-async def _setup_band_engine(hass, *, salotto_temp="26.0"):
+async def _setup_band_engine(hass, *, salotto_temp="24.5"):
     """Real integration setup with the live combo (fan_pacing + duty ON) and a
     warm Salotto under band control."""
     hass.states.async_set(
@@ -225,7 +223,8 @@ async def _setup_band_engine(hass, *, salotto_temp="26.0"):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
-    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.steady_pacing", "on")
+    hass.states.async_set("switch.paced_living_room", "on")
     hass.states.async_set("switch.duty_cycle", "on")
     return entry
 
@@ -251,7 +250,7 @@ async def test_precool_drives_band_setpoint_end_to_end(hass):
     await engine.request_run()
 
     salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
-    assert salotto and salotto[-1].data["temperature"] == 21.75
+    assert salotto and salotto[-1].data["temperature"] == 22.5
     comps = engine.plan_view.center_compositions
     assert comps["living_room"]["source"] == "precool"
     assert comps["living_room"]["center"] == 22.5
@@ -266,16 +265,15 @@ async def test_annotate_runs_after_pv_bias(hass):
     engine._pv_bias_apply = lambda state: replace(
         state, pv_mode="bank", pv_floor=22.0
     )
-    temps = async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "climate", "set_temperature")
     async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
     await engine.request_run()
 
-    salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
-    assert salotto and salotto[-1].data["temperature"] == 21.25  # 22 (bank) - 0.75
     comps = engine.plan_view.center_compositions
+    assert comps["living_room"]["center"] == 22.0
     assert comps["living_room"]["source"] == "pv_bank"
 
 
@@ -296,16 +294,15 @@ async def test_annotate_runs_after_schedule_attach(hass):
     engine._maybe_refresh_schedule = lambda state: replace(
         state, center_schedule=sched, unified_planner_enabled=True
     )
-    temps = async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "climate", "set_temperature")
     async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     async_mock_service(hass, "switch", "turn_off")
 
     await engine.request_run()
 
-    salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
-    assert salotto and salotto[-1].data["temperature"] == 22.25  # 23 (ref) - 0.75
     comps = engine.plan_view.center_compositions
+    assert comps["living_room"]["center"] == 23.0
     assert comps["living_room"]["planner_driven"] is True
     assert comps["living_room"]["source"] == "planner"
 
@@ -330,7 +327,7 @@ async def test_annotate_runs_after_away_return_override(hass):
     await engine.request_run()
 
     salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
-    assert salotto and salotto[-1].data["temperature"] == 29.75
+    assert salotto and salotto[-1].data["temperature"] == 29.0
 
 
 async def test_cycle_invokes_unresolved_center_check(hass, caplog, monkeypatch):

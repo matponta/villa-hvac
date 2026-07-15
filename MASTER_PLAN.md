@@ -81,9 +81,10 @@ sequenced into small gated releases. All opt-in / observe / plan-only except F1.
 | F3a | Regime peak/medium/low on `sensor.hvac_plan` (diagnostic; ratio gated on k-convergence) | v0.20.0 |
 | F3b | 12h per-room forward sim + grid-scan precool → `room_plans` (recorder-excluded); plan-only | v0.21.0 |
 | F4a | Solar forecast (sun elev × clear-sky × cloud); opt-in `solar_forecast_enabled` | v0.22.0 |
-| F4b | Per-room/per-fascia comfort windows (capped center relax, never BP slam); opt-in `comfort_windows_enabled` | v0.23.0 |
-| F3c | Demand coalescing (MEDIUM regime sync via phase_override; REST via setpoint; min-on/off 10/10); opt-in `regime_enabled` | v0.24.0 |
+| F4b | **RETIRED v0.64.0:** comfort-window concept removed end-to-end; future occupancy relaxation belongs to the occupancy roster | v0.23.0–v0.64.0 |
+| F3c | **LIVE WRITER RETIRED v0.64.0:** RUN/REST path removed; planner-only pure dependencies retained for frozen F4c | v0.24.0–v0.64.0 |
 | F4c | **Unified 12h band-center forecast PLANNER** (reference-governor MPC; NOT comfort-in-optimizer) | **Phases 0–6 DONE v0.32–v0.38** (Phase 6 = `switch.unified_planner`, deploy-dark; ENABLING gated on mild-weather data + per-room k-convergence) |
+| #3 v3 | Living-room steady governor: 45-min valve context, 15-min steps, kitchen EP derivative, AUTO escalation/daily demotion, shadow + per-room opt-in | **v0.64.0 local; live validation pending** |
 | G | Deploy v0.24.0 to live + tune on data + live-verify gates + retire legacy | v1.0.0 |
 
 Cross-cutting (from review): identifiability gating (k vs {a,b,c} on disjoint windows);

@@ -10,8 +10,10 @@ from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import RoomModelStore, SupervisorEngine
+from .governor import SteadyGovernorController
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
+from .rack import RackGuardController
 from .returnhome import ReturnHomeManager
 from .vmc import VmcController
 from .window import WindowController
@@ -59,6 +61,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # F2: load the persisted per-room thermal models and seed the estimator.
     model_store = RoomModelStore(hass)
     model_data = await model_store.async_load()
+    rack = RackGuardController(hass, entry)
+    coordinator.rack = rack
+    governor = SteadyGovernorController(hass, entry)
+    coordinator.governor = governor
     engine = SupervisorEngine(
         hass, entry, coordinator,
         policies=POLICIES,
@@ -67,7 +73,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # release must yield to the band re-taking a bedroom for pacing.
         # SplitGroupController (#6): disjoint lever set (aircon_* hvac_mode/temp/
         # fan_mode) — merge order immaterial; never touches the PdC/BLOCCO stack.
-        controllers=(CoolingController(), night, SplitGroupController()),
+        controllers=(
+            rack, governor, CoolingController(), night, SplitGroupController()
+        ),
         model_store=model_store,
     )
     engine.thermal.load(model_data)

@@ -112,7 +112,8 @@ do local bang-bang regulation.
   the lever); in MILD weather demand fragments → sync+rest has headroom. #9 must be
   DUTY-ADAPTIVE, tuned on post-deploy mild-weather data (no mild history yet).
 - **Stage 3 — control law (designed; in `MASTER_PLAN.md` + the HTML).** Per-room =
-  setpoint/preset (#2, done) + **fan pacing #3** (manual, continuous %). Central =
+  setpoint/preset (#2, done) + **living-room steady governor #3 v3** (manual,
+  continuous nonzero %, v0.64.0 local). Central =
   **run-planner** (compute window start+duration from house+weather) + **room sync**
   (preset alignment) + **BLOCCO** force-off (envelope-rest/peak/night), comfort
   override + anti-short-cycle. Load = pre-cool (#7) + shading (#6).
@@ -163,7 +164,7 @@ do local bang-bang regulation.
   house flushes freely at night; VMC 1 (ground floor) is never gated.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
-  ONE feature (PV bank/coast XOR #9 pre-cool + F4b relax), bounded by a first-class
+  ONE feature (PV bank/coast XOR #9 pre-cool), bounded by a first-class
   **comfort FLOOR** (`OPT_COMFORT_FLOOR`, default house_setpoint−2) symmetric to the
   `duty_comfort_max` ceiling. Named ladder = `COMPOSITION_ORDER` (policies.py);
   per-leader composition on `sensor.hvac_plan.center_compositions` (read-only, incl.

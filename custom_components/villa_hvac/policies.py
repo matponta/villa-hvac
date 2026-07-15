@@ -72,6 +72,7 @@ from .const import (
     MODEL_RATE_MAX_MIN,
     MODEL_RATE_WINDOW_MIN,
     MODEL_SOLAR_EXCITATION_MIN,
+    MODEL_W_EDGE_SKIP,
     REGIME_K_CONF_MIN,
     COALESCE_ENTER_FRACTION,
     COALESCE_EXIT_FRACTION,
@@ -371,7 +372,6 @@ COMPOSITION_ORDER: tuple[tuple[str, str, str], ...] = (
     ("pv_bank", "lower", "comfort_floor"),      # PV: bank coolth toward the floor
     ("pv_coast", "raise", "duty_comfort_max"),  # PV: defer within comfort (XOR bank)
     ("precool", "lower", "comfort_floor"),      # #9: pre-cool ahead of a peak
-    ("comfort_relax", "raise", "duty_comfort_max"),  # F4b: drift warm off-window
     ("base", "none", "none"),                   # mode center (setback-free)
 )
 
@@ -597,6 +597,7 @@ class ThermalEstimator:
         self.params: dict[str, ThermalParams] = {}
         self._buf: dict[str, list[tuple]] = {}
         self._last_w: dict[str, bool] = {}
+        self._edge_skip: dict[str, int] = {}
         # S_eff (STORY_SEFF §4): per-zone solar-units tag the stored b was
         # fitted in ("ghi" | "seff1:<normal>x<count>,…"). ensure_units — the
         # engine-driven consumption seam — rebases b on any mismatch.
@@ -650,6 +651,7 @@ class ThermalEstimator:
         return blend_params(
             learned, self._prior(),
             abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
+            solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
         )
 
     def confidence(self, zone_id: str) -> tuple[float, float]:
@@ -738,8 +740,12 @@ class ThermalEstimator:
         buf = self._buf.setdefault(zid, [])
         prev_w = self._last_w.get(zid)
         if prev_w is not None and w != prev_w:
-            buf.clear()  # a chilled-water edge -> start a fresh homogeneous window
+            buf.clear()
+            self._edge_skip[zid] = MODEL_W_EDGE_SKIP
         self._last_w[zid] = w
+        if self._edge_skip.get(zid, 0) > 0:
+            self._edge_skip[zid] -= 1
+            return
         now = state.now
         # Gap guard: skipped samples (fallback/degraded/transient/None inputs)
         # leave the buffer intact, so without this a window could bridge an
@@ -866,8 +872,7 @@ class RegimeCoordinator:
             self._rs = RegimeState()
             return {}, None
         band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
-        # comfort_relax lowers a room's effective temp (it's allowed to drift warm).
-        room_temps = {z.zone_id: z.temp - z.comfort_relax for z in leaders}
+        room_temps = {z.zone_id: z.temp for z in leaders}
         breach = state.duty_comfort_max is not None and any(
             z.temp > state.duty_comfort_max for z in leaders
         )
@@ -1005,8 +1010,7 @@ class CoolingController:
             self._rs = RegimeState()
             return {}, None
         band = state.band_width if state.band_width is not None else DEFAULT_BAND_WIDTH
-        # comfort_relax lowers a room's effective temp (it's allowed to drift warm).
-        room_temps = {z.zone_id: z.temp - z.comfort_relax for z in leaders}
+        room_temps = {z.zone_id: z.temp for z in leaders}
         breach = state.duty_comfort_max is not None and any(
             z.temp > state.duty_comfort_max for z in leaders
         )
@@ -1178,29 +1182,11 @@ class CoolingController:
     # ---- the merge-controller entry ------------------------------------------
 
     def __call__(self, state: HouseState) -> Desired:
-        override, regime_blocco = self.regime_pass(state)
-        duty_out = self.duty_pass(state)  # ALWAYS runs — the duty timers must
-        # advance even while the regime overrides the merge (as in the old engine).
-        # Loud, never a prod KeyError: duty_pass opines on BLOCCO on every path
-        # (the explicit-RELEASE-on-disable contract; invariant 2).
-        assert BLOCCO_LEVER in duty_out
-        blocco = (
-            regime_blocco if regime_blocco is not None
-            else duty_out.get(BLOCCO_LEVER)
-        )
-        # BLOCCO FIRST: preserves the old [regime?, duty, band] merge's key order,
-        # so the engine's per-lever write ORDER stays byte-identical. (The STORY
-        # §1.2 pseudocode assigned BLOCCO last — that would have flipped the
-        # write stream; do NOT "align to spec" here. See STORY §8 build log.)
-        out: Desired = {BLOCCO_LEVER: blocco}
-        band_out = self.band_pass(state, phase_override=override)
-        # dict.update is LAST-wins where the old merge_desired was FIRST-wins:
-        # band_pass must therefore never opine on BLOCCO (it owns setpoint/fan/
-        # manuale levers only). Guarded loudly so an R2/R3 edit can't silently
-        # invert the precedence after the P3 oracle deletion.
-        assert BLOCCO_LEVER not in band_out
-        out.update(band_out)
-        return out
+        # v0.64: old RUN/REST band and F3 coalescing are retired from the live
+        # organism. CoolingController now owns only the independently validated
+        # central duty/BLOCCO protection; pure band/F3 helpers stay for dormant
+        # F4c advisory calculations.
+        return self.duty_pass(state)
 
 
 class SplitGroupController:

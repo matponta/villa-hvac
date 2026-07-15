@@ -86,6 +86,12 @@ async def _select_mode(hass, mode):
     await hass.async_block_till_done()
 
 
+async def test_night_silence_selection_switches_default_on(hass):
+    await _setup(hass)
+    assert hass.states.get("switch.main_bedroom_night_silence").state == "on"
+    assert hass.states.get("switch.gabriroom_night_silence").state == "on"
+
+
 @freeze_time("2026-07-04 23:30:00")
 async def test_night_silences_bedrooms_and_casa_wakes(hass):
     """C1: camere silenziose flows through the arbiter — silence = manuale on
@@ -190,6 +196,45 @@ def test_night_controller_silences_when_active():
     for _zid, zone in bedrooms():
         assert out[switch_lever(zone["manuale_switch"])] == "on"
         assert out[fan_lever(zone["fancoils"][0])] == 0  # silence
+
+
+def test_night_controller_honors_all_room_selections(hass):
+    from custom_components.villa_hvac.night import NightSilenceController
+    from custom_components.villa_hvac.supervisor import switch_lever
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    state = _night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0})
+    expected_switches = {
+        zid: switch_lever(zone["manuale_switch"]) for zid, zone in bedrooms()
+    }
+    for padronale, gabriele in ((False, False), (True, False), (False, True), (True, True)):
+        hass.states.async_set(
+            "switch.main_bedroom_night_silence", "on" if padronale else "off"
+        )
+        hass.states.async_set(
+            "switch.gabriroom_night_silence", "on" if gabriele else "off"
+        )
+        out = NightSilenceController(hass, entry, None)(state)
+        assert (expected_switches["main_bedroom"] in out) is padronale
+        assert (expected_switches["gabriroom"] in out) is gabriele
+
+
+def test_turning_selection_off_mid_night_releases_only_that_room(hass):
+    from custom_components.villa_hvac.night import NightSilenceController
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    c = NightSilenceController(hass, entry, None)
+    hass.states.async_set("switch.main_bedroom_night_silence", "on")
+    hass.states.async_set("switch.gabriroom_night_silence", "on")
+    state = _night_state(temps={"main_bedroom": 24.0, "gabriroom": 24.0})
+    c(state)
+    hass.states.async_set("switch.main_bedroom_night_silence", "off")
+    out = c(state)
+    zones = dict(bedrooms())
+    assert out[switch_lever(zones["main_bedroom"]["manuale_switch"])] == "off"
+    assert out[fan_lever(zones["main_bedroom"]["fancoils"][0])] == 33
+    assert out[switch_lever(zones["gabriroom"]["manuale_switch"])] == "on"
 
 
 def test_night_controller_heat_guard_runs_fan():

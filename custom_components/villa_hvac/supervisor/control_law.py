@@ -264,7 +264,7 @@ def run_fan_pct(
 #
 # INVARIANT: a comfort FLOOR bounds the LOWERING features (pv_bank, precool)
 # symmetrically to how duty_comfort_max (the ceiling) bounds the RAISING features
-# (pv_coast, comfort_relax). The base mode center itself is NOT ceiling-clamped —
+# (pv_coast). The base mode center itself is NOT ceiling-clamped —
 # a Via/Notte setback center legitimately sits above the comfort ceiling.
 
 
@@ -274,7 +274,7 @@ class CenterComposition:
 
     center: float
     base: float           # house_setpoint + mode_offset (the mode's center)
-    source: str           # base | pv_bank | pv_coast | precool | comfort_relax
+    source: str           # base | pv_bank | pv_coast | precool
     floored: bool = False  # the comfort floor clamped a lowering feature up
 
 
@@ -285,8 +285,6 @@ def compose_center(
     pv_mode: str | None,
     pv_floor: float | None,
     pv_coast_relax: float,
-    comfort_enabled: bool,
-    comfort_relax: float,
     precool: bool,
     precool_offset: float | None,
     duty_enabled: bool,
@@ -295,7 +293,7 @@ def compose_center(
 ) -> CenterComposition:
     """Compose the band center from the base + the active feature, then apply the
     comfort floor. Behaviour-preserving replica of the old FanBandController ladder
-    (PV bank/coast mutually exclusive with #9 pre-cool + F4b relax) + the floor.
+    (PV bank/coast mutually exclusive with #9 pre-cool) + the floor.
     """
     center = base
     source = "base"
@@ -303,8 +301,7 @@ def compose_center(
         center = min(base, pv_floor)              # bank down toward the floor
         source = "pv_bank"
     elif pv_mode == PRECOOL_COAST:
-        protected = comfort_enabled and comfort_relax == 0  # inside comfort window
-        coast = 0.0 if protected else max(pv_coast_relax, comfort_relax)
+        coast = pv_coast_relax
         center = base + coast
         if comfort_ceiling is not None:            # raising feature capped at ceiling
             center = min(center, comfort_ceiling)
@@ -313,10 +310,6 @@ def compose_center(
         if precool and duty_enabled and precool_offset is not None:
             center = base - precool_offset          # #9 pre-cool lowers
             source = "precool"
-        if comfort_relax:                           # F4b relax (pre-capped by engine)
-            center += comfort_relax
-            if source == "base":
-                source = "comfort_relax"
     floored = comfort_floor is not None and center < comfort_floor
     if floored:
         center = comfort_floor                      # LOWERING features bounded below

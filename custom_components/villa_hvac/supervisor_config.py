@@ -21,12 +21,6 @@ from datetime import timedelta
 from .const import (
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
-    DEFAULT_COMFORT_DAY_FROM,
-    DEFAULT_COMFORT_DAY_TO,
-    DEFAULT_COMFORT_ENABLED,
-    DEFAULT_COMFORT_NIGHT_FROM,
-    DEFAULT_COMFORT_NIGHT_TO,
-    DEFAULT_COMFORT_RELAX,
     DEFAULT_DUTY_COMFORT_MAX,
     DEFAULT_DUTY_COOLOFF,
     DEFAULT_DUTY_MAX_STINT,
@@ -48,6 +42,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_POOR,
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
+    DEFAULT_RACK_TEMP_THRESHOLD,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_SEFF_ENABLED,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
@@ -66,12 +61,6 @@ from .const import (
     DEFAULT_SPLIT_RH_FLOOR,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
-    OPT_COMFORT_DAY_FROM,
-    OPT_COMFORT_DAY_TO,
-    OPT_COMFORT_ENABLED,
-    OPT_COMFORT_NIGHT_FROM,
-    OPT_COMFORT_NIGHT_TO,
-    OPT_COMFORT_RELAX,
     OPT_DUTY_COMFORT_MAX,
     OPT_DUTY_COOLOFF,
     OPT_DUTY_MAX_STINT,
@@ -93,6 +82,7 @@ from .const import (
     OPT_PV_BIAS_FLOOR_POOR,
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_REGIME_ENABLED,
+    OPT_RACK_TEMP_THRESHOLD,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
     OPT_RETURN_MARGIN_MIN,
@@ -157,17 +147,11 @@ class SupervisorConfig:
     lookahead: timedelta
     # F2 model
     model_learning_enabled: bool
+    rack_temp_threshold: float
     # F4a solar
     solar_forecast_enabled: bool
     # S_eff per-facade solar (STORY_SEFF; structurally dark until consumers ready)
     seff_enabled: bool
-    # F4b comfort windows (raw HH:MM strings; parsed with the current clock)
-    comfort_enabled: bool
-    comfort_relax: float
-    comfort_day_from: str
-    comfort_day_to: str
-    comfort_night_from: str
-    comfort_night_to: str
     # F3 regime / coalescing
     regime_enabled: bool
     regime_peak_ratio: float
@@ -243,22 +227,15 @@ class SupervisorConfig:
                 )
             ),
             model_learning_enabled=_b(options, OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
+            rack_temp_threshold=_f(
+                options, OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD, 24, 35
+            ),
             solar_forecast_enabled=_b(options, OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
             # ANDed with the code-level readiness constant: the option can never
             # light S_eff up while any §6 b-consumer still reads house GHI.
             seff_enabled=(
                 _b(options, OPT_SEFF_ENABLED, DEFAULT_SEFF_ENABLED)
                 and SEFF_CONSUMERS_READY
-            ),
-            comfort_enabled=_b(options, OPT_COMFORT_ENABLED, DEFAULT_COMFORT_ENABLED),
-            comfort_relax=_f(options, OPT_COMFORT_RELAX, DEFAULT_COMFORT_RELAX, 0, 6),
-            comfort_day_from=str(options.get(OPT_COMFORT_DAY_FROM, DEFAULT_COMFORT_DAY_FROM)),
-            comfort_day_to=str(options.get(OPT_COMFORT_DAY_TO, DEFAULT_COMFORT_DAY_TO)),
-            comfort_night_from=str(
-                options.get(OPT_COMFORT_NIGHT_FROM, DEFAULT_COMFORT_NIGHT_FROM)
-            ),
-            comfort_night_to=str(
-                options.get(OPT_COMFORT_NIGHT_TO, DEFAULT_COMFORT_NIGHT_TO)
             ),
             regime_enabled=_b(options, OPT_REGIME_ENABLED, DEFAULT_REGIME_ENABLED),
             regime_peak_ratio=_f(

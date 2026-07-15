@@ -27,7 +27,6 @@ from .model import (
     _SEASON_SUMMER,
     _is_cooling_leader,
     _is_free_cooling,
-    active_cooling_leaders,
 )
 from .returnhome import ReturnRoom, return_lead_time
 
@@ -174,9 +173,9 @@ class PlanView:
 
 # Display order (the sensor lists rows in this order).
 FEATURE_ORDER: tuple[str, ...] = (
-    "fan_pacing", "duty_cycle", "regime", "precool", "free_cool",
+    "rack_guard", "steady_pacing", "duty_cycle", "precool", "free_cool",
     "windows_free_cool", "free_air",
-    "comfort_windows", "pv_bias", "unified_planner", "shading", "night",
+    "pv_bias", "unified_planner", "shading", "night",
 )
 
 
@@ -204,8 +203,6 @@ def build_feature_graph(
     dominant deploy-dark reason); otherwise the feature's own gate.
     """
     summer = state.season == _SEASON_SUMMER
-    has_leaders = bool(active_cooling_leaders(state))
-
     def row(feature: str, is_active: bool, reason: str) -> FeatureStatus:
         if not enabled.get(feature, False):
             return FeatureStatus(feature, False, False, "disabled")
@@ -217,21 +214,23 @@ def build_feature_graph(
 
     zones = state.zones.values()
     rows = {
-        "fan_pacing": row(
-            "fan_pacing",
-            summer and has_leaders,
-            "not cooling season" if not summer else "no active cooling zone",
+        "rack_guard": row(
+            "rack_guard",
+            state.rack_guard_active,
+            "not cooling season" if not summer else "rack below activation threshold",
+        ),
+        "steady_pacing": row(
+            "steady_pacing",
+            state.season == _SEASON_SUMMER
+            and state.house_mode == "Casa"
+            and state.paced_living_room,
+            "living room not eligible",
         ),
         "duty_cycle": row(
             "duty_cycle",
             plan.in_cooloff,
             "peak: PdC free-runs" if plan.at_peak
             else ("not cooling season" if not summer else "cooling within stint cap"),
-        ),
-        "regime": row(
-            "regime",
-            plan.regime == "medium",
-            f"{plan.regime or 'unknown'} regime (coalesce only in medium)",
         ),
         "precool": row("precool", plan.precool, "no peak ahead to bank for"),
         "free_cool": row(
@@ -249,11 +248,6 @@ def build_feature_graph(
         # #3: on == pausing the cooled zones (windows-open); there is no
         # enabled-but-inert state (row() only reaches is_active when enabled+master).
         "free_air": row("free_air", True, "off"),
-        "comfort_windows": row(
-            "comfort_windows",
-            any(z.comfort_relax > 0 for z in zones),
-            "inside every comfort window",
-        ),
         "pv_bias": row(
             "pv_bias",
             state.pv_mode in ("bank", "coast"),
@@ -748,7 +742,7 @@ def build_room_plans(
         wa = [False] * n_steps if free else None
         traj = schedule_precool(
             zone_id=z.zone_id, params=params_by_zone[z.zone_id], t0=z.temp,
-            center=center + z.comfort_relax, band=band, slam=slam,
+            center=center, band=band, slam=slam,
             forecast=forecast,
             solar=(solar_by_zone or {}).get(z.zone_id, solar),
             now=state.now, lookahead=lookahead, water_available=wa,
@@ -965,7 +959,7 @@ class CenterResolution:
 
     center: float          # the resolved center every consumer reads
     base: float            # house_setpoint + mode_offset (the mode's center)
-    source: str            # planner | base | pv_bank | pv_coast | precool | comfort_relax
+    source: str            # planner | base | pv_bank | pv_coast | precool
     floored: bool          # the LADDER's comfort floor clamped a lowering feature
     planner_driven: bool   # the unified planner reference drove the center
 
@@ -991,7 +985,6 @@ def resolve_center(
         base=base,
         pv_mode=state.pv_mode, pv_floor=state.pv_floor,
         pv_coast_relax=state.pv_coast_relax,
-        comfort_enabled=state.comfort_enabled, comfort_relax=zone.comfort_relax,
         precool=state.precool, precool_offset=state.precool_offset,
         duty_enabled=state.duty_enabled,
         comfort_ceiling=state.duty_comfort_max,

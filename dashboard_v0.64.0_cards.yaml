@@ -1,0 +1,24 @@
+# Merge these cards into the existing climate dashboard after deploying v0.64.0.
+# They replace the former momentary Buonanotte climate buttons.
+
+type: vertical-stack
+cards:
+  - type: entities
+    title: Camere silenziose
+    show_header_toggle: false
+    entities:
+      - entity: switch.main_bedroom_night_silence
+        name: Camera padronale
+      - entity: switch.gabriroom_night_silence
+        name: Camera Gabriele
+
+  - type: entities
+    title: Salotto — regolazione silenziosa
+    show_header_toggle: false
+    entities:
+      - entity: switch.steady_pacing
+        name: Osserva regolazione
+      - entity: switch.paced_living_room
+        name: Applica al salotto
+      - entity: sensor.hvac_room_living_room
+        name: Stato e spiegazione

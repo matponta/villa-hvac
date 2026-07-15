@@ -1,220 +1,129 @@
 # Next session — kickstart prompts
 
-## ✅ DONE — dead-fan-at-wake hotfix (v0.56.0, shipped 2026-07-12)
+## Local candidate ready — v0.64.0 (2026-07-15)
 
-The 2026-07-12 incident (padronale a DEAD ZONE 09:31→16:04, hvac_levers=0
-throughout — a mild night meant the #2b heat-guard never fired, so nothing
-re-armed the fan the 00:11 silence had switched OFF) is FIXED in **v0.56.0**.
+The full approved fix-pack + steady-governor scope is implemented locally. Tests and
+Ruff are green. Next work is deployment/live validation: install v0.64.0, merge
+`dashboard_v0.64.0_cards.yaml`, keep `paced_living_room` OFF while observing shadow,
+then enable it after owner acceptance. `unified_planner` remains OFF. Legacy
+Buonanotte cleanup still requires a live HA snapshot before deletion.
 
-NEW VERIFIED FACT recorded in CLAUDE.md: a KNX fancoil in AUTO does NOT restart
-a fan whose switch object was written OFF — only an explicit ON revives it — and
-the interlock holds the EV valve CLOSED meanwhile, so a `manuale`-only hand-back
-strands the zone INVISIBLY.
+## ✅ v0.56.0 LIVE + VERIFIED (read-only probe 2026-07-15)
 
-Three fixes shipped (all with tests, mutation-verified, pre-tag adversarial
-review):
-1. `NightSilenceController._release` emits a one-shot fan turn-on
-   (`NIGHT_GUARD_FAN_PCT`) for a bedroom the silence left OFF, SKIPPING
-   #4-paused / free-cooling zones; a guard actively cooling at hand-back already
-   has a live fan → no turn-on (guard-fired release byte-identical).
-2. `async_fail_safe` re-arms any fan the supervisor switched off this session
-   (tracked in-memory in `_fans_turned_off`, populated in `_dispatch_write`);
-   fail-safe SHA pin updated per the test's own protocol.
-3. Engine self-heal watchdog `_stranded_fan_watchdog` (closes the whole class):
-   a cooled leader we are NOT managing (manuale off) whose fan reads OFF + valve
-   CLOSED while genuinely above its live thermostat setpoint (summer, enabled,
-   un-paused, not free-cooling, not a Notte bedroom) for `STRANDED_FAN_CYCLES`
-   (10) → one `fan.turn_on` (retried every 10 cycles) + WARN once. Gated on temp
-   > setpoint so it can never fight a legitimate satisfied-stop.
+v0.56.0 was deployed 2026-07-13 12:02 (HACS + restart). The wake re-arm is PROVEN
+live: 2026-07-15 07:30:31 the supervisor released gabriele's manuale at .651 and
+one-shot fan-ON at .656 (the silence had left it OFF); padronale's fan was already
+alive from a guard cycle → correctly no write. Mornings 7/14 + 7/15 clean. The only
+dead-fan episode in the 7/12→7/15 window was 7/13 07:45→07:48 under v0.55.0 (the
+already-fixed bug; owner re-armed by hand).
 
-⚠️ AFTER THE OWNER DEPLOYS v0.56.0 (live-verify, read-only HA connector): next
-morning confirm **manuale OFF at 08:00 AND the fan alive** (or the valve opening
-on first demand) on BOTH bedrooms; and check **gabriroom retroactively** for the
-same dead pattern on 7/12 (was it also silenced mild + stranded?).
+**Buonanotte verdict (owner hypothesis, probed 7/15):** the legacy path IS alive and
+one-sided — `script.buonanotte_padronale` fires nightly, TWICE per Hue-remote press
+(`automation.telecomando_hue_bedroom` calls it directly AND again via
+`input_button.chiudi_notte` → `automation.spegni_tutto_e_chiudi`; the second run
+rejects as failed_single). It writes manuale ON + fan OFF + latches
+`input_boolean.notte_silenziosa_*`, and the legacy WAKE side is entirely disabled
+(and never re-armed the fan even when it ran) → the booleans latch ON forever.
+NOT the current strander (the supervisor writes the same state ~1 s later and
+v0.56.0 heals any OFF fan regardless of author), but a real residual risk: with the
+supervisor master OFF overnight, NOTHING re-arms padronale; and the watchdog is
+blind while manuale stays ON. ⇒ Fix-pack item 1. Effective wake is 07:30 via
+`smart_wakeup`→Apri Casa most days; the 08:00 auto-wake is the fallback path.
 
-## Backlog session prompt (after the hotfix)
-
-Paste the block below as the first message in a fresh Claude Code session to resume
-this work with full context. Durable source of truth: [`CLAUDE.md`](./CLAUDE.md)
-(verified facts + per-feature status) · [`MASTER_PLAN.md`](./MASTER_PLAN.md) (build
-checklist) · [`STORY_SEFF.md`](./STORY_SEFF.md) (S_eff spec, shipped) ·
-[`STORY_SPLIT_TRIO.md`](./STORY_SPLIT_TRIO.md) (split trio, shipped) ·
-[`STORY_TIER1_COOLING_CONTROLLER.md`](./STORY_TIER1_COOLING_CONTROLLER.md)
-(P3/P5/P6 remaining) · `../hvac-implementation-plan.html` (backbone). This file is
-the resume pointer + live state.
+## FIX PACK session prompt
 
 ```
-Resume work on the villa_hvac Home Assistant custom integration — BACKLOG session.
+Resume work on villa_hvac — FIX PACK session.
 CWD: /Users/mattia/Documents/Claude/Projects/Home Assistant/villa-hvac
-First read CLAUDE.md in full (verified facts: zone map, EV-FAN-valve cooling chain,
-BLOCCO polarity on=block, supervisor architecture, F1/F2/F3/F4 notes). Don't
-re-derive verified facts. MASTER_PLAN.md = build checklist.
+Read CLAUDE.md in full first (verified facts). MASTER_PLAN.md = build checklist.
+STATE: repo == LIVE == v0.56.0 (1522 tests, ruff clean). Supervisor LIVE + actuating
+(supervisor/auto_setback/vmc_auto/split_ac/free_air/windows_free_cooling ON;
+fan_pacing/duty/pv_bias/free_cooling/unified_planner/regime/seff OFF).
+Small increments, pre-tag adversarial review, fail-safe invariants byte-preserved.
 
-STATE (2026-07-12): repo == v0.56.0 (1516 tests, ruff clean). LIVE = v0.55.0 —
-DEPLOYED 2026-07-12 00:42 (HACS update from v0.53.0 + restart). v0.56.0 is the
-dead-fan-at-wake HOTFIX (see the DONE section at the top of this file) — NOT yet
-deployed; owner deploys via HACS + restart. AFTER DEPLOY verify: manuale OFF at
-08:00 AND the fan alive on BOTH bedrooms; the padronale valve opens when the #2b
-heat-guard fires; open a window and watch its zone pause.
-⚡ THE SUPERVISOR IS LIVE: switch.supervisor + auto_setback + vmc_auto + split_ac
-+ free_air ON — the engine ACTUATES the villa. Any change to the
-#2/#2b/#4/free-air/VMC paths changes LIVE behavior the household relies on
-nightly. Small increments, pre-tag adversarial review, never weaken the
-fail-safe invariants.
+THE OWNER-APPROVED, RELEASE-BY-RELEASE SPEC IS:
+IMPLEMENTATION_PLAN_FIX_PACK_PACING_V3.md. Follow it exactly; the older prose and
+open questions in STORY_PACING_V3_STEADY_GOVERNOR.md are evidence, not authority.
 
-v0.54.0 (#2b HEAT-GUARD CHILLED WATER — closed the top owner backlog item):
-guard-active now ALSO slams the bedroom setpoint to threshold−0.5
-(NIGHT_GUARD_SETPOINT_DROP; summer only, bounded ≤ a COMPUTABLE #2a mode
-target — never raise, skips disabled/paused/free-cooling zones) so the EV
-valve opens and the held 33% fan moves CHILLED air — the legacy guard
-circulated warm air valve-CLOSED in the 26–27 dead-band (padronale's whole
-first night). Releases: guard 10-min-below hysteresis / auto-wake / Notte exit
-(#2a re-asserts in the same merge) + async_fail_safe restoring the NUDGE-TIME
-snapshot (night.failsafe_setpoints — deliberately NO live entity reads: the
-select/number platforms are torn down before an unload-path fail-safe; found
-as a MAJOR by the 21-agent pre-tag adversarial review, along with the
-free-cool interplay). The fail-safe SHA pin in test_engine was updated
-deliberately, per that test's own protocol. Golden tests pin the legacy
-silence/release/fan behavior; an engine-level test proves chilled-water
-delivery through the real cycle (mutation-verified).
+ORDER — one reviewed/tagged release at a time; do not bundle:
 
-v0.55.0 (WINDOW CONTACTS — owner ask 2026-07-11, STORY_WINDOWS.md): 6 Shelly
-BLU contacts wired as #4 `window` keys (main_bedroom, gabriroom, studio_v =
-binary_sensor.aaa_window, office, ingresso radiant, Porta Cucina → living_room
-LEADER — kitchen has no thermostat, open space); #2b guard now fan-0 on paused
-bedrooms (old warm-air edge CLOSED); windows→free-cool inference behind opt-in
-switch.windows_free_cooling (default OFF: ≥3 contacts open + outdoor ≤ leaders'
-mean − 1.0 °C → ORed into the ONE _is_free_cooling; policies duplicate
-deleted); long-open contact alert (30 min, once/episode, Italian push to
-matphone16 + pixel_10, suppressed while deliberately airing; vasistas never
-page). Options: windows_free_cool_count/margin + window_alert_minutes.
-NOT wired: cantina_impianti door (plant room), up_sense_contact (unmapped).
+FP1 v0.57.0 — PERSISTENT PER-BEDROOM NIGHT SILENCE.
+- Add restored switches for main_bedroom + gabriroom, default ON.
+- Only selected rooms enter #2b; changing a switch during Notte takes effect now.
+- Every participating room gets a complete morning/toggle/fail-safe hand-back:
+  manuale OFF, guard setpoint restored, fan explicitly alive when silence left it OFF.
+- Deploy + verify FIRST; only then snapshot and strip the old Buonanotte/Sveglia
+  CLIMATE branches and duplicate calls. Preserve unrelated light/cover actions.
+- Replace old dashboard buttons with the two persistent switches. Delete rollback
+  artifacts only after one clean week.
 
-FIRST NIGHT (7/10→11) verified clean from the recorder: mode bridge propagated
-Chiudi-notte in 11 ms; #2b silence latched same-second; heat-guard fired 00:17
-(3-min debounce); auto-wake released at exactly 08:00:00; hvac_levers=0 all
-night; zero errors; VMC2 bedroom unit stayed silent (night-quiet veto held),
-VMC1 flushed once 00:40–00:50. ENABLED since (owner; confirmed live 2026-07-12):
-split_ac + free_air — both OFF on this first night, turned on afterward. Still
-OFF (owner's pace): fan_pacing, duty, pv_bias, free_cooling, windows_free_cooling,
-unified_planner, regime, seff.
+FP2 v0.58.0 — KNX TEMP FRESHNESS.
+- Age sources from State.last_reported; keep the 30-min threshold and fallback.
+- Pin flat-but-cyclic usable, genuinely dead stale, unavailable fallback.
 
-HA-SIDE STATE (not in this repo — applied live 2026-07-10 ~23:20):
-- automation.clima_bridge_modalita_casa_supervisor_one_way: ONE-WAY bridge
-  input_select.modalita_casa → select.house_mode (options match by design).
-  The physical buttons keep working; select.house_mode is the climate truth.
-- Legacy climate automations DISABLED, not deleted (rollback = re-enable):
-  clima_applica_modalita_casa, clima_rientro_in_casa_ripristina_fancoil,
-  notte_guardia_caldo_camera_* (×3), notte_sveglia_automatica_camere,
-  clima_risincronizza_modalita_all_avvio (PROVEN hazard: automation.trigger
-  executes disabled automations), clima_master_temperatura_casa.
-  Verify clima_backup_via_quando_esco too.
-- Smarty VMC switch (switch.10_5_150_27_boost) blips unavailable every
-  ~10–25 min — flaky integration; the edge-triggered VmcController is immune.
+FP3 v0.59.0 — RACK GUARD.
+- Engage >28 C / 3 min; release <27 C / 10 min; start 67%.
+- Escalate 100% at >=30 C / 3 min OR 20 min without >=0.3 C improvement.
+- Mandatory P1 setpoint nudge opens the shared valve; guard forces BLOCCO RELEASE.
+- Release restores setpoint/manuale and leaves the fan physically ON; never fan 0.
+- Default-ON restored switch, alert if yielded/ineffective, fail-safe snapshot restore.
 
-BACKLOG (priority order — pick from the top unless the owner redirects):
+FP4 v0.59.1 — HARDENING.
+- Wire MODEL_W_EDGE_SKIP=3 after chilled-water edges.
+- Blend learned k only while abc is currently identified; retain stored k.
+- Inject failures through every async_fail_safe stage and prove remaining releases run.
+- Pin Ruff + pyproject Python 3.14 config; no mass formatting.
 
-0a. FAN PACING (#3 band control) — MAJOR REWORK (owner-flagged 2026-07-13).
-    Owner turned switch.fan_pacing back OFF after a ~2 h daytime live trial
-    (10:40→12:xx 7/13) and said it "needs major rework". What the trial exposed
-    (see this session's live debug): the band's REST phase (setpoint slammed UP,
-    valve closed, fan → fan_min 0) reads to a human as "the AC is broken / the
-    room's fan is dead" — Gabriele coasted fan-off at 25.3 °C because comfort
-    windows (pre-existing, inert until fan pacing lit it up) had relaxed the
-    bedroom center to 26 while OUTSIDE its night window. The pain points to
-    rework: (1) the many interacting center layers (base + mode offset + per-room
-    offset + comfort_relax + PV + planner) make the resulting setpoint/fan
-    impossible to reason about at a glance — needs a single legible "why is this
-    room doing X" surface + probably fewer/most-simplified layers; (2) REST
-    fan-off + valve-closed coasting is surprising and looks like a fault — decide
-    whether a low circulation floor / different REST presentation is wanted;
-    (3) comfort-windows daytime bedroom relax (default night 22–08) coasting an
-    occupiable room warm all day is arguably wrong (ties to backlog #1 occupancy
-    roster). Scope the rework with the owner before building. fan pacing also
-    GATES pv_bias, so both stay OFF until this lands.
+THEN V0 + R0-R5 STEADY GOVERNOR exactly as the implementation plan specifies.
+Only living_room may pace. The living room releases safely to AUTO during Notte.
+Kitchen EP is rate-of-change only (+0.4 C/10 min -> +10%, no down-step for 30 min).
+The governor adapts its objective: lowest steady airflow while other rooms already own
+the PdC call; reduced marginal consenso runtime when living_room owns the call. Normal
+optimized fan is capped below 100%; 100% is safety escalation only.
 
-0b. RACK TEMP must drive the shared fancoil (owner-flagged 2026-07-13; live bug).
-    fan.fancoil_locale_rack cools BOTH Rack + Pianerottolo P1 (dual outlet), but
-    only the stairs_p1 LEADER (P1's thermostat) drives it — the rack's own
-    sensor.rack_t_h_temperature is IGNORED. Observed live 7/13: rack 28.4 °C
-    while P1 23.9 °C → P1 satisfied → shared fan idle → the server rack cooks.
-    CLAUDE.md already documents the intended rule ("command = P1 demand OR
-    sensor.rack_t_h_temperature over threshold") — it was never implemented.
-    Fix: fold a rack-temp-over-threshold demand into whatever drives the shared
-    fancoil (a rack threshold option; make the shared fancoil run on P1-demand OR
-    rack-hot). Note the rack zone has climate=None / no thermostat / no #10
-    switch, so it isn't a band leader today — the fix must live where the shared
-    fancoil's run decision is made (band/#2/#9 for stairs_p1) or as a dedicated
-    rack-guard. Small, well-scoped, and higher urgency than the cosmetic items
-    (hardware protection).
+F4c FREEZE — explicit owner decision:
+- keep switch.unified_planner OFF;
+- do not implement the old planner-offset ITEM 4;
+- do not change planner schedule/simulation/cache/activation in this train; the only
+  allowed seam edit is mechanical removal of deleted F4b from shared center composition;
+- when retiring F3 live actuation, retain any pure helpers/dormant advisory structures
+  imported by F4c. F4c gets its own later compatibility + shadow session.
 
-1. PER-ROOM OCCUPANCY ROSTER (#2 evolution): every zone has ep_occ mapped in
-   ZONES but NOTHING consumes it (only #6 palestra comfort reads occupied).
-   Goal: a vacant room relaxes toward its own setback (the Gabriele case:
-   empty bedroom on comfort schedule all day). EP occupancy is flappy →
-   debounce/latch like presence. Design first (small story doc): per-zone
-   opt-in? offset-based relax vs preset? interaction with #2b bedrooms +
-   comfort windows (F4b).
-
-2. #2 OFFSET INTO plan_center_schedule: the per-room offset (v0.49.0) is
-   applied at resolve_center/house_mode/precool but NOT in the unified-planner
-   schedule base — a HARD GATE before switch.unified_planner can ever be
-   enabled. Mechanical, well-scoped.
-
-3. FREE_AIR → PER-ROOM "OPEN WINDOWS" (owner ask, PARTIALLY superseded by
-   v0.55.0): the 6 main rooms now have REAL contacts wired into #4. Remaining:
-   per-room manual switches for the sensor-less cooled rooms (salotto windows,
-   sala_giochi, rack) + the free_air rename — decide whether still wanted now
-   that contacts cover the main rooms.
-
-4. LEGACY CLEANUP → v1.0.0: after ~1 week of clean supervisor nights, DELETE
-   the disabled automations + the buonanotte/sveglia scripts' climate branches
-   + automation.sistema_ricrea_group_presenza_adulti_all_avvio (obsolete since
-   v0.46.0 watches person.* directly). NOTE: the 3 notte_guardia_caldo_camera_*
-   automations are now doubly-superseded (v0.54.0 guard does fan AND valve).
-   Consider rewiring the physical buttons to select.house_mode directly and
-   retiring the bridge last.
-
-5. TIER-1 TRAIN (STORY_TIER1): P3 delete-trio is STOP-gated on the live soak
-   of the merged CoolingController — the soak STARTED 2026-07-10 when the
-   supervisor went live; give it 1–2 clean weeks (watch hvac_levers + nightly
-   behavior), then P3 → P5 (R2 deviation-space) → P6 (R3 REST-quorum + boot
-   manuale sweep). P4 feature_graph already shipped (v0.47.0).
-
-6. OUTSIDE-AIR MERGE (free-cooling × open-windows × VMC, owner ask): the
-   v0.55.0 windows→free-cool inference is the merge's FIRST CONCRETE PIECE
-   (owner's own rule). Remaining design after live data: free-cool conditions
-   + occupied → "open the windows" notification; VMC interplay; free_air fold.
-
-Smaller follow-ups (v0.55.0 review deferrals): window-pause vs auto_setback
-gate (rule 1 inert when setback off — page warns honestly; exemption needs a
-restore-path redesign) · window-alert quiet hours / bedroom-during-Notte
-deferral (owner decision) · close→restore debounce if wind-flap observed ·
-grouped digest for multi-window pages · VMC thresholds (const → options flow) · #6
-cycles_since_restart resets on restart (total is restored — cosmetic) ·
-night-guard threshold tuning on real nights (26.0 default) · watch the first
-v0.54.0 guard night: valve open minutes + did the room actually get driven
-below threshold (25.5 target) without overshoot complaints · watch the first
-v0.55.0 window events: pause/restore latency, alert timing, no page spam ·
-owner may flip switch.windows_free_cooling when ready (default OFF).
-
-LIVE-OPS for the owner (not build work — support if asked): watch S_eff
-geometry on the Modello tab → flip seff_enabled → STORY_SEFF §8 gates ~1wk;
-fan_pacing TRIED 2026-07-13 + turned back OFF (needs major rework, backlog 0a —
-so pv_bias stays blocked); free_cooling opt-in when wanted; split_ac DONE — LIVE
-(automation.circolazione_aria_cantina_vini confirmed disabled ✓);
-windows_free_cooling only AFTER the first clean nights of v0.55.0 raw window
-pause/alert behavior.
+DOCS per release: update CLAUDE.md/AGENTS.md, MASTER_PLAN and the household manual for
+owner-visible behavior. Add the verified AUTO-fan fact (cycling room follows valve;
+constant 100% only while valve pinned) when the relevant release lands.
 
 RULES unchanged: pytest + ruff green on the pinned target
-(pytest-homeassistant-custom-component==0.13.324 = HA 2026.4.3 / Py 3.14);
-small commit + tag + gh release per increment; pre-tag adversarial review
-(workflow if budget allows, else inline 3-lens + refutation); fail-safe
-invariants byte-preserved (the SHA-pin test's own update protocol applies);
-HA connector for live diagnosis (read-only unless the owner asks);
-owner-visible behavior changes get a household-manual update (artifact
-8d1ef72b + PDF in repo root — v0.54.0 manual update PENDING, do it from the
-Cowork session that owns the artifact). Known quirks: ~40s KNX unavailable
-blips (nightly ~03:00 backup) — ignore singles; the ThermalEstimator gap guard
-covers the long ones.
+(pytest-homeassistant-custom-component==0.13.324 = HA 2026.4.3 / Py 3.14); commit +
+tag + gh release per increment; pre-tag adversarial review; fail-safe SHA-pin
+protocol; HA connector read-only unless the owner asks (ITEM 1 is owner-approved
+write work). Known quirks: ~40 s KNX blips nightly ~03:00 (gateway restart).
 ```
+
+## FAN-PACING MAJOR REWORK — #3 v3 "Steady Governor"
+
+Evidence and rejected alternatives live in `STORY_PACING_V3_STEADY_GOVERNOR.md`;
+the executable authority is `IMPLEMENTATION_PLAN_FIX_PACK_PACING_V3.md`.
+
+Locked result: only living_room may pace. It holds one nonzero steady Salotto+Cucina
+fan percentage while the KNX valve regulates at the honestly displayed composed
+target. It releases both fans alive to AUTO during Notte. The kitchen EP contributes
+rate-of-change only. The objective adapts between minimum living airflow while other
+rooms already own the PdC call and reduced marginal consenso runtime while the living
+room owns it. F4b is deleted; old band/F3 live paths retire only AFTER a shadow phase
+and successful live soak. F4c stays OFF and code-frozen for a later dedicated session.
+
+## Backlog after the fix pack (unchanged priorities)
+
+1. PACING REWORK V0 + R0–R4 (above — the main train).
+2. PER-ROOM OCCUPANCY ROSTER (#2 evolution; now also the designated home for the
+   deleted F4b daytime-relax intent). Design story first.
+3. Dedicated F4c compatibility + shadow session (offsets, steady-airflow simulation,
+   forecast/model gates); do not enable it before then.
+4. Outside-air merge design (free-cooling × windows × VMC) — after live data.
+5. S_eff flag-on validation (live-ops, owner-paced) · #8 return-precond live pass ·
+   split-trio owner decisions · winter items (seasonal).
+
+Durable sources of truth: `CLAUDE.md` (verified facts) · `MASTER_PLAN.md` (build
+checklist) · `STORY_PACING_V3_STEADY_GOVERNOR.md` (rework) · story docs per feature.
+This file is the resume pointer + live state.

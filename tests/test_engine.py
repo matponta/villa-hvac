@@ -304,15 +304,18 @@ async def test_duty_cycle_blocks_after_max_stint_via_engine(hass):
 
 async def test_fan_pacing_switch_defaults_off(hass):
     await _setup(hass)
-    assert hass.states.get("switch.fan_pacing").state == "off"
+    assert hass.states.get("switch.fan_pacing") is None
+    assert hass.states.get("switch.steady_pacing").state == "off"
+    assert hass.states.get("switch.paced_living_room").state == "off"
 
 
 async def test_fan_pacing_holds_manuale_and_fan_via_engine(hass):
     """#3: pacing on + room cooling & hot -> engine forces manuale on + a pull-
     down fan speed on that fancoil."""
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
-    hass.states.async_set("sensor.clima_salotto", "26.0")  # fused temp -> 26
+    hass.states.async_set("sensor.clima_salotto", "24.5")
     hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")  # demand
+    hass.states.async_set("binary_sensor.fancoil_cucina_valvola", "on")
     hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")  # run
     hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
     hass.states.async_set("switch.fancoil_salotto_manuale", "off")
@@ -321,7 +324,8 @@ async def test_fan_pacing_holds_manuale_and_fan_via_engine(hass):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
-    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.steady_pacing", "on")
+    hass.states.async_set("switch.paced_living_room", "on")
     # The fan lever asserts STATE + % together: a >0% command is fan.turn_on
     # (with percentage), never a bare set_percentage.
     fan_calls = async_mock_service(hass, "fan", "turn_on")
@@ -382,8 +386,9 @@ async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass):
     valve closed and the zone never cooled. The state-aware lever must re-assert
     fan.turn_on."""
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
-    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("sensor.clima_salotto", "24.5")
     hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.fancoil_cucina_valvola", "on")
     hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
     hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
     hass.states.async_set("switch.fancoil_salotto_manuale", "off")
@@ -392,7 +397,8 @@ async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
-    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.steady_pacing", "on")
+    hass.states.async_set("switch.paced_living_room", "on")
     on_calls = async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     engine = entry.runtime_data.engine
@@ -446,8 +452,9 @@ async def test_run_fan_off_watchdog_fires_through_engine_cycles(hass, caplog):
     from custom_components.villa_hvac.const import RUN_FAN_OFF_WARN_CYCLES
 
     hass.states.async_set(CLIMATE, "cool", {"preset_mode": "comfort"})  # summer
-    hass.states.async_set("sensor.clima_salotto", "26.0")
+    hass.states.async_set("sensor.clima_salotto", "24.5")
     hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
+    hass.states.async_set("binary_sensor.fancoil_cucina_valvola", "on")
     hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
     # Stuck OFF with a retained % — the mocked services never change the state.
     hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 20})
@@ -457,7 +464,8 @@ async def test_run_fan_off_watchdog_fires_through_engine_cycles(hass, caplog):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
-    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.steady_pacing", "on")
+    hass.states.async_set("switch.paced_living_room", "on")
     async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
     engine = entry.runtime_data.engine
@@ -759,13 +767,12 @@ async def test_forecast_precool_nudges_setpoint_via_engine(hass):
 
 # --- B3: full policies + controllers stack through _cycle (merge-order seam) --
 
-async def test_band_setpoint_beats_house_mode_via_engine(hass):
-    """B3 seam: controllers merge BEFORE the pure policies, so the #3 band setpoint
-    wins over house_mode on a leader it actively manages (locks [*ctrl, *pure])."""
+async def test_governor_writes_honest_center_over_house_mode(hass):
+    """The steady governor writes the same honest composed center shown by HA."""
     hass.states.async_set(
-        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 24.0}
+        CLIMATE, "cool", {"preset_mode": "comfort", "temperature": 23.0}
     )  # summer; house_setpoint default 24 + Casa summer offset 0 -> center 24
-    hass.states.async_set("sensor.clima_salotto", "26.0")            # warm -> RUN
+    hass.states.async_set("sensor.clima_salotto", "24.5")
     hass.states.async_set("binary_sensor.fancoil_salotto_valvola", "on")
     hass.states.async_set("binary_sensor.ct_consenso_freddo_villa", "on")
     hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 0})
@@ -775,7 +782,8 @@ async def test_band_setpoint_beats_house_mode_via_engine(hass):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     hass.states.async_set("switch.supervisor", "on")
-    hass.states.async_set("switch.fan_pacing", "on")
+    hass.states.async_set("switch.steady_pacing", "on")
+    hass.states.async_set("switch.paced_living_room", "on")
     temps = async_mock_service(hass, "climate", "set_temperature")
     async_mock_service(hass, "fan", "turn_on")
     async_mock_service(hass, "switch", "turn_on")
@@ -783,10 +791,7 @@ async def test_band_setpoint_beats_house_mode_via_engine(hass):
     await entry.runtime_data.engine.request_run()
 
     salotto = [c for c in temps if c.data["entity_id"] == CLIMATE]
-    # band RUN slam = center(24) - A(0.75) = 23.25; house_mode wanted 24 (== current
-    # -> no write). A 23.25 write can only be the band winning the controllers-first
-    # merge over house_mode.
-    assert salotto and salotto[-1].data["temperature"] == 23.25
+    assert salotto and salotto[-1].data["temperature"] == 24.0
 
 
 async def test_free_cool_forces_bp_and_band_yields_via_engine(hass):
@@ -1447,15 +1452,17 @@ async def test_failsafe_mid_loop_epoch_bump_stops_lever_writes(hass):
 
 # --- Tier-1 M1: fold wiring + fail-safe byte-gate ------------------------------
 
-async def test_controllers_are_exactly_cooling_then_night(hass):
+async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     """(P2 gate g) The production controllers tuple is EXACTLY
-    (CoolingController, NightSilenceController, SplitGroupController) — the oracle
-    trio cannot stay silently wired. CoolingController is FIRST and Night follows it
+    (RackGuardController, CoolingController, NightSilenceController,
+    SplitGroupController). Rack safety is first; Cooling precedes Night
     (Night's Notte-exit one-shot manuale release must yield to the band re-taking a
     bedroom on the same cycle). SplitGroupController (#6) is last: its lever set
     (aircon_* hvac_mode/temperature/fan_mode) is disjoint from both, so its position
     is immaterial and it can never perturb the band↔night precedence."""
     from custom_components.villa_hvac.night import NightSilenceController
+    from custom_components.villa_hvac.rack import RackGuardController
+    from custom_components.villa_hvac.governor import SteadyGovernorController
     from custom_components.villa_hvac.policies import (
         CoolingController,
         SplitGroupController,
@@ -1464,9 +1471,11 @@ async def test_controllers_are_exactly_cooling_then_night(hass):
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
     assert [type(c) for c in engine.controllers] == [
-        CoolingController, NightSilenceController, SplitGroupController,
+        RackGuardController, SteadyGovernorController, CoolingController,
+        NightSilenceController,
+        SplitGroupController,
     ]
-    assert engine._cooling is engine.controllers[0]
+    assert engine._cooling is engine.controllers[2]
 
 
 def test_failsafe_functions_byte_identical():
@@ -1491,8 +1500,8 @@ def test_failsafe_functions_byte_identical():
     from custom_components.villa_hvac.engine import SupervisorEngine
 
     pins = {
-        "async_fail_safe":
-            "bdc08cab5df1079a43a8a89fd8ffa741890900e4492d0a89e5e7e78a0b40c80d",
+            "async_fail_safe":
+                "5f3304076bfc12ef381a0afd726a3baafd2ff9b5b9bddf900c319e127956be83",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":

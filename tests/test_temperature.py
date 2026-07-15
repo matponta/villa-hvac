@@ -1,6 +1,7 @@
 """Tests for the fused per-zone temperature (#1)."""
 from __future__ import annotations
 
+from freezegun import freeze_time
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.villa_hvac.const import DOMAIN
@@ -88,3 +89,22 @@ async def test_radiant_zone_has_temperature_sensor(hass):
     state = hass.states.get("sensor.lavanderia_temperature")
     assert state is not None
     assert float(state.state) == 21.7
+
+
+@freeze_time("2026-07-15 10:00:00")
+async def test_unchanged_cyclic_report_uses_last_reported(hass):
+    """A flat KNX value remains fresh when its cyclic telegram is reported."""
+    hass.states.async_set("sensor.clima_salotto", "23.4")
+    original = hass.states.get("sensor.clima_salotto")
+    assert original is not None
+    original_updated = original.last_updated
+    original_reported = original.last_reported
+
+    with freeze_time("2026-07-15 11:00:00"):
+        hass.states.async_set("sensor.clima_salotto", "23.4")
+        reported = hass.states.get("sensor.clima_salotto")
+        assert reported is not None
+        assert reported.last_updated == original_updated
+        assert reported.last_reported > original_reported
+        entry = await _setup(hass)
+        assert entry.runtime_data.data["zone_temps"]["living_room"]["value"] == 23.4

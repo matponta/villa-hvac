@@ -5,4 +5,4 @@
 # the venv AND CI must use a 3.14 interpreter. Bump this pin (+ the CI
 # python-version + manifest) deliberately when the deploy-target HA changes.
 pytest-homeassistant-custom-component==0.13.324
-ruff
+ruff==0.15.20

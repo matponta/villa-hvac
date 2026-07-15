@@ -13,7 +13,6 @@ from custom_components.villa_hvac.const import (
 )
 from custom_components.villa_hvac.policies import (
     PRESET_POLICIES,
-    CoolingController,
     FanBandController,
     _azimuth_in_band,
     disabled_zones_policy,
@@ -472,7 +471,7 @@ def test_band_releases_manuale_when_disabled():
 # tests pass their own run_floor/at_peak, so a controller call site dropping
 # either kwarg kept the whole suite green) ------------------------------------
 
-@pytest.mark.parametrize("ctrl_cls", [FanBandController, CoolingController])
+@pytest.mark.parametrize("ctrl_cls", [FanBandController])
 def test_run_fan_floor_wired_through_controller(ctrl_cls):
     """Low load (room at center, cold outdoor -> law sizes ~0%): the emitted
     RUN fan must hold COOL_RUN_FAN_FLOOR — through the real controller, pinning
@@ -482,7 +481,7 @@ def test_run_fan_floor_wired_through_controller(ctrl_cls):
     assert out["fan:fan.a"] == COOL_RUN_FAN_FLOOR
 
 
-@pytest.mark.parametrize("ctrl_cls", [FanBandController, CoolingController])
+@pytest.mark.parametrize("ctrl_cls", [FanBandController])
 def test_peak_backstop_wired_through_controller(ctrl_cls):
     """A room just above the band top at the outdoor peak goes to 100% even
     when the law sizes less — pinning the at_peak kwarg at the call site. The
@@ -498,7 +497,7 @@ def test_peak_backstop_wired_through_controller(ctrl_cls):
 def test_peak_latch_deadband_through_controller():
     """Outdoor jitter around the threshold must not flip the backstop: 30.1
     enters, 29.9 HOLDS (within the exit deadband), 29.4 exits to law-sized."""
-    c = CoolingController()
+    c = FanBandController()
 
     def st(outdoor):
         s = _state([_fanzone("a", temp=24.9)], outdoor=outdoor, **_BAND)
@@ -579,33 +578,6 @@ def test_band_pv_hold_is_normal_band():
     assert out[temperature_lever("climate.a")] == 23.25  # unchanged from no-PV RUN
 
 
-def test_band_pv_coast_respects_comfort_window():
-    # comfort enabled + in-window (z.comfort_relax == 0) -> COAST must NOT defer.
-    s = _replace(
-        _state([_fanzone("a", temp=23.0)], **_BAND),
-        pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
-        comfort_enabled=True,
-    )
-    out = FanBandController()(_annotated(s))
-    assert out[temperature_lever("climate.a")] == 24.75  # tight REST, not deferred
-
-
-def test_band_pv_coast_defers_outside_comfort_window():
-    # comfort enabled but OUT of window (z.comfort_relax > 0) -> defer by max(pv, f4b).
-    z = ZoneSnapshot(
-        zone_id="a", name="a", climate="climate.a", emitter="fancoil",
-        temp=23.0, comfort_relax=1.0,
-        fancoil_units=(("fan.a", "switch.a_man"),),
-    )
-    s = _replace(
-        _state([z], **_BAND),
-        pv_mode="coast", pv_coast_relax=1.5, duty_comfort_max=27.0,
-        comfort_enabled=True,
-    )
-    out = FanBandController()(_annotated(s))
-    assert out[temperature_lever("climate.a")] == 26.25  # (24 + max(1.5,1.0)) + A
-
-
 # --- F2: ThermalEstimator (online observer) ----------------------------------
 
 from datetime import timedelta  # noqa: E402
@@ -664,6 +636,28 @@ def test_estimator_skips_capacity_window_in_f2a():
         est.observe(_obs_state(z, now=base + timedelta(minutes=m), consenso="on"))
     p = est.params.get("lr")
     assert p is None or (p.n == 0 and p.n_k == 0)  # no passive, no capacity yet
+
+
+def test_estimator_discards_three_samples_after_chilled_water_edge():
+    est = ThermalEstimator()
+    base = datetime(2026, 6, 30, 14, 0, 0)
+    z = _leader(temp=25.0, demand=False)
+    est.observe(_obs_state(z, now=base, consenso="off"))
+    assert len(est._buf["lr"]) == 1
+    for index in range(3):
+        z = _leader(temp=25.0, demand=True)
+        est.observe(
+            _obs_state(
+                z, now=base + timedelta(seconds=30 * (index + 1)), consenso="on"
+            )
+        )
+        assert est._buf["lr"] == []
+    est.observe(
+        _obs_state(
+            z, now=base + timedelta(seconds=120), consenso="on"
+        )
+    )
+    assert len(est._buf["lr"]) == 1
 
 
 def test_estimator_load_rejects_corrupt_and_keeps_valid():
@@ -770,18 +764,6 @@ def test_band_fan_uses_learned_capacity():
     out_prior = FanBandController()(_state([z], **_BAND))  # model_* None -> prior k
     # a learned LOW capacity demands at least as much fan as the (higher) prior.
     assert out_low["fan:fan.a"] >= out_prior["fan:fan.a"]
-
-
-def test_band_comfort_relax_raises_center_to_rest():
-    from dataclasses import replace as _replace
-    z = _fanzone("a", temp=25.0)
-    relaxed = _replace(z, comfort_relax=2.0)
-    # relax raises center 24 -> 26; temp 25 < 26-0.75 -> REST (setpoint 26+0.75).
-    out = FanBandController()(_annotated(_state([relaxed], **_BAND)))
-    assert out[temperature_lever("climate.a")] == 26.75
-    # no relax -> center 24, temp 25 >= 24.75 -> RUN (setpoint 24-0.75).
-    out0 = FanBandController()(_state([z], **_BAND))
-    assert out0[temperature_lever("climate.a")] == 23.25
 
 
 # --- F3c: RegimeCoordinator + phase override ---------------------------------

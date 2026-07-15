@@ -121,7 +121,10 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def _age_s(self, state: State | None) -> float | None:
         if state is None:
             return None
-        return (dt_util.utcnow() - state.last_updated).total_seconds()
+        # KNX temperature objects report cyclically even while the numeric value
+        # is unchanged.  HA advances last_reported for those telegrams but leaves
+        # last_updated at the time the value/attributes last changed.
+        return (dt_util.utcnow() - state.last_reported).total_seconds()
 
     def _sensor_temp(self, entity_id: str | None) -> tuple[float | None, float | None]:
         """Temperature from a sensor whose state IS the value (e.g. clima_*)."""

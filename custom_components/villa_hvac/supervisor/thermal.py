@@ -242,6 +242,7 @@ def rebase_solar_units(
 def blend_params(
     learned: ThermalParams, prior: ThermalParams, *,
     abc_conf_min: float, k_conf_min: float,
+    solar_excitation_min: float | None = None,
 ) -> ThermalParams:
     """Hand control from the prior to the learned model as confidence grows: each
     coefficient = prior·(1−w) + learned·w, with separate weights for {a,b,c} and
@@ -249,6 +250,15 @@ def blend_params(
     until a room's model has actually converged."""
     wa = abc_confidence(learned, conf_min=abc_conf_min)
     wk = k_confidence(learned, conf_min=k_conf_min)
+    # k is only meaningful while the passive gain model that produced its
+    # residual is currently identified.  A units rebase or lost excitation
+    # keeps the learned value stored, but control falls back to the safe prior.
+    if solar_excitation_min is not None and not abc_identified(
+        learned,
+        conf_min=abc_conf_min,
+        solar_excitation_min=solar_excitation_min,
+    ):
+        wk = 0.0
     return replace(
         learned,
         a=prior.a * (1 - wa) + learned.a * wa,

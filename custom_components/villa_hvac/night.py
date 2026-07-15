@@ -48,6 +48,7 @@ from .const import (
     NIGHT_GUARD_HIGH,
     NIGHT_GUARD_LOW,
     NIGHT_GUARD_SETPOINT_DROP,
+    NIGHT_SILENCE_SWITCHES,
     NIGHT_WAKE_DAY_MINUTES,
     OPT_AUTO_WAKE_TIME,
     OPT_NIGHT_THRESHOLD,
@@ -69,6 +70,20 @@ _LOGGER = logging.getLogger(__name__)
 def bedrooms() -> list[tuple[str, dict]]:
     """(zone_id, zone) for zones flagged as bedrooms."""
     return [(zid, z) for zid, z in ZONES.items() if z.get("bedroom")]
+
+
+def night_silence_selected(hass: HomeAssistant | None, zone_id: str) -> bool:
+    """Return the persistent #2b selection for a zone (default ON).
+
+    The mapping is explicit so control behavior never depends on HA's generated
+    entity naming rules.  Missing state during startup preserves the historical
+    both-bedrooms-selected behavior.
+    """
+    entity_id = NIGHT_SILENCE_SWITCHES.get(zone_id)
+    if entity_id is None or hass is None:
+        return True
+    selected = hass.states.get(entity_id)
+    return selected is None or selected.state == "on"
 
 
 @dataclass(frozen=True)
@@ -210,6 +225,9 @@ class NightSilenceController:
         free_cooling = _is_free_cooling(state)
         out: dict = {}
         for zid, zone in bedrooms():
+            if not night_silence_selected(self.hass, zid):
+                out.update(self._release_zone(state, zid, zone, free_cooling))
+                continue
             z = state.zones.get(zid)
             temp = z.temp if z is not None else None
             new_state, _action = evaluate_guard(
@@ -313,23 +331,26 @@ class NightSilenceController:
         free_cooling = _is_free_cooling(state)
         out: dict = {}
         for zid, zone in bedrooms():
-            if zid not in self._managing:
-                continue
-            out[switch_lever(zone["manuale_switch"])] = "off"
-            z = state.zones.get(zid)
-            paused = z is not None and z.paused
-            # Fan was OFF during silence iff the guard was NOT cooling (a cooling
-            # guard held it at 33). Only re-arm when the zone is not held by BP.
-            if not paused and not free_cooling and not self._guards[zid].cooling:
-                out[fan_lever(zone["fancoils"][0])] = NIGHT_GUARD_FAN_PCT
-            if zid in self._nudged:
-                live = self._mode_base(state, z) if z is not None else None
-                base = live if live is not None else self._nudged[zid]
-                out[temperature_lever(zone["climate"])] = round(base, 1)
-                if state.auto_setback and live is not None:
-                    del self._nudged[zid]  # #2a re-asserts from here on
-            self._guards[zid] = GuardState()
-        self._managing.clear()
+            out.update(self._release_zone(state, zid, zone, free_cooling))
+        return out
+
+    def _release_zone(self, state, zid: str, zone: dict, free_cooling: bool) -> dict:
+        """One-shot safe hand-back for one participating bedroom."""
+        if zid not in self._managing:
+            return {}
+        out: dict = {switch_lever(zone["manuale_switch"]): "off"}
+        z = state.zones.get(zid)
+        paused = z is not None and z.paused
+        if not paused and not free_cooling and not self._guards[zid].cooling:
+            out[fan_lever(zone["fancoils"][0])] = NIGHT_GUARD_FAN_PCT
+        if zid in self._nudged:
+            live = self._mode_base(state, z) if z is not None else None
+            base = live if live is not None else self._nudged[zid]
+            out[temperature_lever(zone["climate"])] = round(base, 1)
+            if state.auto_setback and live is not None:
+                del self._nudged[zid]
+        self._guards[zid] = GuardState()
+        self._managing.discard(zid)
         return out
 
     def failsafe_setpoints(self) -> dict[str, float]:

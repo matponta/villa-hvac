@@ -13,7 +13,7 @@ empty policy list (no actuation) behind a master switch that defaults OFF
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import timedelta
 import logging
 import math
@@ -112,6 +112,9 @@ from .controller import (
     duty_cycle_enabled,
     fan_min,
     fan_pacing_enabled,
+    rack_guard_enabled,
+    steady_pacing_enabled,
+    paced_living_room_enabled,
     free_air_enabled,
     free_cool_enabled,
     is_zone_disabled,
@@ -150,7 +153,6 @@ from .supervisor import (
     build_room_plans,
     fan_lever,
     house_load_index,
-    in_window,
     merge_desired,
     plan_center_schedule,
     plan_run,
@@ -219,6 +221,16 @@ def _num(hass: HomeAssistant, entity_id: str) -> float | None:
     return val if math.isfinite(val) else None
 
 
+def _fresh_num(hass: HomeAssistant, entity_id: str, max_age_s: float = 1800) -> float | None:
+    state = hass.states.get(entity_id)
+    value = _num(hass, entity_id)
+    if state is None or value is None:
+        return None
+    if (dt_util.utcnow() - state.last_reported).total_seconds() > max_age_s:
+        return None
+    return value
+
+
 def _finite(value) -> float | None:
     """Coerce an attribute value to a finite float (None if missing/non-numeric/
     NaN/inf) — the isfinite-ingest convention for climate attributes."""
@@ -282,50 +294,6 @@ def _forecast_cloud_at(cloud: list, when) -> float | None:
         else:
             break
     return best
-
-
-def _parse_hhmm(value: str, fallback: int) -> int:
-    """'HH:MM' -> minute-of-day; fallback on garbage."""
-    try:
-        h, m = str(value).split(":")[:2]
-        return (int(h) % 24) * 60 + (int(m) % 60)
-    except (ValueError, AttributeError):
-        return fallback
-
-
-@dataclass(frozen=True)
-class _Comfort:
-    """F4b resolved comfort schedule for this cycle (capped relax + windows)."""
-
-    relax: float
-    day: tuple[int, int]
-    night: tuple[int, int]
-    minute: int
-
-    def relax_for(self, *, bedroom: bool) -> float:
-        frm, to = self.night if bedroom else self.day
-        return 0.0 if in_window(self.minute, frm, to) else self.relax
-
-
-def _comfort_config(cfg: SupervisorConfig, center: float | None) -> "_Comfort | None":
-    """Build the comfort schedule, or None when disabled / no center. The relax is
-    pre-capped so center+relax can never exceed duty_comfort_max."""
-    if center is None or not cfg.comfort_enabled:
-        return None
-    relax = min(cfg.comfort_relax, max(0.0, cfg.duty_comfort_max - center))
-    local = dt_util.now()
-    return _Comfort(
-        relax=relax,
-        day=(
-            _parse_hhmm(cfg.comfort_day_from, 480),
-            _parse_hhmm(cfg.comfort_day_to, 1380),
-        ),
-        night=(
-            _parse_hhmm(cfg.comfort_night_from, 1320),
-            _parse_hhmm(cfg.comfort_night_to, 480),
-        ),
-        minute=local.hour * 60 + local.minute,
-    )
 
 
 class RoomModelStore:
@@ -448,15 +416,10 @@ def build_house_state(
     # reads, stored on the HouseState.
     cfg = SupervisorConfig.from_options(entry.options)
 
-    # Hoisted once (reused for the F4b comfort relax + the HouseState below).
+    # Hoisted once for the HouseState below.
     mode = current_house_mode(hass, entry)
     house_setpoint = current_house_setpoint(hass, entry)
     house_offset = mode_offset(hass, entry, mode)
-    center = (
-        house_setpoint + house_offset
-        if (house_setpoint is not None and house_offset is not None) else None
-    )
-    comfort = _comfort_config(cfg, center)  # None when disabled / no center
 
     # #6: enrich each shadeable cover with its room's shade target + block flag
     # + the live position (the shading policy's never-raise min() reads it).
@@ -552,11 +515,6 @@ def build_house_state(
             m_a, m_b, m_c, m_k = m.a, m.b, m.c, m.k
             m_conf, m_kconf = min(abc_conf, k_conf), k_conf
             m_eligible = thermal.planner_eligible(zone_id)  # D1: planner gate
-        # F4b: relax the band center while OUTSIDE this room's comfort window.
-        comfort_relax = (
-            comfort.relax_for(bedroom=bool(zone.get("bedroom")))
-            if (comfort is not None and is_leader) else 0.0
-        )
         # Split-AC trio (#6): resolve the head entity + read its live state
         # (observe-only in P0). palestra carries an explicit `split_climate`
         # alongside its radiant `climate`; cantina/garage ARE the split (their
@@ -612,7 +570,6 @@ def build_house_state(
             model_confidence=m_conf, model_k_confidence=m_kconf,
             model_planner_eligible=m_eligible,
             fan_pct=fan_pct, manuale_on=manuale_on,
-            comfort_relax=comfort_relax,
             s_eff=z_s_eff, s_eff_source=z_src, s_eff_units=z_units,
             ac_group=ac_group,
             split_climate=split_climate,
@@ -689,6 +646,8 @@ def build_house_state(
     else:
         windows_free_cool = windows_fc_raw
     plan = _make_run_plan(cfg, forecast, now, outdoor)
+    rack_controller = getattr(coordinator, "rack", None)
+    rack_state = getattr(rack_controller, "state", None)
     return HouseState(
         now=now,
         zones=zones,
@@ -702,6 +661,10 @@ def build_house_state(
         band_width=cfg.band_width,
         band_slam=cfg.band_slam,
         model_learning_enabled=cfg.model_learning_enabled,
+        rack_guard_enabled=rack_guard_enabled(hass, entry),
+        rack_temp_threshold=cfg.rack_temp_threshold,
+        rack_guard_active=bool(getattr(rack_state, "active", False)),
+        rack_guard_escalated=bool(getattr(rack_state, "escalated", False)),
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=cfg.duty_max_stint,
         duty_cooloff=cfg.duty_cooloff,
@@ -712,7 +675,14 @@ def build_house_state(
         precool_offset=cfg.precool_offset,
         night_active=night_active,
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
-        comfort_enabled=comfort is not None,
+        steady_pacing_enabled=steady_pacing_enabled(hass, entry),
+        paced_living_room=paced_living_room_enabled(hass, entry),
+        kitchen_ep_temp=_fresh_num(
+            hass, ZONES["kitchen"]["ep_temp"], max_age_s=1800
+        ),
+        kitchen_ep_fresh=_fresh_num(
+            hass, ZONES["kitchen"]["ep_temp"], max_age_s=1800
+        ) is not None,
         season=season,
         house_mode=mode,
         auto_setback=setback_on,
@@ -1169,14 +1139,15 @@ class SupervisorEngine:
             state, replace(plan, regime=regime),
             master_on=self.enabled,
             enabled={
-                "fan_pacing": state.fan_pacing_enabled,
+                "rack_guard": state.rack_guard_enabled,
+                "steady_pacing": (
+                    state.steady_pacing_enabled and state.paced_living_room
+                ),
                 "duty_cycle": state.duty_enabled,
-                "regime": bool(cfg and cfg.regime_enabled),
                 "precool": state.duty_enabled,
                 "free_cool": state.free_cool_enabled,
                 "windows_free_cool": windows_free_cool_enabled(self.hass, self.entry),
                 "free_air": free_air_enabled(self.hass, self.entry),
-                "comfort_windows": state.comfort_enabled,
                 "pv_bias": (
                     pv_bias_enabled(self.hass, self.entry)
                     and state.fan_pacing_enabled
@@ -2045,6 +2016,26 @@ class SupervisorEngine:
                         )
                     # Drop our lever state so a cycle queued behind the hand-back
                     # can't re-assert the nudge afterwards (split fail-safe pattern).
+                    self._lever_states.pop(temperature_lever(climate), None)
+            # Rack guard: restore the pre-nudge P1 target even if entity
+            # platforms have already been torn down.
+            rack = getattr(self.coordinator, "rack", None)
+            if rack is not None:
+                try:
+                    rack_targets = rack.failsafe_setpoints()
+                except Exception:  # noqa: BLE001 - fail-safe must continue
+                    _LOGGER.exception("Fail-safe: rack-guard setpoint targets failed")
+                    rack_targets = {}
+                for climate, target in rack_targets.items():
+                    try:
+                        await self._call(
+                            CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                            {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: float(target)},
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception(
+                            "Fail-safe: could not restore rack setpoint for %s", climate
+                        )
                     self._lever_states.pop(temperature_lever(climate), None)
             # B1: un-stick any zone left in building_protection (skip #10-disabled +
             # window-paused, which SHOULD stay in it) -> neutral `auto` preset.
