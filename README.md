@@ -1,120 +1,117 @@
 # Villa HVAC
 
-Custom Home Assistant integration that orchestrates the KNX climate system of
-Villa Pontacolone: occupancy-based setback, window pause, fancoil fan logic,
-solar shading, demand coalescing and long-term zone disable — driven by the
-Everything Presence One sensors, the Ecowitt weather station and the S5A
-condominial heat-pump signals.
+Custom Home Assistant integration that **supervises** the KNX climate system of
+Villa Pontacolone. It does not replace the room thermostats — it reads the room
+sensors, presence, weather and the heat-pump call signals, and writes back KNX
+presets, setpoints, fan speeds and the central cooling lever to coordinate the
+whole villa: occupancy/night setback, window pause, fan pacing, solar shading,
+demand coalescing, hardware protection and anticipatory pre-cool.
 
-> **Status: 0.8.0 — setback + season-aware setpoints, quiet nights, away, window pause.**
-> Cooling-demand sensor, per-zone fused temperature (#1), per-zone enable
-> switch (#10), the complete #2 (house-mode presets + setpoint push + House
-> setpoint slider, camere silenziose, away escalation), and the #4 window-pause
-> mechanism (3 vasistas wired).
+> **Status: v0.65.0 — LIVE.** The supervisor actuates the villa. Core setback +
+> season-aware setpoints, quiet nights, away escalation, window contacts, free
+> cooling + VMC night flush, solar shading, the split-AC trio, the rack + P1
+> hardware guards and the living-room steady fan governor are all shipped;
+> duty-cycle, PV/forecast pre-cool and the unified planner are built and staged
+> behind opt-in switches.
 
-## Why a custom component (and the caveat)
+Target: Home Assistant **2026.4.3** (Python ≥ 3.14). Single instance, config-flow.
+Full engineering context lives in [`CLAUDE.md`](./CLAUDE.md).
 
-The orchestration could also live in native packages + blueprints. We chose a
-custom component for clean code, testing and git versioning — accepting the
-higher maintenance cost of owning a real HA integration.
+## Design in one paragraph
 
-## Key validated facts (2026-06-23)
+Everything writes through **one engine** (`engine.py`): each 30 s tick it builds a
+`HouseState`, runs a stack of **stateful controllers** (cooling/duty/pacing, night
+silence, rack + P1 guards, splits) and **pure preset policies** (disabled zones >
+window pause > free-cool > pre-cool > house mode, plus a separate solar-shading
+cover policy), merges their opinions one lever
+at a time through an idempotent, manual-override-robust arbiter (`reconcile`), and
+applies the result. Nothing actuates until the master `switch.supervisor` is on
+(**strict deploy-dark**), and `async_fail_safe` releases the central BLOCCO, hands
+fans back to a live AUTO state and restores presets/setpoints on unload or crash.
+The pure decision core lives in the HA-import-free `supervisor/` package and is
+unit-tested in isolation (649 tests).
 
-- The **real PdC call is not `climate.hvac_action`** (that's just the mode).
-  It is the KNX `binary_sensor.ct_consenso_freddo_villa` (cooling) /
-  `binary_sensor.ct_consenso_caldo_villa` (heating).
-- **Cooling consenso turns on when any fancoil fan > 0.**
-- **Lever (no ETS needed):** setting a KNX thermostat preset to
-  `building_protection` drives its fancoil fan to 0 → the cooling consenso
-  drops off (after a ~1–2 min KNX off-delay). Verified house-wide.
-- Fancoils are **3-speed** (33/67/100). Continuous modulation (smooth fan)
-  may require an ETS change — still open.
+## Key verified facts
 
-## Roadmap
+These were measured live; do not re-derive them (see `CLAUDE.md` for the full log):
 
-- [x] 0.1 Phase 0: read-only KPI sensor (`Cooling demand zones`)
-- [x] #10 Long-term zone disable (`switch` per zone: off → `building_protection`)
-- [x] #1 Fused zone temperature (`sensor` per zone, thermostat-primary)¹
-- [ ] _circle back_: EP-primary temperature with time-varying offset calibration
-- [x] #2 Occupancy / night setback — house-mode `select` (Casa/Via/Notte/Vacanza)
-  drives KNX presets **and pushes setpoints** + global `Auto setback` switch; a
-  `House setpoint` number (dashboard slider) sets the comfort base, and each mode
-  applies `base + offset` with **season-aware, options-editable offsets**
-  (summer Via +5/Notte +3, winter Via −2/Notte −4 — opposite signs since heating
-  setback is cooler); Notte runs *camere
-  silenziose* (2 bedrooms: manuale + fan off, heat-guard, auto-wake); long absence
-  auto-escalates Casa/Notte→Via and restores Casa on return. Tunables in options.
-  _(Cleanup pending: remove the now-replaced HA automations/scripts.)_
-- [~] #4 Window-open pause — mechanism done: an open window pauses that zone's
-  cooling (→ building_protection) after a debounce, restores to the current house
-  mode on close, and stays paused across mode changes. Wired for the 3 vasistas
-  (bagno_gabriele, bagno_giochi, lavanderia — all radiant); the main cooled rooms
-  have no window sensor yet — add a `window` entry per zone as they're fitted.
-- [ ] #3 Fan-stage modulation (pending ETS spike)
-- [ ] #9 PdC demand coalescing
-- [ ] #5/#6 Outdoor shutoff + solar shading
-- [ ] #7 Anticipatory radiant heating (winter)
-- [ ] #8 Interactive weekend scenes
+- The real PdC call is **not** `climate.hvac_action` — it is the KNX
+  `binary_sensor.ct_consenso_freddo_villa` (cooling) / `ct_consenso_caldo_villa`
+  (heating).
+- Per-room cooling **demand is the fancoil chilled-water valve** (EV FAN, on/off —
+  `binary_sensor.fancoil_*_valvola`), **not** fan %. In AUTO the fan runs ~constant;
+  the valve cycles to hold setpoint.
+- **Levers:** a KNX preset of `building_protection` drives a zone off (consenso
+  drops after a ~1–2 min off-delay); the central `switch.ct_blocco_freddo_villa`
+  force-stops the villa cooling call (`on` = block, verified). In MANUAL
+  (`switch.fancoil_*_manuale` on) a fancoil fan holds an exact % indefinitely — so
+  fan % is a real per-room rate lever there.
+- **A KNX fancoil in AUTO does not restart a fan whose switch object was written
+  OFF**, and fan-OFF interlocks the valve CLOSED — so every path that turns a fan
+  off must have a matching re-arm (fail-safe + a self-heal watchdog enforce this).
+- Fan/room wiring has physical quirks (owner-verified): Salotto↔Kitchen fan/valve/
+  manuale entities are swapped; Pianerottolo P1 owns no fan (the rack + office fans
+  vent into it); the Sala Giochi fancoil is out of service.
 
-> ¹ #1 is **thermostat-primary**: the fused temp reads each zone's clean
-> `sensor.clima_*` twin and falls back to the climate `current_temperature`
-> (sources older than 30 min are treated as stale). EP sensors were measured to
-> be ~5 °C biased with a time-of-day-dependent drift, so they are reserved for
-> occupancy (#2); see `EP_TEMP_OFFSETS` in `const.py` for the recorded data and
-> the planned EP-primary revisit.
+## Features
+
+| Area | Status |
+|---|---|
+| #1 Per-zone fused temperature (thermostat-primary, staleness-guarded) | ✅ |
+| #2 House-mode select (Casa/Via/Notte/Vacanza) → presets + season-aware setpoints + per-room trim | ✅ |
+| #2b Camere silenziose (persistent per-bedroom night-silence switches + heat-guard chilled water + auto-wake) | ✅ |
+| #2c Away auto-escalation (presence → Via/Casa) | ✅ |
+| #4 Window pause (3 vasistas + 6 Shelly BLU contacts; long-open alert) | ✅ |
+| #10 Long-term per-zone disable | ✅ |
+| #5 Free cooling (outdoor coast, opt-in) + VMC night flush (night-quiet gate) | ✅ |
+| #6 Solar shading (per-room position, proportional) + split-AC trio (opt-in) | ✅ |
+| #6 Rack hardware guard + P1 "both fans" secondary trigger (default on) | ✅ |
+| #3 v3 Living-room steady fan governor (opt-in, shadow → actuate) | ✅ |
+| #9 Duty-cycle coalescing via BLOCCO + forecast pre-cool | ✅ built, opt-in |
+| #7 / PV bias / S_eff per-facade solar / F4c unified planner | ✅ built, staged behind opt-in gates |
+| #8 Return-home pre-conditioning | ✅ built, opt-in |
+| #11 12-hour plan visualization (`sensor.hvac_plan`) | ✅ |
+
+Opt-in switches layer on top of the master; several stay deploy-dark until
+per-room model convergence + live validation gates pass. See the switchboard in
+the household manual and `MASTER_PLAN.md` for the build checklist.
 
 ## Install (HACS custom repository)
 
-1. Push this repo to a **public** GitHub repository.
-2. In Home Assistant: HACS → ⋮ → *Custom repositories* → add the repo URL,
+1. HACS → ⋮ → *Custom repositories* → add `https://github.com/matponta/villa-hvac`,
    category **Integration**.
-3. Install **Villa HVAC**, then **restart Home Assistant**.
-4. Settings → Devices & Services → *Add Integration* → **Villa HVAC**.
+2. Install **Villa HVAC**, then **restart Home Assistant**.
+3. Settings → Devices & Services → *Add Integration* → **Villa HVAC**.
+4. Flip `switch.supervisor` on to light up the migrated behaviors at once.
 
-Update `documentation`/`issue_tracker` in `manifest.json` and the badges/URLs
-here with the real GitHub path (replace `CHANGEME`), and `codeowners`.
+## Dev / deploy
 
-## Dev / deploy loop
-
-Develop in **Claude Code** (runs locally with your git/GitHub auth and can deploy
-to `/config`). See [`CLAUDE.md`](./CLAUDE.md) for full project context.
-
-Deployment to the live HA is manual:
-- **Fast loop:** sync `custom_components/villa_hvac/` to `/config/custom_components/`
-  (Samba / Studio Code Server App / `git pull`) and restart HA.
-- **Release loop:** tag a GitHub **release**; HACS picks up the new version.
-
-### First-time git push (run locally)
-
-```bash
-cd "<...>/Documents/Claude/Projects/Home Assistant/villa-hvac"
-rm -f .git/index.lock          # clear the stale lock from the sandbox init
-git remote add origin git@github.com:matponta/villa-hvac.git
-git push -u origin main
-# or, with the GitHub CLI:
-# gh repo create villa-hvac --public --source=. --push
-```
+- Code lives in this repo (git root). Develop in Claude Code; lint with `ruff`,
+  test with `pytest` against `pytest-homeassistant-custom-component` pinned to the
+  deploy target (HA 2026.4.3 / Py 3.14). CI runs on the target.
+- **Release loop:** commit to `main`, tag `vX.Y.Z`, publish a GitHub release —
+  HACS picks it up; update in HACS + restart HA.
+- **Fast loop:** sync `custom_components/villa_hvac/` into `/config/custom_components/`
+  (Samba / VS Code Server / `git pull`) and restart HA.
 
 ## Layout
 
 ```
 villa-hvac/
-├─ hacs.json
-├─ README.md
+├─ hacs.json · README.md · CLAUDE.md · MASTER_PLAN.md · STORY_*.md
 └─ custom_components/villa_hvac/
-   ├─ manifest.json
-   ├─ const.py          # zone map + call signals (verified)
-   ├─ __init__.py       # setup/unload, coordinator in runtime_data
-   ├─ config_flow.py    # single-instance UI setup
-   ├─ coordinator.py    # polls call signals + fancoil demand + fused zone temps
-   ├─ temperature.py    # pure temperature-fusion logic (#1)
-   ├─ controller.py     # house-mode → KNX preset driver (#2a)
-   ├─ night.py          # camere silenziose: bedroom silence + heat-guard (#2b)
-   ├─ away.py           # away auto-escalation: presence → Via/Casa (#2c)
-   ├─ window.py         # window-open pause per zone (#4)
-   ├─ sensor.py         # cooling demand zones + per-zone fused temperature (#1)
-   ├─ select.py         # house-mode select: Casa/Via/Notte/Vacanza (#2a)
-   ├─ number.py         # house comfort-setpoint slider (#2 setpoint push)
-   ├─ config_flow.py    # single-instance setup + options (night threshold/wake)
-   └─ switch.py         # per-zone enable (#10) + global Auto setback (#2a)
+   ├─ const.py            # zone map, call signals, valve/fan wiring, tunables
+   ├─ __init__.py         # wires coordinator + engine (controllers + policies)
+   ├─ coordinator.py      # 30 s read-only poll (fan %, valves, consenso, fused temps)
+   ├─ engine.py           # SupervisorEngine: build state → controllers+policies → reconcile → apply; fail-safe
+   ├─ supervisor/         # PURE core (no HA imports): arbiter · control_law · thermal · model · planner · solar · returnhome
+   ├─ temperature.py      # #1 pure temperature-fusion helper (thermostat-primary)
+   ├─ policies.py         # pure preset policies + CoolingController (folds duty/band/regime) + SplitGroupController + ThermalEstimator
+   ├─ governor.py         # #3 v3 living-room steady fan governor
+   ├─ rack.py             # RackGuardController + P1GuardController (hardware protection)
+   ├─ night.py            # camere silenziose (#2b) merge controller
+   ├─ controller.py · window.py · away.py · vmc.py   # #2a/#4/#2c/#5 triggers
+   ├─ supervisor_config.py  # options → frozen per-cycle config snapshot
+   ├─ sensor.py · select.py · number.py · date.py · switch.py · config_flow.py
+   └─ translations/
 ```

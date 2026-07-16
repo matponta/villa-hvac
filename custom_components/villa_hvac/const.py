@@ -1,8 +1,11 @@
 """Constants and zone map for the Villa HVAC orchestration integration.
 
-Verified against the live Home Assistant on 2026-06-23.
+Verified against the live Home Assistant on 2026-06-23 (see CLAUDE.md).
 The real PdC call signals are KNX binary_sensors (NOT climate hvac_action):
-cooling consenso turns on when any fancoil fan > 0.
+binary_sensor.ct_consenso_freddo_villa (cooling) / ct_consenso_caldo_villa
+(heating). Per-room cooling DEMAND is the fancoil EV FAN chilled-water valve
+(binary_sensor.fancoil_*_valvola), NOT fan % — in AUTO the fan runs ~constant
+and the valve cycles to hold setpoint (ETS-verified 2026-06-24).
 """
 from __future__ import annotations
 
