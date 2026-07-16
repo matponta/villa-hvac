@@ -18,6 +18,7 @@
         "data": {
           "night_heat_threshold": "Bedroom night heat-guard threshold (°C)",
           "rack_temp_threshold": "Rack guard activation temperature (°C)",
+          "p1_guard_threshold": "P1 guard activation temperature (°C)",
           "auto_wake_time": "Bedroom auto-wake time",
           "away_escalation_hours": "Hours away before switching to Via",
           "season": "Season override",
@@ -62,6 +63,7 @@
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
           "rack_temp_threshold": "Above this temperature for 3 minutes, the rack guard forces shared P1 cooling.",
+          "p1_guard_threshold": "Above this for 3 minutes, the P1 landing runs BOTH the rack and office fans (secondary trigger).",
           "auto_wake_time": "Time the bedrooms leave the silent-night state (HH:MM:SS).",
           "away_escalation_hours": "#2c: after the adults are away this long, drop the house to Via.",
           "season": "auto = detect from the reference thermostat; or force summer / winter.",

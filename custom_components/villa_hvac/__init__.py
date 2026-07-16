@@ -13,7 +13,7 @@ from .engine import RoomModelStore, SupervisorEngine
 from .governor import SteadyGovernorController
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
-from .rack import RackGuardController
+from .rack import P1GuardController, RackGuardController
 from .returnhome import ReturnHomeManager
 from .vmc import VmcController
 from .window import WindowController
@@ -63,6 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     model_data = await model_store.async_load()
     rack = RackGuardController(hass, entry)
     coordinator.rack = rack
+    p1_guard = P1GuardController(hass, entry)
+    coordinator.p1_guard = p1_guard
     governor = SteadyGovernorController(hass, entry)
     coordinator.governor = governor
     engine = SupervisorEngine(
@@ -73,8 +75,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # release must yield to the band re-taking a bedroom for pacing.
         # SplitGroupController (#6): disjoint lever set (aircon_* hvac_mode/temp/
         # fan_mode) — merge order immaterial; never touches the PdC/BLOCCO stack.
+        # rack FIRST (hardware safety wins the shared rack levers); p1_guard next
+        # (its office nudge must outrank house_mode while P1 is hot); then the
+        # cooling controller + night + splits.
         controllers=(
-            rack, governor, CoolingController(), night, SplitGroupController()
+            rack, p1_guard, governor, CoolingController(), night,
+            SplitGroupController(),
         ),
         model_store=model_store,
     )

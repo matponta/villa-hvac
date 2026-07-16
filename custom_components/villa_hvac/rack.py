@@ -7,6 +7,8 @@ import logging
 
 from .const import (
     HOUSE_MODE_VACATION,
+    P1_GUARD_FAN_PCT,
+    P1_GUARD_SETPOINT_DROP,
     RACK_GUARD_EMERGENCY_FAN_PCT,
     RACK_GUARD_EMERGENCY_RISE,
     RACK_GUARD_ENGAGE,
@@ -180,45 +182,60 @@ class RackGuardController:
             out = self._release(state, p1)
             self._maybe_alert(state, rack, eligible=False)
             return out
+        was_active = self.state.active
         self.state, _ = rack_guard_step(
             self.state, rack.temp, state.rack_temp_threshold, state.now
         )
         self._maybe_alert(state, rack, eligible=True)
         if not self.state.active:
+            # Natural cool-down while still eligible: hand back like the
+            # ineligible path (manuale OFF, fan left alive, setpoint restored)
+            # instead of silently dropping the levers and stranding the shared
+            # rack/P1 fan pinned in manual.
+            if was_active or self._snapshot is not None:
+                return self._release(state, p1, force=True)
             return {}
         base = self._base(state, p1)
         if self._snapshot is None and base is not None:
             self._snapshot = round(base, 1)
         target = None
         if base is not None and p1.temp is not None:
-            target = round(max(20.0, min(base, p1.temp - 1.0)), 1)
+            # Floor the target term at 20 FIRST, then cap at base — so the result
+            # is always ≤ base (never warmer than the zone's own target) even when
+            # base itself is < 20 (cold house setpoint / negative offset).
+            target = round(min(base, max(20.0, p1.temp - 1.0)), 1)
         fan = (
             RACK_GUARD_EMERGENCY_FAN_PCT
             if self.state.escalated else RACK_GUARD_INITIAL_FAN_PCT
         )
-        zone = ZONES["stairs_p1"]
+        # The rack fan belongs to the rack zone; its chilled-water valve is
+        # controlled by the P1 thermostat (nudge that to open it). P1 no longer
+        # "owns" the rack fan (stairs_p1.fancoils is empty), so read both explicitly.
+        rack_fan = ZONES["rack"]["fancoils"][0]
+        p1_climate = ZONES["stairs_p1"]["climate"]
         out = {
             switch_lever("switch.fancoil_locale_rack_manuale"): "on",
-            fan_lever(zone["fancoils"][0]): fan,
+            fan_lever(rack_fan): fan,
             BLOCCO_LEVER: BLOCCO_RELEASE,
         }
         if target is not None:
-            out[temperature_lever(zone["climate"])] = target
+            out[temperature_lever(p1_climate)] = target
         return out
 
-    def _release(self, state, p1) -> dict:
-        if not self.state.active and self._snapshot is None:
+    def _release(self, state, p1, force: bool = False) -> dict:
+        if not force and not self.state.active and self._snapshot is None:
             self.state = RackGuardState()
             return {}
-        zone = ZONES["stairs_p1"]
+        rack_fan = ZONES["rack"]["fancoils"][0]
+        p1_climate = ZONES["stairs_p1"]["climate"]
         out = {
             switch_lever("switch.fancoil_locale_rack_manuale"): "off",
-            fan_lever(zone["fancoils"][0]): RACK_GUARD_INITIAL_FAN_PCT,
+            fan_lever(rack_fan): RACK_GUARD_INITIAL_FAN_PCT,
         }
         live = self._base(state, p1) if p1 is not None else None
         restore = live if live is not None else self._snapshot
         if restore is not None:
-            out[temperature_lever(zone["climate"])] = round(restore, 1)
+            out[temperature_lever(p1_climate)] = round(restore, 1)
         self.state = RackGuardState()
         self._snapshot = None
         return out
@@ -230,3 +247,122 @@ class RackGuardController:
         self._snapshot = None
         self.state = RackGuardState()
         return {ZONES["stairs_p1"]["climate"]: target}
+
+
+# The office fan's manuale switch (engine naming: fan.fancoil_X -> switch.fancoil_X_manuale).
+_OFFICE_MANUALE = "switch.fancoil_studio_pianerottolo_p1_manuale"
+
+
+class P1GuardController:
+    """P1 'both fans' secondary trigger — P1 has no fan of its own.
+
+    When the P1 landing runs hot, force BOTH fancoils that vent into it cooler:
+    the rack fan (via a P1-thermostat nudge, same valve the rack guard uses) AND
+    the office fan (via an office-thermostat nudge, bounded ≤ the office's own
+    base so it is never driven WARMER). Reuses the rack-guard hysteresis. On
+    release/ineligibility both are handed back (manuale OFF, fan left alive,
+    both setpoints restored). Merged AFTER the rack guard (which wins the shared
+    rack levers when both fire) and BEFORE the cooling controller/policies (so
+    the office nudge outranks house_mode while active). Opt-in switch.p1_guard.
+    """
+
+    def __init__(self, hass=None, entry=None) -> None:
+        self.hass = hass
+        self.entry = entry
+        self.state = RackGuardState()
+        self._snap_p1: float | None = None
+        self._snap_office: float | None = None
+
+    @staticmethod
+    def _base(state, zone) -> float | None:
+        if state.house_setpoint is None or state.mode_offset is None or zone is None:
+            return None
+        return state.house_setpoint + state.mode_offset + zone.setpoint_offset
+
+    def __call__(self, state) -> dict:
+        p1 = state.zones.get("stairs_p1")
+        office = state.zones.get("office")
+        eligible = bool(
+            state.p1_guard_enabled
+            and state.season == SEASON_SUMMER
+            and state.house_mode != HOUSE_MODE_VACATION
+            and p1 is not None and p1.enabled and not p1.paused
+            and office is not None and office.enabled and not office.paused
+            and not _is_free_cooling(state)
+            and p1.temp is not None
+        )
+        if not eligible:
+            return self._release(state, p1, office)
+        was_active = self.state.active
+        self.state, _ = rack_guard_step(
+            self.state, p1.temp, state.p1_guard_threshold, state.now
+        )
+        if not self.state.active:
+            if was_active or self._snap_p1 is not None or self._snap_office is not None:
+                return self._release(state, p1, office, force=True)
+            return {}
+        rack_fan = ZONES["rack"]["fancoils"][0]
+        office_fan = ZONES["office"]["fancoils"][0]
+        out = {
+            switch_lever("switch.fancoil_locale_rack_manuale"): "on",
+            fan_lever(rack_fan): P1_GUARD_FAN_PCT,
+            switch_lever(_OFFICE_MANUALE): "on",
+            fan_lever(office_fan): P1_GUARD_FAN_PCT,
+            BLOCCO_LEVER: BLOCCO_RELEASE,
+        }
+        p1_base = self._base(state, p1)
+        if self._snap_p1 is None and p1_base is not None:
+            self._snap_p1 = round(p1_base, 1)
+        if p1_base is not None:
+            out[temperature_lever(ZONES["stairs_p1"]["climate"])] = round(
+                min(p1_base, max(20.0, p1.temp - P1_GUARD_SETPOINT_DROP)), 1
+            )
+        office_base = self._base(state, office)
+        if self._snap_office is None and office_base is not None:
+            self._snap_office = round(office_base, 1)
+        if office_base is not None and office.temp is not None:
+            # Never warmer than the office's own base; only nudge it DOWN to open
+            # the office fan's valve (floor the temp term first, then cap at base).
+            out[temperature_lever(ZONES["office"]["climate"])] = round(
+                min(office_base, max(20.0, office.temp - P1_GUARD_SETPOINT_DROP)), 1
+            )
+        return out
+
+    def _release(self, state, p1, office, force: bool = False) -> dict:
+        if (
+            not force and not self.state.active
+            and self._snap_p1 is None and self._snap_office is None
+        ):
+            self.state = RackGuardState()
+            return {}
+        rack_fan = ZONES["rack"]["fancoils"][0]
+        office_fan = ZONES["office"]["fancoils"][0]
+        out = {
+            switch_lever("switch.fancoil_locale_rack_manuale"): "off",
+            fan_lever(rack_fan): P1_GUARD_FAN_PCT,
+            switch_lever(_OFFICE_MANUALE): "off",
+            fan_lever(office_fan): P1_GUARD_FAN_PCT,
+        }
+        p1_live = self._base(state, p1)
+        p1_restore = p1_live if p1_live is not None else self._snap_p1
+        if p1_restore is not None:
+            out[temperature_lever(ZONES["stairs_p1"]["climate"])] = round(p1_restore, 1)
+        office_live = self._base(state, office)
+        office_restore = office_live if office_live is not None else self._snap_office
+        if office_restore is not None:
+            out[temperature_lever(ZONES["office"]["climate"])] = round(office_restore, 1)
+        self.state = RackGuardState()
+        self._snap_p1 = None
+        self._snap_office = None
+        return out
+
+    def failsafe_setpoints(self) -> dict[str, float]:
+        out: dict[str, float] = {}
+        if self._snap_p1 is not None:
+            out[ZONES["stairs_p1"]["climate"]] = self._snap_p1
+        if self._snap_office is not None:
+            out[ZONES["office"]["climate"]] = self._snap_office
+        self._snap_p1 = None
+        self._snap_office = None
+        self.state = RackGuardState()
+        return out

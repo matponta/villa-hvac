@@ -239,6 +239,11 @@ def rack_guard_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "rack_guard") == STATE_ON
 
 
+def p1_guard_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the default-on P1 'both fans' secondary trigger is enabled."""
+    return _switch_state(hass, entry, "p1_guard") == STATE_ON
+
+
 def steady_pacing_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "steady_pacing") == STATE_ON
 

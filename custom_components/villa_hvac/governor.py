@@ -244,8 +244,11 @@ class SteadyGovernorController:
                     for fan, manuale in living.fancoil_units:
                         out[switch_lever(manuale)] = "on"
                         out[fan_lever(fan)] = self.fan
-                else:
-                    self._managed = False
+                elif self._managed:
+                    # paced_living_room turned OFF while still eligible: hand the
+                    # fans back to AUTO alive instead of stranding manuale ON
+                    # (documented rollback path).
+                    out = self._release(living)
                 reason = action
         self.view = {
             "state": status, "target": target,

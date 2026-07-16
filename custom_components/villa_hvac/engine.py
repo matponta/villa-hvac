@@ -112,6 +112,7 @@ from .controller import (
     duty_cycle_enabled,
     fan_min,
     fan_pacing_enabled,
+    p1_guard_enabled,
     rack_guard_enabled,
     steady_pacing_enabled,
     paced_living_room_enabled,
@@ -648,6 +649,8 @@ def build_house_state(
     plan = _make_run_plan(cfg, forecast, now, outdoor)
     rack_controller = getattr(coordinator, "rack", None)
     rack_state = getattr(rack_controller, "state", None)
+    p1_controller = getattr(coordinator, "p1_guard", None)
+    p1_state = getattr(p1_controller, "state", None)
     return HouseState(
         now=now,
         zones=zones,
@@ -665,6 +668,9 @@ def build_house_state(
         rack_temp_threshold=cfg.rack_temp_threshold,
         rack_guard_active=bool(getattr(rack_state, "active", False)),
         rack_guard_escalated=bool(getattr(rack_state, "escalated", False)),
+        p1_guard_enabled=p1_guard_enabled(hass, entry),
+        p1_guard_threshold=cfg.p1_guard_threshold,
+        p1_guard_active=bool(getattr(p1_state, "active", False)),
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=cfg.duty_max_stint,
         duty_cooloff=cfg.duty_cooloff,
@@ -1140,6 +1146,7 @@ class SupervisorEngine:
             master_on=self.enabled,
             enabled={
                 "rack_guard": state.rack_guard_enabled,
+                "p1_guard": state.p1_guard_enabled,
                 "steady_pacing": (
                     state.steady_pacing_enabled and state.paced_living_room
                 ),
@@ -2035,6 +2042,27 @@ class SupervisorEngine:
                     except Exception:  # noqa: BLE001
                         _LOGGER.exception(
                             "Fail-safe: could not restore rack setpoint for %s", climate
+                        )
+                    self._lever_states.pop(temperature_lever(climate), None)
+            # P1 guard: restore the pre-nudge P1 + office targets it displaced when
+            # it forced both fans (same reasoning as the rack block above).
+            p1_guard = getattr(self.coordinator, "p1_guard", None)
+            if p1_guard is not None:
+                try:
+                    p1_targets = p1_guard.failsafe_setpoints()
+                except Exception:  # noqa: BLE001 - fail-safe must continue
+                    _LOGGER.exception("Fail-safe: P1-guard setpoint targets failed")
+                    p1_targets = {}
+                for climate, target in p1_targets.items():
+                    try:
+                        await self._call(
+                            CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                            {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: float(target)},
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception(
+                            "Fail-safe: could not restore P1-guard setpoint for %s",
+                            climate,
                         )
                     self._lever_states.pop(temperature_lever(climate), None)
             # B1: un-stick any zone left in building_protection (skip #10-disabled +

@@ -728,11 +728,13 @@ async def test_build_house_state_fan_pct_reflects_off_state(hass):
     entry = await _setup(hass)
     coordinator = entry.runtime_data
 
-    hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": 60})
+    # living_room's representative fan is fancoils[0] = fan.fancoil_cucina (the
+    # physical Salotto unit; entities are swapped, see const.COOL_VALVES).
+    hass.states.async_set("fan.fancoil_cucina", "off", {"percentage": 60})
     assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct == 0
-    hass.states.async_set("fan.fancoil_salotto", "on", {"percentage": 60})
+    hass.states.async_set("fan.fancoil_cucina", "on", {"percentage": 60})
     assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct == 60
-    hass.states.async_set("fan.fancoil_salotto", "unavailable")
+    hass.states.async_set("fan.fancoil_cucina", "unavailable")
     assert build_house_state(hass, entry, coordinator).zones["living_room"].fan_pct is None
 
 
@@ -1454,14 +1456,19 @@ async def test_failsafe_mid_loop_epoch_bump_stops_lever_writes(hass):
 
 async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     """(P2 gate g) The production controllers tuple is EXACTLY
-    (RackGuardController, CoolingController, NightSilenceController,
-    SplitGroupController). Rack safety is first; Cooling precedes Night
-    (Night's Notte-exit one-shot manuale release must yield to the band re-taking a
-    bedroom on the same cycle). SplitGroupController (#6) is last: its lever set
-    (aircon_* hvac_mode/temperature/fan_mode) is disjoint from both, so its position
-    is immaterial and it can never perturb the band↔night precedence."""
+    (RackGuardController, P1GuardController, SteadyGovernorController,
+    CoolingController, NightSilenceController, SplitGroupController). Rack safety
+    is first; the P1 guard next (its office nudge must outrank house_mode while P1
+    is hot, and it yields the shared rack levers to the rack guard which precedes
+    it); Cooling precedes Night (Night's Notte-exit one-shot manuale release must
+    yield to the band re-taking a bedroom on the same cycle). SplitGroupController
+    (#6) is last: its lever set (aircon_* hvac_mode/temperature/fan_mode) is
+    disjoint from the rest, so its position is immaterial."""
     from custom_components.villa_hvac.night import NightSilenceController
-    from custom_components.villa_hvac.rack import RackGuardController
+    from custom_components.villa_hvac.rack import (
+        P1GuardController,
+        RackGuardController,
+    )
     from custom_components.villa_hvac.governor import SteadyGovernorController
     from custom_components.villa_hvac.policies import (
         CoolingController,
@@ -1471,11 +1478,11 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
     assert [type(c) for c in engine.controllers] == [
-        RackGuardController, SteadyGovernorController, CoolingController,
-        NightSilenceController,
+        RackGuardController, P1GuardController, SteadyGovernorController,
+        CoolingController, NightSilenceController,
         SplitGroupController,
     ]
-    assert engine._cooling is engine.controllers[2]
+    assert engine._cooling is engine.controllers[3]
 
 
 def test_failsafe_functions_byte_identical():
@@ -1491,7 +1498,10 @@ def test_failsafe_functions_byte_identical():
     v0.56.0 dead-fan-at-wake re-arm (async_fail_safe turns back ON any fan the
     supervisor switched off, tracked in `_fans_turned_off`, so 'fans -> AUTO'
     hands back a LIVE fan — KNX AUTO will not restart a fan whose switch object
-    was left off). If this fails, either the change is unintended (revert it) or
+    was left off) and the P1-guard restore (async_fail_safe writes back any P1 +
+    office setpoint the "both fans" secondary trigger nudged, via
+    p1_guard.failsafe_setpoints — a no-op unless the P1 guard displaced a setpoint
+    this episode). If this fails, either the change is unintended (revert it) or
     it is a NEW deliberate hardening: own commit, own pin, update the hash here
     in that same commit."""
     import hashlib
@@ -1501,7 +1511,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
             "async_fail_safe":
-                "5f3304076bfc12ef381a0afd726a3baafd2ff9b5b9bddf900c319e127956be83",
+                "741b762be680e97c9f855ee18be324570bb61917b5cddfc9fc3b34e0bbef8466",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":

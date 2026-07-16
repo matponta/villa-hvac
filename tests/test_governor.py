@@ -89,6 +89,20 @@ def test_notte_hands_back_manual_and_leaves_both_fans_alive():
     assert out[fan_lever("fan.fancoil_cucina")] > 0
 
 
+def test_paced_off_hands_back_manual_and_leaves_both_fans_alive():
+    # Regression: turning paced_living_room OFF while steady_pacing stays ON and
+    # the zone is still eligible must hand the fans back to AUTO alive (documented
+    # rollback) — not strand Salotto+Cucina manuale ON with an empty emit.
+    c = SteadyGovernorController()
+    c(_house())                                              # actuating
+    out = c(_house(now=T0 + timedelta(minutes=1), selected=False))
+    assert out, "un-actuate must emit a hand-back, not an empty dict"
+    assert out["switch:switch.fancoil_salotto_manuale"] == "off"
+    assert out["switch:switch.fancoil_cucina_manuale"] == "off"
+    assert out[fan_lever("fan.fancoil_salotto")] > 0
+    assert out[fan_lever("fan.fancoil_cucina")] > 0
+
+
 def test_large_error_escalates_to_native_auto():
     c = SteadyGovernorController()
     c(_house())

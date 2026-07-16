@@ -135,6 +135,9 @@ class HouseState:
     rack_temp_threshold: float = 28.0
     rack_guard_active: bool = False
     rack_guard_escalated: bool = False
+    p1_guard_enabled: bool = True       # P1 "both fans" secondary trigger
+    p1_guard_threshold: float = 27.0
+    p1_guard_active: bool = False
     duty_enabled: bool = False          # #9 duty-cycle switch
     duty_max_stint: timedelta | None = None
     duty_cooloff: timedelta | None = None

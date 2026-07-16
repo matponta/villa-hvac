@@ -55,6 +55,7 @@ async def async_setup_entry(
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
+        P1GuardSwitch(entry),
         GovernorOptInSwitch(entry, "steady_pacing", "Steady pacing"),
         GovernorOptInSwitch(entry, "paced_living_room", "Paced living room"),
     ]
@@ -122,6 +123,38 @@ class RackGuardSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_rack_guard"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _set(self, value: bool) -> None:
+        self._attr_is_on = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._set(False)
+
+
+class P1GuardSwitch(SwitchEntity, RestoreEntity):
+    """Default-on P1 'both fans' secondary trigger (rack + office fans)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "P1 guard"
+    _attr_icon = "mdi:stairs"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_p1_guard"
         self._attr_is_on = True
 
     async def async_added_to_hass(self) -> None:

@@ -173,7 +173,7 @@ class PlanView:
 
 # Display order (the sensor lists rows in this order).
 FEATURE_ORDER: tuple[str, ...] = (
-    "rack_guard", "steady_pacing", "duty_cycle", "precool", "free_cool",
+    "rack_guard", "p1_guard", "steady_pacing", "duty_cycle", "precool", "free_cool",
     "windows_free_cool", "free_air",
     "pv_bias", "unified_planner", "shading", "night",
 )
@@ -218,6 +218,11 @@ def build_feature_graph(
             "rack_guard",
             state.rack_guard_active,
             "not cooling season" if not summer else "rack below activation threshold",
+        ),
+        "p1_guard": row(
+            "p1_guard",
+            state.p1_guard_active,
+            "not cooling season" if not summer else "P1 below activation threshold",
         ),
         "steady_pacing": row(
             "steady_pacing",

@@ -123,14 +123,19 @@ CONSENSO_CALDO = "binary_sensor.ct_consenso_caldo_villa"    # heating call to Pd
 # on/off), exposed via knx/knx_fancoil_valves.yaml. ON = valve open = cooling.
 # (fan.percentage is NOT demand — it runs constant in AUTO.)
 COOL_VALVES: dict[str, str] = {
-    "living_room": "binary_sensor.fancoil_salotto_valvola",
-    "kitchen": "binary_sensor.fancoil_cucina_valvola",
+    # Entities are physically SWAPPED (owner-verified 2026-07-15): the *_cucina_*
+    # objects (fan/valve/manuale) drive the SALOTTO unit and the *_salotto_*
+    # objects drive the KITCHEN unit. Same open space, one leader → no control
+    # effect, but attributed correctly here for demand/diagnostics.
+    "living_room": "binary_sensor.fancoil_cucina_valvola",   # physical Salotto valve
+    "kitchen": "binary_sensor.fancoil_salotto_valvola",      # physical Kitchen valve
     "main_bedroom": "binary_sensor.fancoil_camera_padronale_valvola",
     "gabriroom": "binary_sensor.fancoil_camera_gabriele_valvola",
     "studio_v": "binary_sensor.fancoil_camera_ospiti_valvola",
     "sala_giochi": "binary_sensor.fancoil_sala_giochi_valvola",
     "office": "binary_sensor.fancoil_studio_pianerottolo_p1_valvola",
-    "stairs_p1": "binary_sensor.fancoil_locale_rack_valvola",  # rack fancoil cools P1
+    # P1 has no own valve/fan — the rack fan + office fan vent into it (secondary
+    # trigger). Not a cooling leader; no valve entry (demand is via its thermostat).
     "rack": "binary_sensor.fancoil_locale_rack_valvola",
 }
 # Central lever (#9): force-stop the villa cooling call to the PdC.
@@ -181,7 +186,10 @@ ZONES: dict[str, dict] = {
         "floor": "terra",
         "climate": "climate.salotto_termostato_2",
         "temp_sensor": "sensor.clima_salotto",
-        "fancoils": ["fan.fancoil_salotto", "fan.fancoil_cucina"],  # kitchen follows
+        # Entities physically swapped (see COOL_VALVES note): *_cucina_* = the
+        # Salotto unit, *_salotto_* = the Kitchen unit. Leader drives both at one
+        # speed; manuale is derived from each fan name (engine._manuale_switch).
+        "fancoils": ["fan.fancoil_cucina", "fan.fancoil_salotto"],  # Salotto + kitchen
         "ep_temp": "sensor.everything_presence_one_626794_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_626794_occupancy",
         "emitter": "fancoil",  # summer
@@ -196,7 +204,7 @@ ZONES: dict[str, dict] = {
         "follows": "living_room",
         "temp_sensor": "sensor.clima_salotto",
         "temp_fallback_climate": "climate.salotto_termostato_2",
-        "fancoils": ["fan.fancoil_cucina"],
+        "fancoils": ["fan.fancoil_salotto"],  # physical Kitchen unit (entities swapped)
         "ep_temp": "sensor.everything_presence_one_626130_temperature",
         "ep_occ": "binary_sensor.ep_kitchen_occupancy_filtered",
     },
@@ -264,7 +272,13 @@ ZONES: dict[str, dict] = {
         "floor": "primo",
         "climate": "climate.pianerottolo_p1_termostato_2",
         "temp_sensor": "sensor.clima_pianerottolo_p1",
-        "fancoils": ["fan.fancoil_locale_rack"],  # rack fancoil also cools P1
+        # P1 is NOT a fan owner: it has a thermostat but no dedicated fancoil. The
+        # rack fan (its chilled-water valve follows this P1 thermostat) and the
+        # office fan both vent into P1. Empty fancoils ⇒ NOT a cooling leader
+        # (band/governor/model/watchdog skip it); house_mode still manages its
+        # thermostat. Active P1 cooling = the "P1 hot → both fans" secondary
+        # trigger (P1GuardController, opt-in) — see villa-fan-wiring memory.
+        "fancoils": [],
         "ep_temp": "sensor.everything_presence_one_7c4b0c_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_7c4b0c_occupancy",
         "emitter": "fancoil",
@@ -507,6 +521,17 @@ RACK_GUARD_INITIAL_FAN_PCT = 67
 RACK_GUARD_EMERGENCY_FAN_PCT = 100
 RACK_GUARD_NO_RESPONSE = timedelta(minutes=20)
 RACK_GUARD_MIN_DROP = 0.3
+
+# P1 secondary "both fans" trigger (opt-in, default ON). P1 (the landing) has no
+# fancoil of its own — the rack fan and the office fan both vent into it. When P1
+# is hot this forces BOTH cooler: the rack fan via a P1-thermostat nudge and the
+# office fan via an office-thermostat nudge (bounded ≤ the office's own base,
+# never warmer). Reuses the rack-guard hysteresis (RACK_GUARD_ENGAGE/RELEASE/
+# RELEASE_DROP). Comfort (not hardware), so a gentler default threshold.
+OPT_P1_GUARD_THRESHOLD = "p1_guard_threshold"
+DEFAULT_P1_GUARD_THRESHOLD = 27.0
+P1_GUARD_FAN_PCT = 67
+P1_GUARD_SETPOINT_DROP = 1.0
 
 # --- Away auto-escalation (#2c) ----------------------------------------------
 # After the adults are away this long (while in Casa/Notte) -> Via; when they

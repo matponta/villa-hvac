@@ -42,6 +42,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_POOR,
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
+    DEFAULT_P1_GUARD_THRESHOLD,
     DEFAULT_RACK_TEMP_THRESHOLD,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_SEFF_ENABLED,
@@ -82,6 +83,7 @@ from .const import (
     OPT_PV_BIAS_FLOOR_POOR,
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_REGIME_ENABLED,
+    OPT_P1_GUARD_THRESHOLD,
     OPT_RACK_TEMP_THRESHOLD,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
@@ -148,6 +150,7 @@ class SupervisorConfig:
     # F2 model
     model_learning_enabled: bool
     rack_temp_threshold: float
+    p1_guard_threshold: float
     # F4a solar
     solar_forecast_enabled: bool
     # S_eff per-facade solar (STORY_SEFF; structurally dark until consumers ready)
@@ -229,6 +232,9 @@ class SupervisorConfig:
             model_learning_enabled=_b(options, OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
             rack_temp_threshold=_f(
                 options, OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD, 24, 35
+            ),
+            p1_guard_threshold=_f(
+                options, OPT_P1_GUARD_THRESHOLD, DEFAULT_P1_GUARD_THRESHOLD, 22, 32
             ),
             solar_forecast_enabled=_b(options, OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
             # ANDed with the code-level readiness constant: the option can never

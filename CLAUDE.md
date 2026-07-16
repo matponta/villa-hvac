@@ -538,8 +538,21 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
 - **Season split**: summer = fancoils (fast, aggressive setback OK); winter =
   radiant floor (slow, high mass → anticipatory, soft setback, not on/off).
 - **Kitchen** has no thermostat → follows the Salotto thermostat (open-space).
-- **Rack** fancoil cools Rack + Pianerottolo P1 (dual outlet): command =
-  P1 demand OR `sensor.rack_t_h_temperature` over threshold.
+- **FAN WIRING — entities physically SWAPPED/shared (owner-verified 2026-07-15,
+  v0.65.0):** `fan.fancoil_salotto`+`_valvola`+`_manuale` physically drive the
+  KITCHEN unit and `fan.fancoil_cucina`* drive the SALOTTO unit (const.py swaps
+  them per-zone; the living_room leader drives both at one speed so control is
+  unaffected). `fan.fancoil_studio_pianerottolo_p1` is the OFFICE fan (also vents
+  P1). `fan.fancoil_locale_rack` is the RACK fan (also vents P1). **P1 owns NO
+  fan** — `stairs_p1.fancoils=[]`, de-listed as a cooling leader; it is a
+  SECONDARY trigger (P1 hot → `P1GuardController` forces BOTH the rack + office
+  fans, opt-in `switch.p1_guard` default ON). `fan.fancoil_sala_giochi` is DEAD /
+  non-responsive (room cools via the open door only) — do not trust its model.
+  Full detail: villa-fan-wiring memory.
+- **Rack** fancoil cools Rack + Pianerottolo P1 (dual outlet); the rack fan's
+  chilled-water valve follows the P1 thermostat. Rack held in temp by
+  `RackGuardController` (temp probe > threshold → force the rack fan via a P1
+  setpoint nudge). #0b implemented v0.64.0; v0.65.0 fixed its cooldown hand-back.
 - **3 split ACs** (Cantina Vini, Palestra, Garage) share ONE compressor → must run
   in the same mode; treat as a synchronized group.
 - Bagni Gabri/Ingresso/Palestra + Lavanderia have no EP → fused temp = thermostat only.

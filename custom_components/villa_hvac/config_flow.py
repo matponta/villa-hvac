@@ -39,6 +39,7 @@ from .const import (
     DEFAULT_PV_BIAS_EFF_FRACTION,
     DEFAULT_PV_BIAS_EFF_MIN,
     DEFAULT_PV_BIAS_FLOOR_POOR,
+    DEFAULT_P1_GUARD_THRESHOLD,
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_RACK_TEMP_THRESHOLD,
@@ -78,6 +79,7 @@ from .const import (
     OPT_PV_BIAS_EFF_FRACTION,
     OPT_PV_BIAS_EFF_MIN,
     OPT_PV_BIAS_FLOOR_POOR,
+    OPT_P1_GUARD_THRESHOLD,
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_RETURN_MARGIN_MIN,
     OPT_RACK_TEMP_THRESHOLD,
@@ -145,6 +147,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=24, max=35)),
+                vol.Optional(
+                    OPT_P1_GUARD_THRESHOLD,
+                    default=options.get(
+                        OPT_P1_GUARD_THRESHOLD, DEFAULT_P1_GUARD_THRESHOLD
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=22, max=32)),
                 vol.Optional(
                     OPT_AUTO_WAKE_TIME,
                     default=options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME),

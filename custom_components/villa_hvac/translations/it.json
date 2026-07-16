@@ -18,6 +18,7 @@
         "data": {
           "night_heat_threshold": "Soglia guardia-caldo notte camere (°C)",
           "rack_temp_threshold": "Temperatura di attivazione protezione rack (°C)",
+          "p1_guard_threshold": "Temperatura di attivazione guardia P1 (°C)",
           "auto_wake_time": "Ora sveglia automatica camere",
           "away_escalation_hours": "Ore di assenza prima di passare a Via",
           "season": "Forzatura stagione",
@@ -62,6 +63,7 @@
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
           "rack_temp_threshold": "Sopra questa temperatura per 3 minuti, la protezione rack forza il raffrescamento P1 condiviso.",
+          "p1_guard_threshold": "Sopra questa per 3 minuti, il pianerottolo P1 accende ENTRAMBE le ventole rack e office (trigger secondario).",
           "auto_wake_time": "Ora in cui le camere escono dallo stato notte-silenziosa (HH:MM:SS).",
           "away_escalation_hours": "#2c: dopo che gli adulti sono via per questo tempo, la casa passa a Via.",
           "season": "auto = rileva dal termostato di riferimento; oppure forza estate / inverno.",
