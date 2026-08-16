@@ -555,7 +555,14 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   AUTO-driven fan in the house ran 100 % (the rack fan escaped only because the
   rack guard had separately escalated it). Fix = pure `guard_fan_pct(base,
   running, escalated)` in `rack.py`: never command below the airflow already
-  running, on the active AND the hand-back path. Same release also gave
+  running, on the active AND the hand-back path. **Refinement observed while
+  verifying the fix (2026-08-16 15:42, everything back in AUTO, `levers=0`):
+  AUTO MODULATES across the stages — salotto/cucina/rack sat at 67 % while
+  padronale/gabriele/sala_giochi/office sat at 100 %. So "AUTO runs ~constant
+  100 %" is an overstatement of the older verified fact; AUTO is ~100 % only
+  while the valve is pinned open under load.** The floor rule is robust to this
+  either way because it compares against the LIVE reading, never an assumed 100.
+  Same release also gave
   `P1GuardController` the escalation ladder it already computed but ignored (it
   shares `rack_guard_step`, so `escalated` was always available) → 100 % at
   P1 ≥ threshold+2 for 3 min, or 20 min without a 0.3 °C improvement. Any future

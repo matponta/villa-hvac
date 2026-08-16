@@ -21,6 +21,15 @@ comments in `engine.py` described a broader boot resync than existed.
 
 660 tests, ruff clean. Both new tests mutation-verified.
 
+VERIFIED LIVE 2026-08-16 15:40:38 — the boot resync logged both releases and
+flipped both switches ON→OFF 34 s after boot; post-boot state is clean (no
+fancoil in manual anywhere, BLOCCO off/allow, plan ticking, levers=0).
+
+Observed at the same time (worth knowing): with everything back in AUTO,
+salotto/cucina/rack sat at 67 % while padronale/gabriele/sala_giochi/office sat
+at 100 % — so AUTO MODULATES across the 33/67/100 stages. The old "AUTO runs
+~constant 100 %" fact holds only while the valve is pinned open under load.
+
 ## v0.67.0 DEPLOYED — guard fan % is a FLOOR (2026-08-16)
 
 Live regression found by the owner returning from vacation: on a 35.7 °C peak day
