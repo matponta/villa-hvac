@@ -1,5 +1,26 @@
 # Next session — kickstart prompts
 
+## v0.68.0 DEPLOYED — orphaned guard `manuale` reaped at boot (2026-08-16)
+
+Found while verifying the v0.67.0 deploy. After the restart both guards were
+inert (their in-memory latches are empty by construction at boot) yet
+`switch.fancoil_locale_rack_manuale` and the office one were STILL ON from the
+pre-restart episode — so the rack fan stayed pinned at 67 % in manual with no
+lever claiming it. Each guard's `_release` short-circuits on the empty latch, and
+`_stranded_fan_watchdog` is deliberately blind while `manuale` is ON, so nothing
+would ever have handed it back.
+
+Fix: `engine.async_release_orphan_guard_manuals()`, called from
+`_startup_resync`. Release-only, fan left alive, scoped to the two guard-owned
+switches (`GUARD_MANUALE_SWITCHES`) — the governor (living_room) and #2b
+(bedrooms) can legitimately hold theirs at boot, so they are untouched. A guard
+that still wants the switch simply re-asserts it on its next cycle.
+
+Also corrected: `_startup_resync` only released BLOCCO + re-applied presets; two
+comments in `engine.py` described a broader boot resync than existed.
+
+660 tests, ruff clean. Both new tests mutation-verified.
+
 ## v0.67.0 DEPLOYED — guard fan % is a FLOOR (2026-08-16)
 
 Live regression found by the owner returning from vacation: on a 35.7 °C peak day

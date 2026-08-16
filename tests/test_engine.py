@@ -1168,6 +1168,53 @@ async def test_startup_resync_releases_stranded_blocco(hass):
     assert any(c.data["entity_id"] == CONSENSO_BLOCCO for c in off_calls)
 
 
+async def test_startup_resync_releases_orphaned_guard_manuale(hass):
+    """Regression (live 2026-08-16): a restart leaves the guards' in-memory
+    latches empty, so a `manuale` switch a pre-restart guard episode left ON is
+    orphaned — its own _release short-circuits on the empty latch, the
+    stranded-fan watchdog is blind while manuale is ON, and no lever claims it.
+    The rack fan sat pinned at 67% in manual with both guards inert. The boot
+    resync must hand these back so KNX AUTO takes the fan again."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+    from custom_components.villa_hvac.const import GUARD_MANUALE_SWITCHES
+
+    await _setup(hass)
+    for manuale in GUARD_MANUALE_SWITCHES:
+        hass.states.async_set(manuale, "on")
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+
+    released = {c.data["entity_id"] for c in off_calls}
+    for manuale in GUARD_MANUALE_SWITCHES:
+        assert manuale in released, f"{manuale} left orphaned in manual"
+    # It must only ever RELEASE — never assert a manual override at boot.
+    on_calls = async_mock_service(hass, "switch", "turn_on")
+    assert not any(c.data["entity_id"] in GUARD_MANUALE_SWITCHES for c in on_calls)
+
+
+async def test_startup_resync_leaves_already_auto_guard_manuale_alone(hass):
+    """A guard manuale already OFF is not touched — the reaper releases only what
+    is actually stranded, so boot stays quiet on the bus in the normal case."""
+    from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
+
+    from custom_components.villa_hvac.const import GUARD_MANUALE_SWITCHES
+
+    await _setup(hass)
+    for manuale in GUARD_MANUALE_SWITCHES:
+        hass.states.async_set(manuale, "off")
+    off_calls = async_mock_service(hass, "switch", "turn_off")
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
+    await hass.async_block_till_done()
+
+    assert not any(
+        c.data["entity_id"] in GUARD_MANUALE_SWITCHES for c in off_calls
+    )
+
+
 async def test_startup_resync_unsub_idempotent_on_unload(hass, caplog):
     """Once the HOMEASSISTANT_STARTED listener fires it auto-removes itself, so
     unloading afterwards must NOT unsubscribe it a second time — HA logs an

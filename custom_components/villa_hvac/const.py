@@ -558,6 +558,17 @@ RACK_GUARD_MIN_DROP = 0.3
 # RELEASE_DROP). Comfort (not hardware), so a gentler default threshold.
 OPT_P1_GUARD_THRESHOLD = "p1_guard_threshold"
 DEFAULT_P1_GUARD_THRESHOLD = 27.0
+# The manuale switches whose ONLY owners are the two guards. Neither the steady
+# governor (living_room) nor camere silenziose (bedrooms) ever touches these, so
+# at HA start — when every guard latch is empty by construction — a switch found
+# ON here is ORPHANED: the pre-restart guard episode that set it is gone and its
+# `_release` short-circuits on the empty latch, so nothing would ever hand it
+# back. Live 2026-08-16: a restart left the rack fan pinned at 67 % in manual
+# with both guards inert and no lever claiming it. Reaped by _startup_resync.
+GUARD_MANUALE_SWITCHES = (
+    "switch.fancoil_locale_rack_manuale",
+    "switch.fancoil_studio_pianerottolo_p1_manuale",
+)
 # Floor, not a target (see RACK_GUARD_INITIAL_FAN_PCT above and guard_fan_pct).
 P1_GUARD_FAN_PCT = 67
 P1_GUARD_SETPOINT_DROP = 1.0

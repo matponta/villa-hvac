@@ -74,6 +74,7 @@ from .const import (
     COOL_RUN_FAN_FLOOR,
     FORECASTSOLAR_GHI_FACTOR,
     FORECASTSOLAR_POWER,
+    GUARD_MANUALE_SWITCHES,
     PV_BIAS_MIN_DWELL,
     COOL_VALVES,
     FORECAST_REFRESH,
@@ -1947,6 +1948,38 @@ class SupervisorEngine:
             return
         async with self._lock:
             await self._release_blocco()
+
+    async def async_release_orphan_guard_manuals(self) -> None:
+        """Boot safe baseline: hand back guard `manuale` switches nobody owns.
+
+        The two guards are the ONLY owners of GUARD_MANUALE_SWITCHES, and at HA
+        start every guard latch is empty by construction — so a switch found ON
+        here belongs to a pre-restart episode whose in-memory state is gone. Its
+        `_release` short-circuits on that empty latch, the stranded-fan watchdog
+        is deliberately blind while `manuale` is ON, and no lever claims it: the
+        fan would stay pinned in manual at whatever the dead guard last commanded,
+        forever. Live 2026-08-16: a restart left the rack fan at 67 % in manual
+        with both guards inert.
+
+        Only ever RELEASES (never asserts), and leaves the fan itself alive —
+        `_call_switch(off)` touches the manuale object, not the fan's on/off
+        object, so KNX AUTO takes the % straight back. Serialized against cycles
+        like the other boot hooks; a guard that genuinely wants the switch simply
+        re-asserts it on its next cycle.
+        """
+        async with self._lock:
+            for manuale in GUARD_MANUALE_SWITCHES:
+                s = self.hass.states.get(manuale)
+                if s is None or s.state != STATE_ON:
+                    continue
+                _LOGGER.warning(
+                    "Boot resync: releasing orphaned guard manual override %s "
+                    "(no guard latch survived the restart)", manuale,
+                )
+                try:
+                    await self._call_switch(manuale, on=False)
+                except Exception:  # noqa: BLE001 - boot resync must not raise
+                    _LOGGER.exception("Boot resync: could not release %s", manuale)
 
     async def async_fail_safe(self) -> None:
         """Hand the villa back to native KNX: release the central cooling block

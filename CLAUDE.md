@@ -572,6 +572,21 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   shares `rack_guard_step`, so `escalated` was always available) → 100 % at
   P1 ≥ threshold+2 for 3 min, or 20 min without a 0.3 °C improvement. Any future
   controller that takes a fan out of AUTO must respect the same floor rule.
+- **A GUARD `manuale` SURVIVES A RESTART; ITS LATCH DOES NOT (v0.68.0).** Found
+  while verifying the v0.67.0 deploy: after the restart both guards were inert
+  (latches empty by construction) yet `switch.fancoil_locale_rack_manuale` and
+  the office one were still ON from the pre-restart episode — so the rack fan
+  stayed pinned at 67 % in manual with NO lever claiming it. Each guard's
+  `_release` short-circuits on the empty latch (`not active and no snapshot →
+  {}`), and `_stranded_fan_watchdog` is deliberately blind while `manuale` is ON,
+  so nothing would ever hand it back. Fix = `engine.async_release_orphan_guard_
+  manuals()` called from `_startup_resync`: at HA start every guard latch is
+  empty, so any ON switch in `GUARD_MANUALE_SWITCHES` is by definition orphaned →
+  release it (release-only, fan left alive; a guard that still wants it
+  re-asserts next cycle). Scoped to the two guard-owned switches ONLY — the
+  governor (living_room) and #2b (bedrooms) can legitimately hold theirs at boot.
+  Note `_startup_resync` previously only released BLOCCO + re-applied presets;
+  the comments in `engine.py` claiming a broader boot resync overstated it.
 - **3 split ACs** (Cantina Vini, Palestra, Garage) share ONE compressor → must run
   in the same mode; treat as a synchronized group.
 - Bagni Gabri/Ingresso/Palestra + Lavanderia have no EP → fused temp = thermostat only.

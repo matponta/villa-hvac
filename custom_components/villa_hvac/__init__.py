@@ -138,6 +138,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # ERROR — "unknown job listener" — for removing an already-gone one).
         _started_unsub = None
         await engine.async_release_blocco()
+        # Hand back any guard `manuale` orphaned by the restart: the guards'
+        # in-memory latches are empty at boot, so their own _release can never
+        # fire for a switch a pre-restart episode left ON (see the engine method).
+        await engine.async_release_orphan_guard_manuals()
         await apply_house_mode(hass, entry, current_house_mode(hass, entry))
 
     _started_unsub = hass.bus.async_listen_once(
