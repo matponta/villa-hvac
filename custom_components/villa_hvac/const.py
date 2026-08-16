@@ -541,6 +541,10 @@ RACK_GUARD_RELEASE_DROP = 1.0
 RACK_GUARD_EMERGENCY_RISE = 2.0
 RACK_GUARD_ENGAGE = timedelta(minutes=3)
 RACK_GUARD_RELEASE = timedelta(minutes=10)
+# FLOORS, not targets — see rack.guard_fan_pct. Taking a fan out of KNX AUTO
+# pins it at exactly what we command, and AUTO runs these fancoils at ~100%, so
+# commanding the bare stage constant made ENGAGING a guard cool the room LESS
+# than doing nothing. A guard may only ever raise the airflow already running.
 RACK_GUARD_INITIAL_FAN_PCT = 67
 RACK_GUARD_EMERGENCY_FAN_PCT = 100
 RACK_GUARD_NO_RESPONSE = timedelta(minutes=20)
@@ -554,6 +558,7 @@ RACK_GUARD_MIN_DROP = 0.3
 # RELEASE_DROP). Comfort (not hardware), so a gentler default threshold.
 OPT_P1_GUARD_THRESHOLD = "p1_guard_threshold"
 DEFAULT_P1_GUARD_THRESHOLD = 27.0
+# Floor, not a target (see RACK_GUARD_INITIAL_FAN_PCT above and guard_fan_pct).
 P1_GUARD_FAN_PCT = 67
 P1_GUARD_SETPOINT_DROP = 1.0
 

@@ -12,6 +12,7 @@ from custom_components.villa_hvac.rack import (
     P1GuardController,
     RackGuardController,
     RackGuardState,
+    guard_fan_pct,
     rack_guard_step,
 )
 from custom_components.villa_hvac.supervisor import (
@@ -90,13 +91,14 @@ def test_rack_guard_step_wide_band_release_drop():
 def _house(
     now=T0, *, rack_temp=28.5, p1_temp=27.0, enabled=True, paused=False,
     threshold=28.0, release=27.0, house_mode="Casa", mode_offset=0.0,
+    rack_fan_pct=None,
 ):
     return HouseState(
         now=now,
         zones={
             "rack": ZoneSnapshot(
                 zone_id="rack", name="Rack", climate=None, emitter="fancoil",
-                temp=rack_temp,
+                temp=rack_temp, fan_pct=rack_fan_pct,
             ),
             "stairs_p1": ZoneSnapshot(
                 zone_id="stairs_p1", name="P1",
@@ -214,6 +216,7 @@ def test_controller_wide_band_engages_at_35_and_cools_to_28():
 def _p1house(
     now=T0, *, p1_temp=28.0, office_temp=25.0, enabled=True, paused=False,
     guard_enabled=True, house_setpoint=24.0,
+    office_fan_pct=None, rack_fan_pct=None,
 ):
     return HouseState(
         now=now,
@@ -226,11 +229,11 @@ def _p1house(
             "office": ZoneSnapshot(
                 zone_id="office", name="Office",
                 climate="climate.studio_termostato_2", emitter="fancoil",
-                temp=office_temp, enabled=True,
+                temp=office_temp, enabled=True, fan_pct=office_fan_pct,
             ),
             "rack": ZoneSnapshot(
                 zone_id="rack", name="Rack", climate=None, emitter="fancoil",
-                temp=26.0,
+                temp=26.0, fan_pct=rack_fan_pct,
             ),
         },
         p1_guard_enabled=guard_enabled,
@@ -292,6 +295,75 @@ def test_p1_guard_never_emits_fan_zero_and_failsafe_restores_both():
         "climate.pianerottolo_p1_termostato_2": 24.0,
         "climate.studio_termostato_2": 24.0,
     }
+
+
+# --- Guard fan % is a FLOOR, never a throttle (v0.67.0) ----------------------
+
+def test_guard_fan_pct_is_a_floor_not_a_target():
+    assert guard_fan_pct(67, None) == 67          # unknown reading -> base stage
+    assert guard_fan_pct(67, 0) == 67             # fan off -> base stage
+    assert guard_fan_pct(67, 40) == 67            # running slower -> raise to base
+    assert guard_fan_pct(67, 100) == 100          # AUTO at full -> never throttle
+    assert guard_fan_pct(67, 80) == 80
+    assert guard_fan_pct(67, 40, escalated=True) == 100   # escalation wins
+    assert guard_fan_pct(67, 250) == 100          # clamped
+
+
+def test_rack_guard_never_throttles_a_fan_already_running_faster():
+    # Regression (live 2026-08-16): asserting manuale ON takes the fan out of KNX
+    # AUTO (~100%), so a bare 67 command THROTTLED a fan that was already at full.
+    c = RackGuardController()
+    c(_house(rack_fan_pct=100))
+    out = c(_house(T0 + RACK_GUARD_ENGAGE, rack_fan_pct=100))
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 100
+    # ...and a genuinely quiet fan is still boosted to the base stage.
+    c2 = RackGuardController()
+    c2(_house(rack_fan_pct=30))
+    out2 = c2(_house(T0 + RACK_GUARD_ENGAGE, rack_fan_pct=30))
+    assert out2[fan_lever("fan.fancoil_locale_rack")] == 67
+
+
+def test_p1_guard_never_throttles_the_office_fan_below_auto():
+    # The exact live regression: owner home from vacation, office at 28.8 °C on a
+    # 35.7 °C peak day, every AUTO fan in the house at 100% — the P1 guard latched
+    # and pinned the office fan at 67%, cooling the room LESS than doing nothing.
+    c = P1GuardController()
+    c(_p1house(office_temp=28.8, office_fan_pct=100, rack_fan_pct=100))
+    out = c(_p1house(
+        T0 + RACK_GUARD_ENGAGE, office_temp=28.8, office_fan_pct=100, rack_fan_pct=100
+    ))
+    assert out[fan_lever("fan.fancoil_studio_pianerottolo_p1")] == 100
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 100
+
+
+def test_p1_guard_escalates_to_full_when_p1_stays_hot():
+    # Before v0.67.0 this controller shared rack_guard_step (so it computed
+    # `escalated`) but emitted a flat 67 — a hot P1 had NO path to full airflow.
+    c = P1GuardController()
+    c(_p1house(p1_temp=29.5))                                  # above_since
+    out = c(_p1house(T0 + RACK_GUARD_ENGAGE, p1_temp=29.5))     # engage, not yet esc.
+    assert out[fan_lever("fan.fancoil_studio_pianerottolo_p1")] == 67
+    # >= threshold(27) + RACK_GUARD_EMERGENCY_RISE(2) held for RACK_GUARD_ENGAGE.
+    c(_p1house(T0 + timedelta(minutes=4), p1_temp=29.5))
+    out = c(_p1house(T0 + timedelta(minutes=8), p1_temp=29.5))
+    assert c.state.escalated
+    assert out[fan_lever("fan.fancoil_studio_pianerottolo_p1")] == 100
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 100
+
+
+def test_p1_guard_handback_does_not_stomp_a_full_fan():
+    c = P1GuardController()
+    c(_p1house(office_fan_pct=100))
+    c(_p1house(T0 + RACK_GUARD_ENGAGE, office_fan_pct=100))
+    c(_p1house(T0 + timedelta(minutes=5), p1_temp=25.5, office_fan_pct=100))
+    out = c(_p1house(
+        T0 + timedelta(minutes=5) + RACK_GUARD_RELEASE, p1_temp=25.5,
+        office_fan_pct=100,
+    ))
+    assert out[switch_lever(
+        "switch.fancoil_studio_pianerottolo_p1_manuale"
+    )] == "off"
+    assert out[fan_lever("fan.fancoil_studio_pianerottolo_p1")] == 100  # alive, no dip
 
 
 def test_p1_guard_yields_when_disabled_or_p1_paused():

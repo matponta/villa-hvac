@@ -553,6 +553,25 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
   chilled-water valve follows the P1 thermostat. Rack held in temp by
   `RackGuardController` (temp probe > threshold → force the rack fan via a P1
   setpoint nudge). #0b implemented v0.64.0; v0.65.0 fixed its cooldown hand-back.
+  v0.66.0: probe → `sensor.rack_temperatura_media` (mean of the two Tuya probes)
+  with a per-zone `stale_after` of 180 min (both probes report every ~78–120 min;
+  the global 30-min freshness blinded the guard most of every hour); engages in
+  ANY house mode incl. Vacanza (lifting the P1 preset to `comfort`, since BP
+  ignores setpoints); WIDE band engage 35 → cool to 28 (`rack_temp_release`).
+- **A GUARD'S FAN % IS A FLOOR, NEVER A TARGET (v0.67.0; live regression
+  2026-08-16).** Asserting `manuale` ON takes a fan OUT of KNX AUTO and pins it at
+  exactly what we command — and AUTO runs these fancoils at ~100%. So commanding a
+  bare stage constant made *engaging* a guard cool the room LESS than doing
+  nothing: returning from vacation on a 35.7 °C peak day, `P1GuardController`
+  latched and held the office fan at **67 % with the room at 28.8 °C** while every
+  AUTO-driven fan in the house ran 100 % (the rack fan escaped only because the
+  rack guard had separately escalated it). Fix = pure `guard_fan_pct(base,
+  running, escalated)` in `rack.py`: never command below the airflow already
+  running, on the active AND the hand-back path. Same release also gave
+  `P1GuardController` the escalation ladder it already computed but ignored (it
+  shares `rack_guard_step`, so `escalated` was always available) → 100 % at
+  P1 ≥ threshold+2 for 3 min, or 20 min without a 0.3 °C improvement. Any future
+  controller that takes a fan out of AUTO must respect the same floor rule.
 - **3 split ACs** (Cantina Vini, Palestra, Garage) share ONE compressor → must run
   in the same mode; treat as a synchronized group.
 - Bagni Gabri/Ingresso/Palestra + Lavanderia have no EP → fused temp = thermostat only.

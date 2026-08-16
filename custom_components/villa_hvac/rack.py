@@ -104,6 +104,36 @@ def rack_guard_step(
     ), "escalate" if escalated and not current.escalated else None
 
 
+def guard_fan_pct(
+    base_pct: int, running_pct: int | None, *, escalated: bool = False
+) -> int:
+    """A guard's fan command: a FLOOR on the airflow, never a throttle.
+
+    Both guards assert `manuale` ON, which takes the fan out of KNX AUTO and pins
+    it at exactly the % we command. AUTO runs these fancoils at ~100% (verified
+    fact, CLAUDE.md), so commanding the bare stage constant meant ENGAGING a guard
+    could cool the room LESS than leaving it alone.
+
+    Live evidence 2026-08-16 (owner home from vacation, 35.7 °C peak): the P1
+    guard latched and held the office fan at 67% with the room at 28.8 °C, while
+    every AUTO-driven fan in the house ran 100% — the "boost" was a throttle. The
+    rack fan escaped only because the rack guard had separately escalated it.
+
+    So: never command below the airflow already running. `running_pct` is the
+    fan's live reading (None/unknown -> just use the base stage); escalation still
+    goes straight to full.
+    """
+    if escalated:
+        return RACK_GUARD_EMERGENCY_FAN_PCT
+    floor = base_pct if running_pct is None else max(base_pct, running_pct)
+    return max(0, min(100, floor))
+
+
+def _running_pct(state, zone_id: str) -> int | None:
+    zone = state.zones.get(zone_id)
+    return zone.fan_pct if zone is not None else None
+
+
 class RackGuardController:
     """Highest-priority merge controller for rack hardware protection."""
 
@@ -233,9 +263,10 @@ class RackGuardController:
             # (p1.temp - 1 opens the valve; no base to cap against).
             term = max(20.0, p1.temp - 1.0)
             target = round(min(base, term) if base is not None else term, 1)
-        fan = (
-            RACK_GUARD_EMERGENCY_FAN_PCT
-            if self.state.escalated else RACK_GUARD_INITIAL_FAN_PCT
+        fan = guard_fan_pct(
+            RACK_GUARD_INITIAL_FAN_PCT,
+            _running_pct(state, "rack"),
+            escalated=self.state.escalated,
         )
         # The rack fan belongs to the rack zone; its chilled-water valve is
         # controlled by the P1 thermostat (nudge that to open it). P1 no longer
@@ -267,7 +298,12 @@ class RackGuardController:
         p1_climate = ZONES["stairs_p1"]["climate"]
         out = {
             switch_lever("switch.fancoil_locale_rack_manuale"): "off",
-            fan_lever(rack_fan): RACK_GUARD_INITIAL_FAN_PCT,
+            # Leave the fan ALIVE (KNX AUTO will not restart a fan we switched
+            # off) — but hand back at the floor, never below what is already
+            # spinning: a bare 67 here stomped a 100% fan on the way out.
+            fan_lever(rack_fan): guard_fan_pct(
+                RACK_GUARD_INITIAL_FAN_PCT, _running_pct(state, "rack")
+            ),
         }
         live = self._base(state, p1) if p1 is not None else None
         restore = live if live is not None else self._snapshot
@@ -301,6 +337,13 @@ class P1GuardController:
     both setpoints restored). Merged AFTER the rack guard (which wins the shared
     rack levers when both fire) and BEFORE the cooling controller/policies (so
     the office nudge outranks house_mode while active). Opt-in switch.p1_guard.
+
+    Both fan commands are FLOORS (guard_fan_pct) and follow the same escalation
+    ladder the rack guard uses — P1 >= threshold + RACK_GUARD_EMERGENCY_RISE for
+    RACK_GUARD_ENGAGE, or RACK_GUARD_NO_RESPONSE without a RACK_GUARD_MIN_DROP
+    improvement, goes to 100%. Before v0.67.0 this controller computed
+    `escalated` (it shares rack_guard_step) but ignored it and emitted a flat
+    67%, so a hot P1 had no path to full airflow at all.
     """
 
     def __init__(self, hass=None, entry=None) -> None:
@@ -340,11 +383,16 @@ class P1GuardController:
             return {}
         rack_fan = ZONES["rack"]["fancoils"][0]
         office_fan = ZONES["office"]["fancoils"][0]
+        escalated = self.state.escalated
         out = {
             switch_lever("switch.fancoil_locale_rack_manuale"): "on",
-            fan_lever(rack_fan): P1_GUARD_FAN_PCT,
+            fan_lever(rack_fan): guard_fan_pct(
+                P1_GUARD_FAN_PCT, _running_pct(state, "rack"), escalated=escalated
+            ),
             switch_lever(_OFFICE_MANUALE): "on",
-            fan_lever(office_fan): P1_GUARD_FAN_PCT,
+            fan_lever(office_fan): guard_fan_pct(
+                P1_GUARD_FAN_PCT, _running_pct(state, "office"), escalated=escalated
+            ),
             BLOCCO_LEVER: BLOCCO_RELEASE,
         }
         p1_base = self._base(state, p1)
@@ -376,9 +424,15 @@ class P1GuardController:
         office_fan = ZONES["office"]["fancoils"][0]
         out = {
             switch_lever("switch.fancoil_locale_rack_manuale"): "off",
-            fan_lever(rack_fan): P1_GUARD_FAN_PCT,
+            # Alive, and never below what is already spinning (see _release in
+            # RackGuardController) — AUTO re-drives the % once manuale is off.
+            fan_lever(rack_fan): guard_fan_pct(
+                P1_GUARD_FAN_PCT, _running_pct(state, "rack")
+            ),
             switch_lever(_OFFICE_MANUALE): "off",
-            fan_lever(office_fan): P1_GUARD_FAN_PCT,
+            fan_lever(office_fan): guard_fan_pct(
+                P1_GUARD_FAN_PCT, _running_pct(state, "office")
+            ),
         }
         p1_live = self._base(state, p1)
         p1_restore = p1_live if p1_live is not None else self._snap_p1

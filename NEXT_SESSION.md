@@ -1,8 +1,34 @@
 # Next session — kickstart prompts
 
-## v0.66.0 READY TO DEPLOY — rack guard rework (2026-08-16, Cowork session)
+## v0.67.0 DEPLOYED — guard fan % is a FLOOR (2026-08-16)
 
-Code committed locally, NOT yet pushed/deployed. Changes (owner-requested):
+Live regression found by the owner returning from vacation: on a 35.7 °C peak day
+`P1GuardController` had latched and was holding the **office fan at 67 % with the
+room at 28.8 °C**, while every AUTO-driven fan in the house ran 100 %. Root cause:
+asserting `manuale` ON takes a fan out of KNX AUTO (~100 %) and pins it at exactly
+the commanded %, so the flat `P1_GUARD_FAN_PCT = 67` made engaging the guard a
+THROTTLE, not a boost. The rack fan escaped only because the rack guard had
+separately escalated it to 100 (via the no-response route — the wide 35 °C band
+means the +2 emergency rise never fired).
+
+Shipped:
+- pure `guard_fan_pct(base, running, escalated)` in `rack.py` — never command below
+  the airflow already running; used on the active AND hand-back paths of BOTH
+  guards (the hand-back previously stomped a 100 % fan with 67 on the way out).
+- `P1GuardController` now uses the escalation ladder it already computed but
+  ignored (it shares `rack_guard_step`) → 100 % at P1 ≥ threshold+2 for 3 min, or
+  20 min without a 0.3 °C improvement. Before this it had NO path to full airflow.
+- 5 new tests, all mutation-verified to fail under the old flat-constant behavior.
+  658 tests, ruff clean.
+
+Note: the guards' *setpoint* nudges are no-ops whenever the room is already well
+above its own base (`min(base, temp − 1)` collapses to `base`) — harmless, the
+valve is open anyway, but it means on a hot day the guard's ONLY real lever is the
+fan %. That is why the throttle was the whole story.
+
+## v0.66.0 — rack guard rework (2026-08-16, Cowork session)
+
+Changes (owner-requested):
 
 - **Rack probe**: `ZONES["rack"]["temp_sensor"]` → `sensor.rack_temperatura_media`
   (template helper already LIVE in HA: mean of the two Tuya probes
@@ -26,13 +52,10 @@ Code committed locally, NOT yet pushed/deployed. Changes (owner-requested):
 - Dashboard cool-clima-v2 already repointed LIVE to `sensor.rack_temperatura_media`
   (5 refs, was `sensor.locale_rack_temperature`).
 
-DEPLOY STEPS (owner): push to GitHub → HACS update → restart HA. Nothing else:
-`rack_temp_threshold` was already set to 35 in the live entry options
-(2026-08-16, via options flow — interim behavior on v0.65 = engage 35 /
-release 34); `rack_temp_release` is not set and correctly falls back to the
-new default 28 once v0.66 loads.
-Verified here: test_rack (12) + test_supervisor_config (7) + test_feature_graph
-(9) pass; full HA-plugin suite to be run in the dev venv before release.
+Deployed as part of v0.67.0. `rack_temp_threshold` was already set to 35 in the
+live entry options (2026-08-16, via options flow — interim behavior on v0.65 =
+engage 35 / release 34); `rack_temp_release` is not set and correctly falls back
+to the new default 28.
 
 ## v0.64.0 INSTALLED — HA rebooting (owner report, 2026-07-15)
 
