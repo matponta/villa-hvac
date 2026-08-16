@@ -213,11 +213,20 @@ def build_feature_graph(
         return FeatureStatus(feature, True, False, reason)
 
     zones = state.zones.values()
+    # Rack inert reason: distinguish a stale/missing probe from "genuinely cool" —
+    # the old catch-all string read "below activation threshold" while the rack sat
+    # at 35 with a dead probe (misleading canned text, seen 2026-08-12).
+    rack_zone = state.zones.get("rack")
+    rack_temp_known = rack_zone is not None and rack_zone.temp is not None
     rows = {
         "rack_guard": row(
             "rack_guard",
             state.rack_guard_active,
-            "not cooling season" if not summer else "rack below activation threshold",
+            "not cooling season" if not summer
+            else (
+                "rack below activation threshold" if rack_temp_known
+                else "rack temperature unknown/stale"
+            ),
         ),
         "p1_guard": row(
             "p1_guard",

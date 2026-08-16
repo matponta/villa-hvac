@@ -86,6 +86,54 @@ Full LP/MPC (EMHASS-style) remains a later option; this heuristic captures ~80%.
   stop mode flips slamming the valve (a flip jumps the center ~2°C >> band).
 - **Best-effort:** `_pv_bias_apply` wrapped in try/except — never breaks the cycle.
 
+## BACKLOG ENHANCEMENT — surplus pre-cool from deep setback / on vacation (owner 2026-07-24)
+
+**Owner requirement:** do NOT waste solar by re-injecting it to the grid when the
+house is far from comfort — even ON VACATION. If there is genuine PV surplus AND a
+zone is well above comfort, spend the surplus to pre-cool rather than export it.
+
+**Why this is a NEW path (the gap):** the pv_bias above only *biases an already-active
+cooling regime* and triggers off a forecast HEAT PEAK. In Vacanza (and any deep
+setback) the zones sit in `building_protection`, no zone calls for cooling, so pv_bias
+is **INERT** — it can bias a center but never CREATE demand. So today the surplus just
+exports. This enhancement must be able to *lift a zone out of BP* on a surplus signal.
+
+**Evidence the surplus is real under low villa load (live, 2026-07-24, villa in Vacanza):**
+- Condominio battery is **~41 kWh** (`sensor.battery_capacity_2`≈41.4 — capacity, not
+  small; corrects the old "small battery" note — see [[condominio-pv-energy-map]]).
+- 7/23: house load **~1 kW all day** (PdC idle) → battery charged 23%→**100% by 16:06**,
+  then the condominio **EXPORTED ~4.5 / 2.7 / 2.3 / 1.5 kW across 16:00–20:00**
+  (hourly means; ≈11 kWh spilled to grid that afternoon).
+- 7/24: 62 kWh PV forecast, load still ~0.9 kW → will top out and spill again.
+- Contrast: with the PdC running (heatwave/occupied) the PdC out-draws PV and there is
+  ~no export — so this path is REGIME-DEPENDENT (only fires under low villa load).
+
+**Design sketch (opt-in, deploy-dark, guardrailed — same rigor as pv_bias):**
+- New surplus signal (stateful, EMA-smoothed, spike-clipped): `surplus = summer AND
+  ( battery SoC ≥ HIGH_SOC (e.g. ~90–95%) OR grid net exporting < −THRESH for ≥ N min )`
+  AND within the production window. Battery-full/exporting = the true "would-be-wasted" cue.
+- Eligibility per zone: `T_room ≥ comfort_target + FAR_MARGIN` ("quite far from comfort")
+  — so it only acts when banking coolth is worthwhile, and skips already-cool rooms.
+- Action: temporarily override the effective mode for eligible zones out of BP up to a
+  **surplus-pre-cool target** (own knob; distinct from comfort — e.g. a vacation
+  pre-cool ceiling), reusing the #8 effective-mode-override mechanism so the whole
+  stack follows with no lever conflict. Release back to BP/Vacanza when: surplus gone
+  / SoC drops below a release band / rooms reach target / production window ends.
+- HARD bounds + anti-thrash: min on/off, hysteresis on SoC + export, min-dwell (reuse
+  `PV_BIAS_MIN_DWELL`), never below `floor`. Peak hours net ~0 cooling (verified) so
+  effectiveness-rank still applies — prefer the efficient morning/early-PV hours.
+- **CAVEAT — economics:** it's the CONDOMINIO (shared) system; self-consume-vs-export
+  value depends on the villa↔condominio billing arrangement (owner to confirm the
+  export tariff is low enough that banking coolth wins). Only the *post-battery-full*
+  afternoon export (~11 kWh/day now) is truly wasted; the battery already time-shifts
+  the rest to the overnight base load.
+- Entities: extend `switch.pv_bias` with a `vacation_surplus_precool` option (or a
+  separate `switch.pv_surplus_precool`), + HIGH_SOC / export threshold / FAR_MARGIN /
+  surplus target / production-window knobs; surface state on the PV diagnostic sensor.
+- Value note: for an empty house the comfort benefit is nil (mass re-warms overnight);
+  payoff = self-consuming the daily export + a warmer-structure head-start for #8
+  return pre-conditioning. Weigh before prioritizing.
+
 ## Known caveats (documented, not blocking)
 - **Comfort cap is on the CENTER:** COAST caps at `duty_comfort_max` and BANK at the
   floor, but band_step adds ±B/2, so the peak/trough is ~cap±0.75. Consistent with

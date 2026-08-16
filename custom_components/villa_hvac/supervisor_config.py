@@ -43,6 +43,7 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
     DEFAULT_P1_GUARD_THRESHOLD,
+    DEFAULT_RACK_TEMP_RELEASE,
     DEFAULT_RACK_TEMP_THRESHOLD,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_SEFF_ENABLED,
@@ -84,6 +85,7 @@ from .const import (
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_REGIME_ENABLED,
     OPT_P1_GUARD_THRESHOLD,
+    OPT_RACK_TEMP_RELEASE,
     OPT_RACK_TEMP_THRESHOLD,
     OPT_REGIME_MEDIUM_RATIO,
     OPT_REGIME_PEAK_RATIO,
@@ -150,6 +152,7 @@ class SupervisorConfig:
     # F2 model
     model_learning_enabled: bool
     rack_temp_threshold: float
+    rack_temp_release: float
     p1_guard_threshold: float
     # F4a solar
     solar_forecast_enabled: bool
@@ -231,7 +234,14 @@ class SupervisorConfig:
             ),
             model_learning_enabled=_b(options, OPT_MODEL_ENABLED, DEFAULT_MODEL_ENABLED),
             rack_temp_threshold=_f(
-                options, OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD, 24, 35
+                options, OPT_RACK_TEMP_THRESHOLD, DEFAULT_RACK_TEMP_THRESHOLD, 24, 45
+            ),
+            # Release point of the wide rack band (engage 35 -> cool to 28). The
+            # controller enforces release <= threshold - RACK_GUARD_RELEASE_DROP,
+            # so a misconfigured pair degrades to the old 1-degree band, never to
+            # an inverted one.
+            rack_temp_release=_f(
+                options, OPT_RACK_TEMP_RELEASE, DEFAULT_RACK_TEMP_RELEASE, 20, 40
             ),
             p1_guard_threshold=_f(
                 options, OPT_P1_GUARD_THRESHOLD, DEFAULT_P1_GUARD_THRESHOLD, 22, 32

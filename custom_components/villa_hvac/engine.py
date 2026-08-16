@@ -666,6 +666,7 @@ def build_house_state(
         model_learning_enabled=cfg.model_learning_enabled,
         rack_guard_enabled=rack_guard_enabled(hass, entry),
         rack_temp_threshold=cfg.rack_temp_threshold,
+        rack_temp_release=cfg.rack_temp_release,
         rack_guard_active=bool(getattr(rack_state, "active", False)),
         rack_guard_escalated=bool(getattr(rack_state, "escalated", False)),
         p1_guard_enabled=p1_guard_enabled(hass, entry),

@@ -132,7 +132,8 @@ class HouseState:
     band_slam: float | None = None     # #3 v2 setpoint slam A (°C)
     model_learning_enabled: bool = True  # F2 online estimator observer
     rack_guard_enabled: bool = True
-    rack_temp_threshold: float = 28.0
+    rack_temp_threshold: float = 28.0   # engage (live default 35 via options)
+    rack_temp_release: float = 27.0     # cool down to (live default 28 via options)
     rack_guard_active: bool = False
     rack_guard_escalated: bool = False
     p1_guard_enabled: bool = True       # P1 "both fans" secondary trigger

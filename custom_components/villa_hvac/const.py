@@ -183,6 +183,14 @@ FANCOILS: list[str] = [
 # The #10 enable switch is created only for zones with emitter == "fancoil"
 # (the validated building_protection -> fan 0 lever); radiant / split-AC zones
 # are excluded because that lever is not verified for them.
+
+# Per-zone override of TEMP_STALE_AFTER (ZONES key "stale_after") for zones whose
+# only probes are slow battery/cloud reporters. Rack: two Tuya probes at ~78-120
+# min each feed the averaging helper, so worst-case silence (both aligned) is
+# ~2 h — 3 h keeps the guard sighted through it while still expiring a truly
+# dead reading before it can hold the fan on stale data all day.
+RACK_TEMP_STALE_AFTER = timedelta(minutes=180)
+
 ZONES: dict[str, dict] = {
     "living_room": {
         "name": "Salotto",
@@ -290,7 +298,14 @@ ZONES: dict[str, dict] = {
         "name": "Locale Rack",
         "floor": "primo",
         "climate": None,  # no thermostat/EP -> no #10 switch; cooled by P1 rack fancoil
-        "temp_sensor": "sensor.rack_t_h_temperature",  # dedicated rack T/H probe
+        # Resilient template helper (2026-08-16): mean of the TWO Tuya T/H probes
+        # (sensor.rack_t_h_temperature + sensor.t_h_rack_new_temperature) — skips a
+        # non-reporting probe and holds the last value while both are silent. Both
+        # probes are battery Tuya-cloud (report every ~78-120 min, not tunable), so
+        # the zone gets a dedicated stale window (RACK_TEMP_STALE_AFTER): the global
+        # 30-min TEMP_STALE_AFTER blinded the guard most of every hour (seen 24-28/7).
+        "temp_sensor": "sensor.rack_temperatura_media",
+        "stale_after": RACK_TEMP_STALE_AFTER,
         "fancoils": ["fan.fancoil_locale_rack"],
         "ep_temp": None,
         "ep_occ": None,
@@ -514,8 +529,14 @@ DEFAULT_NIGHT_THRESHOLD = 26.0            # °C (was input_number.soglia_caldo_n
 DEFAULT_AUTO_WAKE_TIME = "08:00:00"
 
 # Rack hardware guard (shared Locale Rack / Pianerottolo P1 fancoil).
+# WIDE band by owner decision 2026-08-16: engage at 35, cool down to 28 — the
+# rack tolerates heat and a narrow band woke the PdC too often. Release point is
+# its own option (rack_temp_release); RACK_GUARD_RELEASE_DROP survives as the
+# MINIMUM engage/release gap (and as the P1 guard's unchanged fixed drop).
 OPT_RACK_TEMP_THRESHOLD = "rack_temp_threshold"
-DEFAULT_RACK_TEMP_THRESHOLD = 28.0
+DEFAULT_RACK_TEMP_THRESHOLD = 35.0
+OPT_RACK_TEMP_RELEASE = "rack_temp_release"
+DEFAULT_RACK_TEMP_RELEASE = 28.0
 RACK_GUARD_RELEASE_DROP = 1.0
 RACK_GUARD_EMERGENCY_RISE = 2.0
 RACK_GUARD_ENGAGE = timedelta(minutes=3)

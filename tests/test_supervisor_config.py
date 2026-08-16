@@ -19,6 +19,17 @@ def test_defaults_when_empty():
     assert cfg.duty_max_stint == timedelta(minutes=DEFAULT_DUTY_MAX_STINT)
     assert cfg.weather_entity == WEATHER_ENTITY_DEFAULT
     assert cfg.regime_enabled is False
+    # Rack guard wide band (2026-08-16): engage 35, cool down to 28.
+    assert cfg.rack_temp_threshold == 35.0
+    assert cfg.rack_temp_release == 28.0
+
+
+def test_rack_release_clamps():
+    cfg = SupervisorConfig.from_options(
+        {"rack_temp_threshold": 99, "rack_temp_release": 5}
+    )
+    assert cfg.rack_temp_threshold == 45.0  # clamped to the max
+    assert cfg.rack_temp_release == 20.0    # clamped to the min
 
 
 def test_clamps_out_of_range():

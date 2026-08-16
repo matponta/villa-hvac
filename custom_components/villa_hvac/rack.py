@@ -26,6 +26,7 @@ from .supervisor import (
     BLOCCO_RELEASE,
     _is_free_cooling,
     fan_lever,
+    preset_lever,
     switch_lever,
     temperature_lever,
 )
@@ -46,9 +47,19 @@ class RackGuardState:
 
 
 def rack_guard_step(
-    current: RackGuardState, temp: float | None, threshold: float, now: datetime
+    current: RackGuardState,
+    temp: float | None,
+    threshold: float,
+    now: datetime,
+    release_drop: float = RACK_GUARD_RELEASE_DROP,
 ) -> tuple[RackGuardState, str | None]:
-    """Pure engage/release/escalation hysteresis for the rack guard."""
+    """Pure engage/release/escalation hysteresis for the rack guard.
+
+    `release_drop` is the engage/release gap: engage above `threshold`, release
+    below `threshold - release_drop`. The rack guard passes its wide band
+    (35 -> 28 by owner decision 2026-08-16, threshold - rack_temp_release); the
+    P1 guard keeps the default 1-degree drop.
+    """
     if temp is None:
         return RackGuardState(), "release" if current.active else None
     if not current.active:
@@ -61,7 +72,7 @@ def rack_guard_step(
             return RackGuardState(above_since=since), None
         return RackGuardState(), None
 
-    if temp < threshold - RACK_GUARD_RELEASE_DROP:
+    if temp < threshold - release_drop:
         below = current.below_since or now
         if now - below >= RACK_GUARD_RELEASE:
             return RackGuardState(), "release"
@@ -120,12 +131,23 @@ class RackGuardController:
             except Exception:  # noqa: BLE001 - alerting must not break safety control
                 _LOGGER.exception("Rack guard: could not notify %s", target)
 
+    @staticmethod
+    def _release_drop(state) -> float:
+        """Engage/release gap: threshold - release option, never inverted (a
+        misconfigured pair degrades to the minimum 1-degree band)."""
+        return max(
+            RACK_GUARD_RELEASE_DROP,
+            state.rack_temp_threshold - state.rack_temp_release,
+        )
+
     def _maybe_alert(self, state, rack, *, eligible: bool) -> None:
         temp = rack.temp if rack is not None else None
         if temp is None:
             return
         threshold = state.rack_temp_threshold
-        recovered = temp < threshold - RACK_GUARD_RELEASE_DROP and not self.state.active
+        recovered = (
+            temp < threshold - self._release_drop(state) and not self.state.active
+        )
         if recovered:
             self._yield_hot_since = None
             self._alert_sent = False
@@ -167,10 +189,13 @@ class RackGuardController:
     def __call__(self, state) -> dict:
         rack = state.zones.get("rack")
         p1 = state.zones.get("stairs_p1")
+        # House mode is deliberately NOT a gate (owner decision 2026-08-16): the
+        # rack heats in Vacanza too, and hardware protection must engage in ANY
+        # mode. Vacanza's building_protection preset is handled below by lifting
+        # the P1 preset while the guard is active.
         eligible = bool(
             state.rack_guard_enabled
             and state.season == SEASON_SUMMER
-            and state.house_mode != HOUSE_MODE_VACATION
             and p1 is not None
             and p1.enabled
             and not p1.paused
@@ -184,7 +209,8 @@ class RackGuardController:
             return out
         was_active = self.state.active
         self.state, _ = rack_guard_step(
-            self.state, rack.temp, state.rack_temp_threshold, state.now
+            self.state, rack.temp, state.rack_temp_threshold, state.now,
+            release_drop=self._release_drop(state),
         )
         self._maybe_alert(state, rack, eligible=True)
         if not self.state.active:
@@ -199,11 +225,14 @@ class RackGuardController:
         if self._snapshot is None and base is not None:
             self._snapshot = round(base, 1)
         target = None
-        if base is not None and p1.temp is not None:
+        if p1.temp is not None:
             # Floor the target term at 20 FIRST, then cap at base — so the result
             # is always ≤ base (never warmer than the zone's own target) even when
-            # base itself is < 20 (cold house setpoint / negative offset).
-            target = round(min(base, max(20.0, p1.temp - 1.0)), 1)
+            # base itself is < 20 (cold house setpoint / negative offset). In
+            # Vacanza mode_offset is None -> base is None: use the bare nudge term
+            # (p1.temp - 1 opens the valve; no base to cap against).
+            term = max(20.0, p1.temp - 1.0)
+            target = round(min(base, term) if base is not None else term, 1)
         fan = (
             RACK_GUARD_EMERGENCY_FAN_PCT
             if self.state.escalated else RACK_GUARD_INITIAL_FAN_PCT
@@ -218,6 +247,14 @@ class RackGuardController:
             fan_lever(rack_fan): fan,
             BLOCCO_LEVER: BLOCCO_RELEASE,
         }
+        if state.house_mode == HOUSE_MODE_VACATION:
+            # Vacanza holds every thermostat in building_protection, which IGNORES
+            # the temperature setpoint (KNX frost/heat protection setpoints) — the
+            # nudge alone can't open the P1 valve. Lift the P1 preset to comfort
+            # while the guard is active; this controller is merged FIRST so it
+            # outranks house_mode_policy, and on release we simply stop opining —
+            # house_mode_policy re-asserts building_protection the same cycle.
+            out[preset_lever(p1_climate)] = "comfort"
         if target is not None:
             out[temperature_lever(p1_climate)] = target
         return out

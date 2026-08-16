@@ -155,16 +155,22 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return (val if (val is not None and math.isfinite(val)) else None), age
 
     def _zone_temperature(self, zone: dict) -> dict[str, Any]:
-        """Fuse a zone's temperature: clima_* primary, climate attr fallback."""
+        """Fuse a zone's temperature: clima_* primary, climate attr fallback.
+
+        A zone may carry a "stale_after" override (e.g. rack: two slow Tuya
+        battery probes behind an averaging helper) — otherwise the global
+        TEMP_STALE_AFTER applies.
+        """
         primary_val, primary_age = self._sensor_temp(zone.get("temp_sensor"))
         fallback_climate = zone.get("temp_fallback_climate") or zone.get("climate")
         fallback_val, fallback_age = self._climate_temp(fallback_climate)
+        stale_after = zone.get("stale_after") or TEMP_STALE_AFTER
         value, source = fuse_temperature(
             [
                 TempSource("sensor", primary_val, primary_age),
                 TempSource("climate", fallback_val, fallback_age),
             ],
-            TEMP_STALE_AFTER.total_seconds(),
+            stale_after.total_seconds(),
         )
         return {
             "value": round(value, 1) if value is not None else None,

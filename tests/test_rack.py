@@ -20,6 +20,7 @@ from custom_components.villa_hvac.supervisor import (
     HouseState,
     ZoneSnapshot,
     fan_lever,
+    preset_lever,
     switch_lever,
     temperature_lever,
 )
@@ -56,7 +57,40 @@ def test_rack_guard_escalates_after_no_response():
     assert action == "escalate" and state.escalated
 
 
-def _house(now=T0, *, rack_temp=28.5, p1_temp=27.0, enabled=True, paused=False):
+def test_rack_guard_step_wide_band_release_drop():
+    # Owner band 2026-08-16: engage above 35, keep cooling until below 28
+    # (release_drop = 7) — well inside the old 1-degree band it must NOT release.
+    state, action = rack_guard_step(RackGuardState(), 35.5, 35.0, T0, release_drop=7.0)
+    state, action = rack_guard_step(
+        state, 35.5, 35.0, T0 + RACK_GUARD_ENGAGE, release_drop=7.0
+    )
+    assert action == "engage" and state.active
+
+    # 30 °C is 5 below threshold — still ABOVE the 28 release point: stays active.
+    state, action = rack_guard_step(
+        state, 30.0, 35.0, T0 + timedelta(minutes=30), release_drop=7.0
+    )
+    state, action = rack_guard_step(
+        state, 30.0, 35.0, T0 + timedelta(minutes=30) + RACK_GUARD_RELEASE,
+        release_drop=7.0,
+    )
+    assert state.active and action is None
+
+    # Below 28 for the full release window -> release.
+    state, action = rack_guard_step(
+        state, 27.9, 35.0, T0 + timedelta(minutes=60), release_drop=7.0
+    )
+    state, action = rack_guard_step(
+        state, 27.9, 35.0, T0 + timedelta(minutes=60) + RACK_GUARD_RELEASE,
+        release_drop=7.0,
+    )
+    assert action == "release" and not state.active
+
+
+def _house(
+    now=T0, *, rack_temp=28.5, p1_temp=27.0, enabled=True, paused=False,
+    threshold=28.0, release=27.0, house_mode="Casa", mode_offset=0.0,
+):
     return HouseState(
         now=now,
         zones={
@@ -71,11 +105,12 @@ def _house(now=T0, *, rack_temp=28.5, p1_temp=27.0, enabled=True, paused=False):
             ),
         },
         rack_guard_enabled=True,
-        rack_temp_threshold=28.0,
+        rack_temp_threshold=threshold,
+        rack_temp_release=release,
         season="summer",
-        house_mode="Casa",
+        house_mode=house_mode,
         house_setpoint=24.0,
-        mode_offset=0.0,
+        mode_offset=mode_offset,
     )
 
 
@@ -122,6 +157,56 @@ def test_yielded_critical_rack_alerts_once_and_rearms_after_recovery():
     assert "sospesa" in c.alert_reason
     c(_house(T0 + timedelta(minutes=31), rack_temp=26.5, paused=True))
     assert not c._alert_sent
+
+
+def test_controller_engages_in_vacanza_and_lifts_p1_preset():
+    # Owner decision 2026-08-16: hardware protection engages in ANY house mode.
+    # In Vacanza mode_offset is None (building_protection has no setpoint) and BP
+    # ignores setpoints entirely -> the guard must lift the P1 preset to comfort
+    # and use the bare p1.temp - 1 nudge (no base to cap against).
+    kw = dict(
+        house_mode="Vacanza", mode_offset=None,
+        rack_temp=36.0, threshold=35.0, release=28.0,
+    )
+    c = RackGuardController()
+    c(_house(**kw))                                   # above_since
+    out = c(_house(T0 + RACK_GUARD_ENGAGE, **kw))     # engage
+    p1_climate = "climate.pianerottolo_p1_termostato_2"
+    assert out[switch_lever("switch.fancoil_locale_rack_manuale")] == "on"
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 67
+    assert out[preset_lever(p1_climate)] == "comfort"
+    assert out[temperature_lever(p1_climate)] == 26.0  # p1_temp 27 - 1, no base cap
+    assert out[BLOCCO_LEVER] == BLOCCO_RELEASE
+    # Cool-down below 28 for the release window -> hand-back (manuale OFF); the
+    # guard emits no preset opinion so house_mode re-asserts BP the same cycle.
+    c(_house(T0 + timedelta(minutes=10), rack_temp=27.5, **{
+        k: v for k, v in kw.items() if k != "rack_temp"
+    }))
+    out = c(_house(T0 + timedelta(minutes=10) + RACK_GUARD_RELEASE, rack_temp=27.5, **{
+        k: v for k, v in kw.items() if k != "rack_temp"
+    }))
+    assert out[switch_lever("switch.fancoil_locale_rack_manuale")] == "off"
+    assert preset_lever(p1_climate) not in out
+
+
+def test_controller_wide_band_engages_at_35_and_cools_to_28():
+    kw = dict(threshold=35.0, release=28.0)
+    c = RackGuardController()
+    assert c(_house(rack_temp=34.5, **kw)) == {}      # below engage: no opinion
+    c(_house(rack_temp=35.5, **kw))                    # above_since
+    out = c(_house(T0 + RACK_GUARD_ENGAGE, rack_temp=35.5, **kw))
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 67
+    # 30 °C — the old 1-degree band would have released here; the wide band keeps
+    # cooling toward 28.
+    out = c(_house(T0 + timedelta(minutes=8), rack_temp=30.0, **kw))
+    assert out[switch_lever("switch.fancoil_locale_rack_manuale")] == "on"
+    # Below 28 for the full release window -> hand-back.
+    c(_house(T0 + timedelta(minutes=12), rack_temp=27.5, **kw))
+    out = c(
+        _house(T0 + timedelta(minutes=12) + RACK_GUARD_RELEASE, rack_temp=27.5, **kw)
+    )
+    assert out[switch_lever("switch.fancoil_locale_rack_manuale")] == "off"
+    assert out[fan_lever("fan.fancoil_locale_rack")] == 67  # fan left alive
 
 
 # --- P1 "both fans" secondary trigger (P1GuardController) --------------------

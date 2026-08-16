@@ -1,5 +1,39 @@
 # Next session — kickstart prompts
 
+## v0.66.0 READY TO DEPLOY — rack guard rework (2026-08-16, Cowork session)
+
+Code committed locally, NOT yet pushed/deployed. Changes (owner-requested):
+
+- **Rack probe**: `ZONES["rack"]["temp_sensor"]` → `sensor.rack_temperatura_media`
+  (template helper already LIVE in HA: mean of the two Tuya probes
+  `rack_t_h_temperature` + `t_h_rack_new_temperature`, skips a silent probe,
+  holds last value when both are silent). Rack zone gets a dedicated
+  `stale_after` = 180 min (both probes report every ~78–120 min; the global
+  30-min freshness blinded the guard — root cause of the 24–28/7 blindness).
+- **Rack guard engages in ANY house mode** (Vacanza included): the
+  `house_mode != Vacanza` eligibility gate is removed from `RackGuardController`
+  only (P1 guard unchanged). While active in Vacanza the guard lifts the P1
+  preset to `comfort` (BP ignores setpoints) and nudges `p1.temp − 1` with no
+  base cap (`mode_offset` is None in Vacanza); on release house_mode_policy
+  re-asserts building_protection the same merge cycle.
+- **Wide band**: engage 35 °C (option `rack_temp_threshold`, default now 35,
+  clamp 24–45), cool down to 28 °C (NEW option `rack_temp_release`, default 28,
+  clamp 20–40). `rack_guard_step` gained a `release_drop` param (default 1.0 —
+  P1 guard behavior unchanged); controller enforces drop ≥ 1 °C.
+- Feature-graph rack inert reason now distinguishes "rack temperature
+  unknown/stale" from "below activation threshold" (the 12/8 misleading string).
+- Options flow + translations (en/it/strings) updated; manifest 0.66.0.
+- Dashboard cool-clima-v2 already repointed LIVE to `sensor.rack_temperatura_media`
+  (5 refs, was `sensor.locale_rack_temperature`).
+
+DEPLOY STEPS (owner): push to GitHub → HACS update → restart HA. Nothing else:
+`rack_temp_threshold` was already set to 35 in the live entry options
+(2026-08-16, via options flow — interim behavior on v0.65 = engage 35 /
+release 34); `rack_temp_release` is not set and correctly falls back to the
+new default 28 once v0.66 loads.
+Verified here: test_rack (12) + test_supervisor_config (7) + test_feature_graph
+(9) pass; full HA-plugin suite to be run in the dev venv before release.
+
 ## v0.64.0 INSTALLED — HA rebooting (owner report, 2026-07-15)
 
 Release `v0.64.0` / commit `6069baf` is published and installed through HACS. The
@@ -212,7 +246,12 @@ and successful live soak. F4c stays OFF and code-frozen for a later dedicated se
 3. Dedicated F4c compatibility + shadow session (offsets, steady-airflow simulation,
    forecast/model gates); do not enable it before then.
 4. Outside-air merge design (free-cooling × windows × VMC) — after live data.
-5. S_eff flag-on validation (live-ops, owner-paced) · #8 return-precond live pass ·
+5. SURPLUS PRE-COOL FROM DEEP SETBACK / ON VACATION (owner-flagged 2026-07-24): don't
+   waste PV via grid re-injection when a zone is far from comfort — spend real surplus
+   to pre-cool even in Vacanza. Live evidence + design sketch appended to
+   `STORY_PV_BIAS.md` ("BACKLOG ENHANCEMENT — surplus pre-cool from deep setback").
+   Distinct from pv_bias, which is INERT under BP (can't create demand).
+6. S_eff flag-on validation (live-ops, owner-paced) · #8 return-precond live pass ·
    split-trio owner decisions · winter items (seasonal).
 
 Durable sources of truth: `CLAUDE.md` (verified facts) · `MASTER_PLAN.md` (build
