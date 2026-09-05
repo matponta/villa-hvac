@@ -567,7 +567,7 @@ hours ≥150 S_eff — but `s_hi` recovery is gate (b) of the live validation as
 
 `shading_policy` keeps triggering on house-level `state.solar` + `SHADING_AZIMUTH_BANDS` +
 `proportional_shade_position` (policies.py:309–322), including the v0.41.0 never-raise
-min(current,target), Via/Vacanza full-close, and the south band (135,270). S_eff is a model
+min(current,target), Vacanza full-close (Via = normal shading since v0.69.0), and the south band (135,270). S_eff is a model
 INPUT transform only.
 
 ---

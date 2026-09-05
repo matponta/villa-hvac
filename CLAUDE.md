@@ -467,6 +467,13 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        `cover.tapparella` → drop, don't crash). A zone may own multiple covers w/
        different orientations (main_bedroom: Grande Camera west + Piccola Camera
        south). Verified 2026-06-27: the 6 cooled-room covers are labeled south/west.
+       AWAY vs VACATION (v0.69.0, 2026-09-05): **Vacanza** = full close (every
+       unblocked shadeable cover → 0, unknown position included — 0 can never
+       raise). **Via is NOT a full close**: it gets the ordinary Casa rule (band +
+       irradiance + never-raise). Reason: Via is the short-absence mode; v0.41's
+       Via full-close slammed 11 covers the instant Via was selected and, after
+       each 'Apri Casa', re-closed them exactly 2 h later (arbiter
+       `DEFAULT_OVERRIDE_BACKOFF`) — fought the owner live 5/9 08:16–10:18.
 9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
        consenso mechanism TBD (behind a flag, verify in heating season)
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",

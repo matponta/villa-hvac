@@ -289,31 +289,55 @@ def test_shading_skips_unknown_position():
     assert shading_policy(_state([], covers=[unknown], **_SHADE)) == {}
 
 
-def test_shading_away_closes_everything():
-    """Via/Vacanza = empty house: every unblocked shadeable cover is driven to
-    0 (full close), regardless of azimuth band, brightness, or sun elevation."""
+def test_shading_vacation_closes_everything():
+    """Vacanza = empty house for days: every unblocked shadeable cover is driven
+    to 0 (full close), regardless of azimuth band, brightness, or sun elevation."""
     blocked = CoverInfo(
         entity_id="cover.b", orientation="south", blocked=True, current_position=100
     )
     # unknown position: the never-raise skip does NOT apply here — commanding 0
     # can never raise, and a vacation must not leave an unreadable cover open.
     unknown = CoverInfo(entity_id="cover.u", orientation="west")
-    for away_mode in ("Via", "Vacanza"):
-        out = shading_policy(_state(
-            [], covers=[_SOUTH, _WEST, blocked, unknown], mode=away_mode,
-            **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
-        ))
-        assert out == {
-            cover_lever("cover.s"): 0,
-            cover_lever("cover.w"): 0,
-            cover_lever("cover.u"): 0,
-        }, away_mode
+    out = shading_policy(_state(
+        [], covers=[_SOUTH, _WEST, blocked, unknown], mode="Vacanza",
+        **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
+    ))
+    assert out == {
+        cover_lever("cover.s"): 0,
+        cover_lever("cover.w"): 0,
+        cover_lever("cover.u"): 0,
+    }
     # at home the same low-sun conditions release (no opinion)
     out = shading_policy(_state(
         [], covers=[_SOUTH], mode="Casa",
         **{**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0},
     ))
     assert out == {}
+
+
+def test_shading_away_is_normal_shading_not_full_close():
+    """THE 5/9 08:16 regression: selecting Via slammed all 11 covers to 0 the
+    instant it was chosen (and re-closed them 2 h after each 'Apri Casa').
+    Via = short absence → the ordinary sun-facing rule applies, byte-identical
+    to Casa: band + irradiance + never-raise; low sun / dark → release."""
+    low_sun = {**_SHADE, "azimuth": 10.0, "solar": 50.0, "elevation": 2.0}
+    unknown = CoverInfo(entity_id="cover.u", orientation="west")
+    # dark / sun below the horizon: no opinion (NOT a full close)
+    assert shading_policy(_state(
+        [], covers=[_SOUTH, _WEST, unknown], mode="Via", **low_sun,
+    )) == {}
+    # bright sun on the south facade: only that facade, to its target — the
+    # west cover and the unknown-position cover are left alone, as in Casa
+    for mode in ("Via", "Casa"):
+        out = shading_policy(_state(
+            [], covers=[_SOUTH, _WEST, unknown], mode=mode, **_SHADE,
+        ))
+        assert out == {cover_lever("cover.s"): 50}, mode
+    # never-raise still holds in Via
+    closed = CoverInfo(entity_id="cover.s", orientation="south", current_position=0)
+    assert shading_policy(_state([], covers=[closed], mode="Via", **_SHADE)) == {
+        cover_lever("cover.s"): 0
+    }
 
 
 def test_shading_noop_low_sun_low_solar_winter_or_disabled():

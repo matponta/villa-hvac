@@ -307,14 +307,21 @@ def shading_policy(state: HouseState) -> Desired:
     policy OPENED closed covers to its shallower target, solar-loading studio_v
     to 27.6): shading may only DEEPEN — the command is min(current, target), and
     a cover whose position is unknown this cycle is skipped (a raise cannot be
-    ruled out). In Via/Vacanza the empty house closes fully: every unblocked
+    ruled out). In Vacanza the empty house closes fully: every unblocked
     shadeable cover is driven to 0, regardless of sun angle or brightness.
+
+    Via is NOT a full-close (2026-09-05): Via is the short-absence mode (errands,
+    an afternoon out, airing the house) and slamming 11 covers the instant it is
+    selected — then re-closing them 2 h after the owner reopens (override backoff)
+    — fought the owner live on 5/9 08:16–10:18. In Via the normal sun-facing
+    shading applies (band + irradiance + never-raise), exactly as in Casa.
     """
     if not state.shading_enabled or state.season != SEASON_SUMMER:
         return {}
-    if state.house_mode in (HOUSE_MODE_AWAY, HOUSE_MODE_VACATION):
-        # Empty house: no sun on the glass, nobody needing the light/view.
-        # 0 can never raise, so the unknown-position skip doesn't apply.
+    if state.house_mode == HOUSE_MODE_VACATION:
+        # Empty house for days: no sun on the glass, nobody needing the
+        # light/view. 0 can never raise, so the unknown-position skip doesn't
+        # apply. (Via deliberately falls through to normal shading — see above.)
         return {
             cover_lever(c.entity_id): 0 for c in state.covers if not c.blocked
         }

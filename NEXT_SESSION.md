@@ -1,5 +1,25 @@
 # Next session — kickstart prompts
 
+## v0.69.0 — Via no longer full-closes the covers (2026-09-05) — TO DEPLOY
+
+Live 5/9 08:15:59: `select.house_mode` → Via and within 0.7 s all 11 shadeable
+covers went `closing` (grande/piccola camera, studio_v, grande studio, Somfy
+tende…). The owner reopened with "Apri Casa" at 08:16:49 and 08:17:49; the
+arbiter conceded a manual override and re-closed them at 10:17:53 — exactly
+`DEFAULT_OVERRIDE_BACKOFF` (2 h) later. No HA automation was involved: it was
+`shading_policy`'s v0.41.0 (081dafd, 2026-07-04) "Via/Vacanza full-close".
+
+Decision (owner): full-close only in **Vacanza**; **Via** = ordinary shading
+(band + irradiance + never-raise), identical to Casa. Via is the short-absence
+mode (errands, airing the house) — slamming the house shut on selection fought
+the owner. Change: `policies.py` `shading_policy` (`house_mode == VACATION`
+branch only); tests `test_shading_vacation_closes_everything` (renamed) +
+`test_shading_away_is_normal_shading_not_full_close` (new).
+
+Deploy: HACS update to v0.69.0 + restart. Verify: select Via on a bright
+afternoon → only the sun-facing covers move, to their per-room target; at dusk
+nothing closes. Vacanza still closes everything.
+
 ## v0.68.0 DEPLOYED — orphaned guard `manuale` reaped at boot (2026-08-16)
 
 Found while verifying the v0.67.0 deploy. After the restart both guards were
