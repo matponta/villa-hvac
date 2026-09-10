@@ -7,6 +7,11 @@ the boost switch ONLY when its own decision flips, and never re-asserts — so a
 manual boost (the owner's kitchen switch) is respected, not fought. This is why it
 lives OUTSIDE the reconcile arbiter (which is idempotent-reassert by design).
 
+Two guards on top of the thermal decision (v0.70.0, owner rule 2026-09-10):
+a DURATION CAP (max continuous run, then an owed cooldown) and a MIN ON-TIME
+(anti-flap). Both live in the pure `vmc_boost_step`; the night-quiet veto and
+disable/unload always win over the min on-time.
+
 Opt-in (`switch.vmc_auto`) on top of the master supervisor switch; fully
 deploy-dark until both are on. Releases (hands the boost back) when disabled or on
 unload.
@@ -19,6 +24,7 @@ import math
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_NOT_HOME, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.util import dt as dt_util
 
 from .away import aggregate_presence
 from .const import (
@@ -27,13 +33,17 @@ from .const import (
     OUTDOOR_TEMP_FALLBACK,
     PRESENCE_PERSONS,
     SEASON_SUMMER,
+    VMC_BOOST_COOLDOWN,
     VMC_BOOST_HYSTERESIS,
     VMC_BOOST_MARGIN,
+    VMC_BOOST_MAX_ON,
+    VMC_BOOST_MIN_ON,
+    VMC_BOOST_OUTDOOR_HYSTERESIS,
     VMC_BOOST_OUTDOOR_MAX,
     VMC_GROUPS,
 )
 from .controller import current_house_mode, current_season, vmc_boost_enabled
-from .supervisor import vmc_boost_decision
+from .supervisor import VmcBoostState, vmc_boost_decision, vmc_boost_step
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -46,6 +56,12 @@ class VmcController:
         self.entry = entry
         self._unsub = None
         self._commanded: dict[str, bool] = {}  # group -> the last state WE wrote
+        self._state: dict[str, VmcBoostState] = {}  # group -> duration bookkeeping
+
+    @property
+    def status(self) -> dict[str, VmcBoostState]:
+        """Live duration bookkeeping per group (read-only, for diagnostics)."""
+        return dict(self._state)
 
     def start(self) -> None:
         coordinator = self.entry.runtime_data
@@ -111,10 +127,11 @@ class VmcController:
         # occupied; an empty house lets it flush at night (owner rule 2026-07-10).
         night = current_house_mode(self.hass, self.entry) == HOUSE_MODE_NIGHT
         occupied = self._occupied()
+        now = dt_util.utcnow()
         for group, cfg in VMC_GROUPS.items():
             on_now = self._commanded.get(group, False)
             quiet = bool(cfg.get("night_quiet")) and night and occupied
-            decision = vmc_boost_decision(
+            want = vmc_boost_decision(
                 is_summer=is_summer,
                 outdoor=outdoor,
                 indoor=self._indoor(cfg["zones"]),
@@ -123,7 +140,28 @@ class VmcController:
                 margin=VMC_BOOST_MARGIN,
                 hysteresis=VMC_BOOST_HYSTERESIS,
                 quiet=quiet,
+                outdoor_hysteresis=VMC_BOOST_OUTDOOR_HYSTERESIS,
             )
+            was = self._state.get(group, VmcBoostState())
+            state, decision = vmc_boost_step(
+                want=want,
+                veto=quiet,  # bypasses min-on: never run a loud fan over sleepers
+                on_now=on_now,
+                now=now,
+                state=was,
+                max_on=VMC_BOOST_MAX_ON,
+                cooldown=VMC_BOOST_COOLDOWN,
+                min_on=VMC_BOOST_MIN_ON,
+            )
+            self._state[group] = state
+            if state.cooldown_until != was.cooldown_until:
+                if state.cooldown_until is not None:
+                    _LOGGER.info(
+                        "VMC %s: %s cap reached, resting until %s",
+                        group, VMC_BOOST_MAX_ON, state.cooldown_until.isoformat(),
+                    )
+                else:
+                    _LOGGER.info("VMC %s: cooldown served, boost re-armed", group)
             if decision != on_now:  # edge only — never re-assert
                 await self._write(group, cfg["boost_switch"], decision)
 
@@ -143,3 +181,4 @@ class VmcController:
             if self._commanded.get(group):
                 await self._write(group, cfg["boost_switch"], False)
         self._commanded.clear()
+        self._state.clear()  # not managing -> no cap/cooldown to remember

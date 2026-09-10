@@ -162,6 +162,17 @@ do local bang-bang regulation.
   (v0.52.0):** a `night_quiet` unit (VMC 2, serves the master suite) is hard-vetoed
   during Notte WHILE the house is occupied (reuses #7 `aggregate_presence`); an empty
   house flushes freely at night; VMC 1 (ground floor) is never gated.
+  **Duration guards (v0.70.0)** — measured on the living unit 3-10/9: 21% duty, 19
+  starts, single automatic stints of 6-11 h, plus 1-16 min cycles on a 23.9/24.2
+  outdoor wobble. Two fixes: (a) `VMC_BOOST_OUTDOOR_HYSTERESIS` (0.5) raises the
+  keep-on cap so the outdoor threshold is no longer a hard edge (start still needs
+  outdoor < cap); (b) pure `vmc_boost_step` + `VmcBoostState` per unit =
+  `VMC_BOOST_MAX_ON` (4 h) continuous cap → owed `VMC_BOOST_COOLDOWN` (1 h) rest →
+  re-arm, and `VMC_BOOST_MIN_ON` (15 min) anti-flap hold. The night-quiet veto and
+  disable/unload bypass MIN_ON (never a loud fan over sleepers) but do NOT clear an
+  owed rest. `on_now` is what WE commanded, so a manual boost is neither timed nor
+  cut short. State is in-memory like the #9 duty stint → a restart/reload re-arms
+  the cap; the 03:00 backup blip is enough to do that. Cap fire/re-arm log at INFO.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool), bounded by a first-class

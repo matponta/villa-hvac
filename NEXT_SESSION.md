@@ -1,6 +1,44 @@
 # Next session — kickstart prompts
 
-## v0.69.0 — Via no longer full-closes the covers (2026-09-05) — TO DEPLOY
+## v0.70.0 — VMC boost: outdoor-cap hysteresis + duration cap (2026-09-10) — TO DEPLOY
+
+Owner question: "why is the VMC boost on so often, who turns it on?" Answer:
+`switch.vmc_auto` (#5), not any HA automation — proved three ways on 10/9.
+(1) 14:09:49 outdoor 23.9→24.2 crossed `VMC_BOOST_OUTDOOR_MAX` → boost OFF at
+14:09:57, one 30 s tick later. (2) 07:30:32 `select.house_mode` Notte→Casa lifted
+the night-quiet veto → ON at 07:30:45. (3) 07:57:57 an integration reload's
+`async_release` wrote OFF and the next tick (07:58:27, +30 s exactly) wrote ON.
+Everything else was ruled out: `automation.vmc_bagno_padronale` is DEAD (triggers
+on `sensor.statistical_characteristic`, which no longer exists; last_triggered
+2026-03-03), `script.30_min_vmc` never ran, `timer.vmc_boost_bagno` idle since
+4/9 (BILRESA unused), and `automation.bagno_padronale_bilresa_vmc_boost_tapparella`
+only REACTS to the switch going off (trigger id `spento_a_mano`) — its
+last_triggered lands 0.2 ms AFTER the state change. Manual events do exist and
+are distinguishable: villa_hvac writes carry `context.user_id = null`, and the
+18:33:19 OFF on 10/9 had a real user_id.
+
+Measured 3-10/9 on `switch.vmc_boost`: 38 h ON of 178 h = **21% duty**, 19 starts,
+stints of 11 h (3-4/9 22:31→09:34), 8.6 h (8/9) and 6.2 h (10/9), plus 1-16 min
+cycles on 8-9/9 when outdoor oscillated around the hard 24.0 cap.
+
+Change (both in `const.py` + pure `supervisor/control_law.py`, wired in `vmc.py`):
+`VMC_BOOST_OUTDOOR_HYSTERESIS` 0.5 (start < 24.0, stop ≥ 24.5) and
+`vmc_boost_step`/`VmcBoostState` with `VMC_BOOST_MAX_ON` 4 h → `VMC_BOOST_COOLDOWN`
+1 h → re-arm, plus `VMC_BOOST_MIN_ON` 15 min. Quiet veto + disable/unload still
+win over MIN_ON; an owed cooldown survives a veto; a manual boost is untouched.
+Tests: 14 new (11 pure + cap/cooldown/min-on + one freeze_time end-to-end).
+
+Deploy: HACS update to v0.70.0 + restart. Verify: next cool night the boost runs
+≤ 4 h then rests 1 h (INFO log "cap reached, resting until …"), and no more
+sub-quarter-hour cycles around 24 °C. NOT addressed yet (owner backlog): the
+`indoor` term is `max()` over the served zones, so the kitchen at 25-26 can still
+authorise a boost that pushes 23-24 °C air into cooler bedrooms while the fancoils
+cool — the daytime 07:58→14:09 stint of 10/9 was exactly that. Also still open:
+VMC 2's native integration (10.5.152.105) is unavailable since 4/9, so the KNX
+boost switch is driven with no airflow feedback.
+
+## v0.69.0 — Via no longer full-closes the covers (2026-09-05) — DEPLOYED
+(live check 10/9: `update.villa_hvac_update` installed_version = v0.69.0)
 
 Live 5/9 08:15:59: `select.house_mode` → Via and within 0.7 s all 11 shadeable
 covers went `closing` (grande/piccola camera, studio_v, grande studio, Somfy

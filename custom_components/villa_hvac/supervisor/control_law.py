@@ -593,21 +593,78 @@ def vmc_boost_decision(
     margin: float,
     hysteresis: float,
     quiet: bool = False,
+    outdoor_hysteresis: float = 0.0,
 ) -> bool:
-    """Should this VMC group boost right now?
+    """Should this VMC group boost right now? (thermal want, duration-blind)
 
     Summer only; the outside air must be below `outdoor_max` (cool enough to be
     worth pulling in) AND at least `margin` °C cooler than the warmest served room
-    (`indoor`). While already boosting the required gap shrinks by `hysteresis` so
-    it doesn't flap around the threshold. Unknown outdoor/indoor -> False (can't
-    tell, don't run the fan blindly). `quiet` (a bedroom-serving unit at night
-    while the house is occupied) hard-vetoes the boost regardless of temps.
+    (`indoor`). While already boosting BOTH thresholds relax — the required gap
+    shrinks by `hysteresis` and the cap rises by `outdoor_hysteresis` — so it
+    doesn't flap around either threshold (the cap was a hard edge until
+    2026-09-10, which produced 1-16 min cycles on a 23.9/24.2 outdoor wobble).
+    Unknown outdoor/indoor -> False (can't tell, don't run the fan blindly).
+    `quiet` (a bedroom-serving unit at night while the house is occupied)
+    hard-vetoes the boost regardless of temps. Duration limits are NOT here:
+    they need cross-cycle state, see `vmc_boost_step`.
     """
     if quiet:
         return False
     if not is_summer or outdoor is None or indoor is None:
         return False
-    if outdoor >= outdoor_max:
+    if outdoor >= outdoor_max + (outdoor_hysteresis if on_now else 0.0):
         return False
     need = margin - hysteresis if on_now else margin
     return outdoor <= indoor - need
+
+
+@dataclass(frozen=True)
+class VmcBoostState:
+    """Duration bookkeeping for ONE ventilation unit, across cycles."""
+
+    on_since: datetime | None = None        # when WE started the current boost
+    cooldown_until: datetime | None = None  # forced rest after a capped stint
+
+
+def vmc_boost_step(
+    *,
+    want: bool,
+    veto: bool,
+    on_now: bool,
+    now: datetime,
+    state: VmcBoostState,
+    max_on: timedelta,
+    cooldown: timedelta,
+    min_on: timedelta,
+) -> tuple[VmcBoostState, bool]:
+    """Gate the thermal `want` with a duration cap + a minimum on-time.
+
+    Returns (new_state, boost). Rules, in priority order:
+    - `veto` (a loud unit over sleepers) wins over EVERYTHING including `min_on`:
+      stop now, but remember an owed rest so a veto can't launder a capped stint.
+    - In a cooldown: stay off until it elapses, then re-arm.
+    - Boosting: once `max_on` continuous minutes have passed, stop and owe a
+      `cooldown` rest (this is the cap the 6-11 h stints needed).
+    - Boosting for less than `min_on`: hold on even if `want` dropped — the
+      anti-flap guard for a marginal thermal condition.
+    - Off: start as soon as `want`.
+
+    `on_now` is what the CONTROLLER commanded, not the switch's live state, so a
+    manual boost the owner turned on is neither timed nor cut short here.
+    """
+    if veto:
+        return VmcBoostState(cooldown_until=state.cooldown_until), False
+    if state.cooldown_until is not None:
+        if now < state.cooldown_until:
+            return VmcBoostState(cooldown_until=state.cooldown_until), False
+        state = VmcBoostState()  # rest served -> re-arm
+    if not on_now:
+        if want:
+            return VmcBoostState(on_since=now), True
+        return VmcBoostState(), False
+    started = state.on_since or now
+    if now - started >= max_on:
+        return VmcBoostState(cooldown_until=now + cooldown), False
+    if not want and now - started >= min_on:
+        return VmcBoostState(), False
+    return VmcBoostState(on_since=started), True

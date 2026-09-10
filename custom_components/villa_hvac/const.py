@@ -673,6 +673,22 @@ VMC_GROUPS: dict[str, dict] = {
 VMC_BOOST_OUTDOOR_MAX = 24.0   # °C: above this the outside air isn't cool enough
 VMC_BOOST_MARGIN = 2.0         # °C: outside must be >= this much cooler than inside
 VMC_BOOST_HYSTERESIS = 0.5     # °C: widen the keep-on band to stop flapping
+# The outdoor cap used to be a HARD threshold while only the indoor margin had
+# hysteresis, so an outdoor reading oscillating around 24.0 (typical in
+# September) flapped the boost in minutes — measured 2026-09-08/09 on the living
+# unit: 1, 10, 16 and 31 min cycles. The keep-on cap is raised by this much,
+# mirroring what HYSTERESIS already does for the margin.
+VMC_BOOST_OUTDOOR_HYSTERESIS = 0.5  # °C: keep boosting until outdoor >= cap + this
+# Duration cap (owner rule 2026-09-10). The free night-flush is worth a few
+# hours, not a whole night: measured 21% duty over 3-10/9 with single automatic
+# stints of 6-11 h (03-04/9 22:31→09:34 = 11 h). After MAX_ON continuous minutes
+# WE commanded, stop and owe a COOLDOWN rest before the boost can re-arm. MIN_ON
+# holds a fresh boost on so a marginal thermal condition can't cycle the machine.
+# The night-quiet veto and disable/unload ALWAYS win over MIN_ON. State is
+# in-memory (like the #9 duty stint): a restart/reload re-arms the cap.
+VMC_BOOST_MAX_ON = timedelta(hours=4)
+VMC_BOOST_COOLDOWN = timedelta(hours=1)
+VMC_BOOST_MIN_ON = timedelta(minutes=15)
 
 # --- #6 Solar shading --------------------------------------------------------
 # Summer: close a sun-facing shutter when the sun is on its facade and it's
