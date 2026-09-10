@@ -1,6 +1,8 @@
 # Next session — kickstart prompts
 
-## v0.70.0 — VMC boost: outdoor-cap hysteresis + duration cap (2026-09-10) — TO DEPLOY
+## v0.70.0 — VMC boost: outdoor-cap hysteresis + duration cap (2026-09-10) — DEPLOYED
+(HACS v0.70.0 + restart 10/9 19:31; loaded clean, `update.villa_hvac_update` installed_version
+= v0.70.0, BLOCCO off, hvac_levers 0, no villa_hvac errors in the log.)
 
 Owner question: "why is the VMC boost on so often, who turns it on?" Answer:
 `switch.vmc_auto` (#5), not any HA automation — proved three ways on 10/9.
