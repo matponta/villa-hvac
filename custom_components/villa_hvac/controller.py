@@ -360,6 +360,11 @@ def windows_free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "windows_free_cool") == STATE_ON
 
 
+def winter_sun_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.78.0 winter solar gain switch — default ON (only OFF disables)."""
+    return _switch_state(hass, entry, "winter_sun") != STATE_OFF
+
+
 def is_zone_disabled(hass: HomeAssistant, entry: ConfigEntry, zone_id: str) -> bool:
     """True if the zone's #10 enable switch is off."""
     return _switch_state(hass, entry, f"{zone_id}_enabled") == STATE_OFF

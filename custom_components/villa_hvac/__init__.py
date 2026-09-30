@@ -16,6 +16,7 @@ from .policies import POLICIES, CoolingController, SplitGroupController
 from .rack import P1GuardController, RackGuardController
 from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
+from .sungain import WinterSunController
 from .vmc import VmcController
 from .window import WindowController
 
@@ -106,6 +107,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     coordinator.vmc = vmc
     vmc.start()
     entry.async_on_unload(vmc.async_stop)
+
+    # v0.78.0 winter solar gain: edge-triggered cover opener off the same tick
+    # (default ON switch.winter_sun + master; winter + Via/Vacanza only).
+    winter_sun = WinterSunController(hass, entry)
+    coordinator.winter_sun = winter_sun
+    await winter_sun.async_start()
+    entry.async_on_unload(winter_sun.async_stop)
 
     # Safety hooks that config-entry *unload* does not cover:
     #  - HA shutdown/reboot fires EVENT_HOMEASSISTANT_STOP but does NOT run the

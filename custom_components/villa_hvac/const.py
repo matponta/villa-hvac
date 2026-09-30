@@ -773,6 +773,12 @@ SHADING_PROP_TEMP_WEIGHT = 0.35   # how much a hot day can deepen the shade
 SHADE_POSITION_MIN = 0
 SHADE_POSITION_MAX = 100
 SHADE_POSITION_STEP = 5
+# v0.78.0 winter solar gain (switch.winter_sun, default ON): in winter, with the
+# house empty (Via/Vacanza), open the covers on the sunny facade once per day;
+# at sunset put back only the ones we opened.
+OPT_WINTER_SUN_SOLAR = "winter_sun_solar"
+DEFAULT_WINTER_SUN_SOLAR = 150.0     # W/m² (gw3000a) — "there is real sun"
+WINTER_SUN_TAKEOVER_GRACE_MIN = 5    # min after our open before a move = owner
 SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't land exact)
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")

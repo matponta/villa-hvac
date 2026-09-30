@@ -62,7 +62,8 @@
           "pv_daily_need_kwh": "PV bias · estimated daily consumption (kWh)",
           "mass_via_offset": "Mass maintenance · summer Via offset cap (°C)",
           "shed_max_callers": "Demand shedding · max rooms holding the PdC on",
-          "winter_eco_offset": "Winter · room Economy offset (°C)"
+          "winter_eco_offset": "Winter · room Economy offset (°C)",
+          "winter_sun_solar": "Winter sun · irradiance threshold (W/m²)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
@@ -111,7 +112,8 @@
           "pv_daily_need_kwh": "Rough estimate of the Condominio's daily electricity use, to judge whether forecast solar covers the day (solar-rich vs solar-poor). Tunable.",
           "mass_via_offset": "With switch.mass_maintenance on: in summer Via, cap the setback at this below the peak outdoor temperature (bank coolth; the full Via offset applies at the peak).",
           "shed_max_callers": "With switch.demand_shedding on: when the compressor runs only for this many rooms already within comfort, lift their setpoint so the PdC can rest.",
-          "winter_eco_offset": "How much cooler a room with its Economy switch on runs in winter (e.g. -3)."
+          "winter_eco_offset": "How much cooler a room with its Economy switch on runs in winter (e.g. -3).",
+          "winter_sun_solar": "With switch.winter_sun on: in winter, while Via/Vacanza, open the covers on the sunny facade when irradiance is at least this."
         }
       }
     }

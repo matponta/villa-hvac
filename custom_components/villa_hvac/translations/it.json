@@ -62,7 +62,8 @@
           "pv_daily_need_kwh": "Bias PV · consumo giornaliero stimato (kWh)",
           "mass_via_offset": "Mantenimento massa · limite offset Via estate (°C)",
           "shed_max_callers": "Riposo PdC · stanze max che tengono acceso il PdC",
-          "winter_eco_offset": "Inverno · offset Economy stanza (°C)"
+          "winter_eco_offset": "Inverno · offset Economy stanza (°C)",
+          "winter_sun_solar": "Sole invernale · soglia irraggiamento (W/m²)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
@@ -111,7 +112,8 @@
           "pv_daily_need_kwh": "Stima approssimativa del consumo elettrico giornaliero del Condominio, per capire se il sole previsto copre la giornata (sole abbondante vs scarso). Regolabile.",
           "mass_via_offset": "Con switch.mass_maintenance attivo: in Via d'estate limita il setback a questo valore sotto la soglia di picco esterna (accumula fresco; al picco vale l'offset Via pieno).",
           "shed_max_callers": "Con switch.demand_shedding attivo: quando il compressore gira solo per queste stanze già entro il comfort, alza il loro setpoint per far riposare il PdC.",
-          "winter_eco_offset": "Di quanto scende d'inverno una stanza con l'interruttore Economy acceso (es. -3)."
+          "winter_eco_offset": "Di quanto scende d'inverno una stanza con l'interruttore Economy acceso (es. -3).",
+          "winter_sun_solar": "Con switch.winter_sun attivo: d'inverno, in Via/Vacanza, apre le tapparelle della facciata al sole quando l'irraggiamento è almeno questo."
         }
       }
     }

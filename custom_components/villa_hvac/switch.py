@@ -61,6 +61,7 @@ async def async_setup_entry(
         # v0.74.0 mass-aware summer control (restored, default OFF).
         GovernorOptInSwitch(entry, "mass_maintenance", "Mass maintenance"),
         GovernorOptInSwitch(entry, "demand_shedding", "Demand shedding"),
+        WinterSunSwitch(entry),
     ]
     entities += [
         NightSilenceSwitch(entry, zone_id, entity_id)
@@ -810,3 +811,35 @@ class ZoneEconomySwitch(SwitchEntity, RestoreEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._set(False)
+
+
+class WinterSunSwitch(SwitchEntity, RestoreEntity):
+    """v0.78.0 winter solar gain (default ON, restored).
+
+    In winter, while the house is in Via or Vacanza, the covers on the facade
+    the sun is on are opened once per day (irradiance over the option
+    threshold); at sunset only the covers it opened go back to where they were.
+    A cover moved by hand is left alone. Rooms with their shade-block switch on
+    are skipped. Inert in summer."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Winter sun"
+    _attr_icon = "mdi:weather-sunny"
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_winter_sun"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
