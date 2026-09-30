@@ -51,7 +51,10 @@ def runtime_step(
         delta = now_s - last_ts_s
         if 0 < delta <= 3 * poll_s:
             runtime_s += delta
-    if consenso == "on" and last_consenso not in ("on", None):
+    # Only a KNOWN off->on is a start: unavailable/unknown->on is a restart or
+    # a KNX reconnect mid-block, not a compressor start (v0.75.2 — the count is
+    # now a restored TOTAL_INCREASING KPI, so phantom starts would accumulate).
+    if consenso == "on" and last_consenso == "off":
         cycles += 1
     return runtime_s, cycles
 

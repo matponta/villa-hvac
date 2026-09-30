@@ -874,7 +874,13 @@ class ThermalEstimator:
             # to be held by us in manual — KNX AUTO runs these fans at a known
             # %, so AUTO windows are valid k evidence (they were ~all the data).
             # A room with no working fancoil never learns k (sala giochi).
-            if identified and self.has_actuator(zid) and all(
+            # v0.75.2 review: a multi-unit leader (living_room: salotto +
+            # kitchen) splits windows only on the OR of its valves and reads
+            # only the first unit's %, so an AUTO window can hide one valve
+            # cycling / a different stage — keep the held-manual requirement.
+            multi_unit = len(z.fancoil_units) > 1
+            held_ok = (not multi_unit) or all(s[5] for s in buf)
+            if identified and held_ok and self.has_actuator(zid) and all(
                 f is not None for f in fans
             ) and (
                 max(fans) - min(fans) <= MODEL_CAP_FAN_STABILITY

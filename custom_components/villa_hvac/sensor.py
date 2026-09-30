@@ -185,15 +185,17 @@ class UnitValveDutySensor(_UnitTelemetrySensor):
     _attr_icon = "mdi:valve"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_suggested_display_precision = 0
+    _unrecorded_attributes = frozenset({"observed_minutes"})
     _kind = "valve_duty"
     _label = "valve duty"
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> int | None:
         t = self._t
         if t is None or t.valve_duty is None:
             return None
-        return round(t.valve_duty * 100.0, 1)
+        # whole % — a 0.1 % step would write a recorder row every cycle
+        return round(t.valve_duty * 100.0)
 
     @property
     def extra_state_attributes(self) -> dict:
@@ -442,7 +444,9 @@ class CoolingRuntimeModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorE
     _attr_native_unit_of_measurement = UnitOfTime.HOURS
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 1
-    _unrecorded_attributes = frozenset({"recent_days"})
+    _unrecorded_attributes = frozenset({
+        "recent_days", "today_actual_h", "today_cdh", "today_solar_kwh",
+    })
 
     def __init__(
         self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
@@ -462,7 +466,7 @@ class CoolingRuntimeModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorE
         if fit is None or m.today is None:
             return None
         frac = min(1.0, m.today.observed_s / 86400.0)
-        return round(fit.predict(m.today.cdh, m.today.solar_kwh, frac), 2)
+        return round(fit.predict(m.today.cdh, m.today.solar_kwh, frac), 1)
 
     @property
     def extra_state_attributes(self) -> dict:

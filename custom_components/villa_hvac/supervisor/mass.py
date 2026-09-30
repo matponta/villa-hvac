@@ -40,6 +40,8 @@ SHED_MAX_HOLD = timedelta(minutes=90)
 SHED_REARM = timedelta(minutes=30)
 SHED_COMFORT_MARGIN = 0.3         # start only this far below the comfort ceiling
 SHED_SETPOINT_LIFT = 0.5          # setpoint = temp + lift (valve closes)
+HANDBACK_CYCLES = 3
+SHED_OTHERS_MARGIN = 0.5          # °C over base still counts as "not about to call"               # explicit base re-assert cycles after release
 
 
 # --- 1. mass maintenance ---------------------------------------------------------
@@ -49,13 +51,13 @@ def mass_via_offset(
     coasting: bool,
 ) -> tuple[float, bool]:
     """(effective Via offset, coasting) for one cycle. Unknown outdoor keeps the
-    previous phase (and coasts when there is none) — the full setback is the
-    conservative direction for an empty house."""
-    if outdoor is not None:
-        if coasting:
-            coasting = outdoor >= peak - MASS_PEAK_HYSTERESIS
-        else:
-            coasting = outdoor >= peak
+    full setback — the conservative direction for an empty house."""
+    if outdoor is None:
+        coasting = True           # no reading: never bank blind (v0.75.2 review)
+    elif coasting:
+        coasting = outdoor >= peak - MASS_PEAK_HYSTERESIS
+    else:
+        coasting = outdoor >= peak
     if coasting:
         return mode_offset, True
     return min(mode_offset, mild), False
@@ -73,6 +75,10 @@ class ShedState:
     # climate -> the base setpoint recorded when the room was lifted (the
     # fail-safe restores it; live reads are gone on the unload path).
     snapshot: dict[str, float] = field(default_factory=dict)
+    # climate -> (base, cycles left): after a release the base is asserted
+    # EXPLICITLY for a few cycles — never rely on house_mode to re-assert it
+    # (it is silent with Auto setback off). v0.75.2 review MAJOR.
+    handback: dict[str, list] = field(default_factory=dict)
 
 
 def _unit_demand(state: HouseState, zone_id: str) -> bool:
@@ -102,6 +108,7 @@ class DemandShedController:
         now = state.now
         if (
             not state.demand_shedding_enabled
+            or not state.auto_setback
             or state.season != SEASON_SUMMER
             or state.mode_offset is None
             or state.house_setpoint is None
@@ -110,7 +117,7 @@ class DemandShedController:
         ):
             self._release_all(now, "disabilitato / non applicabile")
             st.run_since = None
-            return {}
+            return self._emit_handback()
         consenso_on = state.consenso_freddo == "on"
         if consenso_on:
             if st.run_since is None:
@@ -159,7 +166,16 @@ class DemandShedController:
             and len(callers) <= state.config_shed_max_callers
             and callers <= set(eligible)
         ):
-            ok = all(
+            # Anti short-cycle: every OTHER room must sit within its thermostat
+            # deadband (<= base + SHED_OTHERS_MARGIN, valve closed), so resting
+            # now does not just hand the next start to a room about to call
+            # anyway (v0.75.2 review). 9/9: others at 24.3-24.4 over a 24 base.
+            others_quiet = all(
+                (b := _base_target(state, z)) is not None
+                and z.temp <= b + SHED_OTHERS_MARGIN
+                for zid, z in eligible.items() if zid not in callers
+            )
+            ok = others_quiet and all(
                 eligible[zid].temp <= ceiling - SHED_COMFORT_MARGIN
                 and st.rearm_until.get(zid, now) <= now
                 and now - st.open_since[zid] >= SHED_MIN_RUN
@@ -172,7 +188,7 @@ class DemandShedController:
                         "unica stanza a tenere acceso il PdC, già entro il comfort"
                     )
         # -- emit ----------------------------------------------------------
-        out: dict = {}
+        out: dict = self._emit_handback()
         for zid in st.shed_since:
             z = eligible.get(zid)
             base = _base_target(state, z) if z is not None else None
@@ -181,11 +197,23 @@ class DemandShedController:
             target = min(ceiling, round(z.temp + SHED_SETPOINT_LIFT, 1))
             out[temperature_lever(z.climate)] = max(base, target)
             st.snapshot[z.climate] = base
-        # Snapshots of rooms no longer lifted are handed back by house_mode.
+        # Rooms no longer lifted: hand the snapshotted base back explicitly.
         live = {state.zones[zid].climate for zid in st.shed_since if zid in state.zones}
         for climate in list(st.snapshot):
             if climate not in live:
-                st.snapshot.pop(climate)
+                st.handback[climate] = [st.snapshot.pop(climate), HANDBACK_CYCLES]
+                out[temperature_lever(climate)] = st.handback[climate][0]
+        return out
+
+    def _emit_handback(self) -> dict:
+        out: dict = {}
+        for climate in list(self.state.handback):
+            base, left = self.state.handback[climate]
+            if left <= 0:
+                self.state.handback.pop(climate)
+                continue
+            out[temperature_lever(climate)] = base
+            self.state.handback[climate][1] = left - 1
         return out
 
     def _release(self, zid: str, now: datetime, reason: str) -> None:
@@ -196,11 +224,16 @@ class DemandShedController:
     def _release_all(self, now: datetime, reason: str) -> None:
         for zid in list(self.state.shed_since):
             self._release(zid, now, reason)
+        for climate in list(self.state.snapshot):
+            self.state.handback[climate] = [
+                self.state.snapshot.pop(climate), HANDBACK_CYCLES
+            ]
 
     def failsafe_setpoints(self) -> dict[str, float]:
         """Hand-back targets for the engine fail-safe: the base setpoint of every
         room currently lifted. Clears the shed state (nothing re-asserts)."""
-        out = dict(self.state.snapshot)
+        out = {c: b for c, (b, _left) in self.state.handback.items()}
+        out.update(self.state.snapshot)
         self.state = ShedState()
         return out
 

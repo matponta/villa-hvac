@@ -106,6 +106,7 @@ from .const import (
     WINDOW_OPEN_STATES,
     WINDOWS_FREE_COOL_DWELL,
     ZONES,
+    DEAD_FANCOILS,
 )
 from .controller import (
     auto_setback_enabled,
@@ -167,6 +168,7 @@ from .supervisor import (
     house_load_index,
     merge_desired,
     merge_desired_owned,
+    preset_lever,
     plan_center_schedule,
     plan_run,
     reconcile,
@@ -784,7 +786,7 @@ class SupervisorEngine:
         # MEASUREMENT sensors so HA long-term statistics keep them.
         self.telemetry = HouseTelemetry()
         # v0.73.0 house-level runtime model (run-hours/day vs CDH + solar),
-        # persisted in the room-model Store under the reserved "_house" key.
+        # persisted in its own HouseModelStore (outside the pinned fail-safe).
         self.house_model = HouseRuntimeModel()
         # v0.74.0 mass maintenance: peak-coast latch (hysteresis across cycles).
         self._mass_coasting = False
@@ -841,6 +843,7 @@ class SupervisorEngine:
         self.fan_owners: dict[str, str | None] = {}
         self.fan_notes: dict[str, str] = {}
         self.fan_deferred: tuple[str, ...] = ()
+        self._rearm_logged: set[str] = set()
         self.last_desired: dict = {}
         self.last_owners: dict[str, str] = {}
         # R1 loud fallback: leaders already warned about reaching an actuating
@@ -1166,18 +1169,33 @@ class SupervisorEngine:
             shed_reason=shed_reason, enabled=self.enabled,
         )
 
-    def _fan_units(self, state: HouseState) -> list[FanUnit]:
+    def _fan_units(self, state: HouseState, desired: dict | None = None) -> list[FanUnit]:
         """Every fancoil unit once (leaders first, so the open-space kitchen
         unit is attributed to living_room). A unit defers its re-arm while ANY
-        zone it serves is paused (#4 / free-air) or the house is free-cooling."""
-        free = _is_free_cooling(state)
+        zone it serves is paused (#4 / free-air), the house is free-cooling, the
+        house is in a deep setback (mode_offset None: Vacanza / #8 waiting), the
+        serving thermostat is (going to) building_protection — the same gates
+        the stranded-fan watchdog carries — or the fan is known dead."""
+        desired = desired or {}
+        free = _is_free_cooling(state) or state.mode_offset is None
         paused_by_fan: dict[str, bool] = {}
         owner_zone: dict[str, str] = {}
         zones = sorted(state.zones.values(), key=lambda z: z.follows is not None)
         for z in zones:
             for fan, _manuale in z.fancoil_units:
                 owner_zone.setdefault(fan, z.zone_id)
-                paused_by_fan[fan] = paused_by_fan.get(fan, False) or z.paused
+                leader = state.zones.get(z.follows) if z.follows else z
+                climate = leader.climate if leader is not None else None
+                preset = None
+                if climate:
+                    preset = desired.get(preset_lever(climate))
+                    if preset is None and (cs := self.hass.states.get(climate)):
+                        preset = cs.attributes.get(ATTR_PRESET_MODE)
+                paused_by_fan[fan] = (
+                    paused_by_fan.get(fan, False) or z.paused
+                    or preset == PRESET_BUILDING_PROTECTION
+                    or fan in DEAD_FANCOILS
+                )
         units: list[FanUnit] = []
         for z in zones:
             for fan, manuale in z.fancoil_units:
@@ -1205,13 +1223,22 @@ class SupervisorEngine:
     def _resolve_fan_units(
         self, state: HouseState, desired: dict, owners: dict
     ) -> tuple[dict, dict]:
+        held = frozenset(
+            lever for lever, ls in self._lever_states.items()
+            if ls.override_until is not None and state.now < ls.override_until
+        )
         res = resolve_fan_units(
-            desired, owners, self._fan_units(state), self._fan_live(),
+            desired, owners, self._fan_units(state, desired), self._fan_live(),
             frozenset(self._fans_turned_off), rearm_pct=NIGHT_GUARD_FAN_PCT,
+            held=held,
         )
         # I1: a fan leaves the re-arm set only on a CONFIRMED live ON read.
         self._fans_turned_off -= res.confirmed_alive
+        self._rearm_logged &= self._fans_turned_off
         for fan in res.rearmed:
+            if fan in self._rearm_logged:
+                continue          # once per episode, not every 30 s
+            self._rearm_logged.add(fan)
             _LOGGER.info(
                 "Fan %s: re-arming (the supervisor switched it off and no longer "
                 "holds it; KNX AUTO will not restart it on its own)", fan,

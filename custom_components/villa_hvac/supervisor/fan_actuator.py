@@ -85,6 +85,7 @@ def resolve_fan_units(
     turned_off: set[str] | frozenset[str],
     *,
     rearm_pct: int,
+    held: frozenset[str] = frozenset(),
 ) -> FanResolution:
     """Apply I1–I3 to the merged desired map. Pure; never drops an opinion."""
     out = dict(desired)
@@ -102,17 +103,22 @@ def resolve_fan_units(
         by_lever[sk] = u
         lv = live.get(u.fan, FanLive(None, None))
         sw_want = out.get(sk)
-        fan_want = out.get(fk)
-        # Will the unit be in AUTO after this cycle's writes?
-        will_be_auto = (
-            (sk in out and sw_want is not None and not _is_on(sw_want))
-            or (sw_want is None and lv.manuale_on is False)
-        )
+        # Will the unit be in AUTO after this cycle's writes? A switch lever in
+        # a manual-hold (conceded to a human) will NOT be written: trust the
+        # live read, never the unwritten wish (v0.75.2 review).
+        if sk in held:
+            will_be_auto = lv.manuale_on is False
+        else:
+            will_be_auto = (
+                (sk in out and sw_want is not None and not _is_on(sw_want))
+                or (sw_want is None and lv.manuale_on is False)
+            )
         if u.fan in turned_off and lv.fan_on is True:
             alive.add(u.fan)                       # I1: confirmed alive
         elif (
             u.fan in turned_off and lv.fan_on is False
-            and fan_want is None and will_be_auto
+            # absent, not an explicit None release, and not conceded to a human
+            and fk not in out and fk not in held and will_be_auto
         ):
             if u.defer_rearm:
                 deferred.append(u.fan)

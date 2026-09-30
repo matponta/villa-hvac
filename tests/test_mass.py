@@ -46,6 +46,9 @@ def test_via_banks_below_the_peak_and_coasts_at_it():
 def test_unknown_outdoor_keeps_the_phase_and_never_deepens_a_mild_mode():
     assert mass_via_offset(mode_offset=5.0, outdoor=None, peak=30.0, mild=2.0,
                            coasting=True) == (5.0, True)
+    # review: an unknown outdoor on a FRESH latch coasts too (never bank blind)
+    assert mass_via_offset(mode_offset=5.0, outdoor=None, peak=30.0, mild=2.0,
+                           coasting=False) == (5.0, True)
     # a Via offset already milder than the cap is never raised
     assert mass_via_offset(mode_offset=1.0, outdoor=20.0, peak=30.0, mild=2.0,
                            coasting=False) == (1.0, False)
@@ -81,7 +84,7 @@ def _state(now, zones, *, consenso="on", enabled=True, **kw):
         now=now, zones={z.zone_id: z for z in zones}, season="summer",
         house_setpoint=24.0, mode_offset=0.0, duty_comfort_max=27.0,
         consenso_freddo=consenso, blocco="off", demand_shedding_enabled=enabled,
-        config_shed_max_callers=1,
+        config_shed_max_callers=1, auto_setback=True,
     )
     base.update(kw)
     return HouseState(**base)
@@ -115,12 +118,14 @@ def test_releases_when_another_room_calls_then_rearm_cooldown():
     t = T0 + SHED_MIN_RUN + timedelta(minutes=12)
     out = ctl(_state(t, _sept9(t, office=25.9, office_demand=False,
                                bedroom_demand=True)))
-    assert out == {}                                             # rides along
+    assert out == {temperature_lever("climate.office"): 24.0}                        # rides along: base handed back
     assert "chiama" in ctl.state.last_reason["office"]
     # the bedroom is satisfied again, office alone: cooldown blocks a re-shed
     t2 = t + SHED_MIN_RUN
     ctl(_state(t, _sept9(t)))
-    assert ctl(_state(t2, _sept9(t2))) == {}
+    # cooldown: no new LIFT (the tail of the explicit base hand-back may remain)
+    assert ctl(_state(t2, _sept9(t2))).get(
+        temperature_lever("climate.office"), 24.0) == 24.0
     t3 = t + SHED_REARM + SHED_MIN_RUN
     assert ctl(_state(t3, _sept9(t3))) != {}
 
@@ -131,13 +136,13 @@ def test_releases_at_the_comfort_ceiling_and_after_max_hold():
     ctl(_state(T0 + SHED_MIN_RUN, _sept9(T0)))
     t = T0 + SHED_MIN_RUN + timedelta(minutes=30)
     assert ctl(_state(t, _sept9(t, office=27.0, office_demand=False),
-                      consenso="off")) == {}
+                      consenso="off")) == {temperature_lever("climate.office"): 24.0}
     ctl2 = DemandShedController()
     ctl2(_state(T0, _sept9(T0)))
     ctl2(_state(T0 + SHED_MIN_RUN, _sept9(T0)))
     t = T0 + SHED_MIN_RUN + SHED_MAX_HOLD
     assert ctl2(_state(t, _sept9(t, office=26.0, office_demand=False),
-                       consenso="off")) == {}
+                       consenso="off")) == {temperature_lever("climate.office"): 24.0}
 
 
 def test_no_shed_when_too_warm_too_many_callers_or_not_ours():
@@ -160,8 +165,33 @@ def test_disabled_switch_or_winter_releases_everything():
     ctl(_state(T0, _sept9(T0)))
     assert ctl(_state(T0 + SHED_MIN_RUN, _sept9(T0))) != {}
     t = T0 + SHED_MIN_RUN + timedelta(minutes=1)
-    assert ctl(_state(t, _sept9(t), enabled=False)) == {}
+    assert ctl(_state(t, _sept9(t), enabled=False)) == {temperature_lever("climate.office"): 24.0}
     assert ctl.state.shed_since == {}
+    # the explicit hand-back lasts a few cycles, then goes quiet
+    for i in range(3):
+        ctl(_state(t + timedelta(minutes=i + 1), _sept9(t), enabled=False))
+    assert ctl(_state(t + timedelta(minutes=5), _sept9(t), enabled=False)) == {}
+
+
+def test_auto_setback_off_never_sheds_and_hands_back_the_base():
+    """Review MAJOR: with Auto setback OFF house_mode is silent, so a lift
+    released by 'no opinion' would stick on the thermostat forever."""
+    ctl = DemandShedController()
+    ctl(_state(T0, _sept9(T0)))
+    assert ctl(_state(T0 + SHED_MIN_RUN, _sept9(T0))) != {}
+    t = T0 + SHED_MIN_RUN + timedelta(minutes=1)
+    assert ctl(_state(t, _sept9(t), auto_setback=False)) == {temperature_lever("climate.office"): 24.0}
+    ctl2 = DemandShedController()
+    ctl2(_state(T0, _sept9(T0), auto_setback=False))
+    assert ctl2(_state(T0 + SHED_MIN_RUN, _sept9(T0), auto_setback=False)) == {}
+
+
+def test_no_shed_when_another_room_is_about_to_call():
+    zones = _sept9(T0)
+    zones[1] = replace(zones[1], temp=24.6)          # bedroom past base + 0.5
+    ctl = DemandShedController()
+    ctl(_state(T0, zones))
+    assert ctl(_state(T0 + SHED_MIN_RUN, zones)) == {}
 
 
 def test_open_space_follower_valve_counts_for_its_leader():

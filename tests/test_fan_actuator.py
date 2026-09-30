@@ -27,11 +27,12 @@ FK, SK = fan_lever(FAN), switch_lever(MAN)
 UNIT = FanUnit(zone_id="office", fan=FAN, manuale=MAN)
 
 
-def _resolve(desired, *, fan_on, manuale_on, turned_off=(), unit=UNIT, owners=None):
+def _resolve(desired, *, fan_on, manuale_on, turned_off=(), unit=UNIT, owners=None,
+             held=frozenset()):
     return resolve_fan_units(
         desired, owners or {k: "ctrl" for k in desired}, [unit],
         {FAN: FanLive(fan_on=fan_on, manuale_on=manuale_on)},
-        frozenset(turned_off), rearm_pct=33,
+        frozenset(turned_off), rearm_pct=33, held=frozenset(held),
     )
 
 
@@ -100,6 +101,21 @@ def test_alive_is_confirmed_only_by_a_live_on_read():
     assert res.confirmed_alive == frozenset() and res.desired == {}
 
 
+def test_no_rearm_when_the_switch_is_conceded_to_a_human():
+    """Review MINOR: a controller wanting manuale OFF while the human holds it ON
+    (manual-hold) must not re-arm a fan the human silenced in manual."""
+    res = _resolve({SK: "off"}, fan_on=False, manuale_on=True, turned_off={FAN},
+                   held={SK})
+    assert FK not in res.desired
+
+
+def test_no_rearm_over_an_explicit_release_or_a_held_fan():
+    assert _resolve({FK: None}, fan_on=False, manuale_on=False,
+                    turned_off={FAN}).desired == {FK: None}
+    assert _resolve({}, fan_on=False, manuale_on=False, turned_off={FAN},
+                    held={FK}).desired == {}
+
+
 # --- I2 order + I3 provenance ------------------------------------------------
 
 def test_entering_manual_writes_switch_before_percentage():
@@ -152,3 +168,31 @@ async def test_engine_rearms_a_stranded_supervisor_fan_until_confirmed(hass):
     await engine._run()
     assert FAN not in engine._fans_turned_off   # live read confirmed it alive
     assert engine.fan_owners[FAN] == "knx_auto"
+
+
+async def test_engine_defers_rearm_in_vacanza(hass):
+    """Review MINOR: like the stranded-fan watchdog, never spin a fan in an empty
+    deep-setback house (Vacanza: mode_offset None, building_protection)."""
+    seed_thermostats(hass)
+    hass.states.async_set(FAN, "off", {"percentage": 0})
+    hass.states.async_set(MAN, "off")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    await enable_supervisor(hass)
+    for svc in ("set_preset_mode", "set_temperature"):
+        async_mock_service(hass, "climate", svc)
+    async_mock_service(hass, "switch", "turn_on")
+    async_mock_service(hass, "switch", "turn_off")
+    fan_on = async_mock_service(hass, "fan", "turn_on")
+    await hass.services.async_call(
+        "select", "select_option",
+        {"entity_id": "select.house_mode", "option": "Vacanza"}, blocking=True,
+    )
+    await hass.async_block_till_done()
+    engine = entry.runtime_data.engine
+    engine._fans_turned_off.add(FAN)
+    await engine._run()
+    assert not [c for c in fan_on if c.data["entity_id"] == FAN]
+    assert FAN in engine.fan_deferred and FAN in engine._fans_turned_off
