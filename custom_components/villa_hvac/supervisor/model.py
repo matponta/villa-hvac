@@ -138,6 +138,11 @@ class HouseState:
     rack_guard_escalated: bool = False
     p1_guard_enabled: bool = True       # P1 "both fans" secondary trigger
     p1_guard_threshold: float = 27.0
+    # v0.74.0 mass-aware control (switches + options; see supervisor/mass.py)
+    mass_maintenance_enabled: bool = False
+    mass_phase: str | None = None        # "bank" / "coast" while it rewrites Via
+    demand_shedding_enabled: bool = False
+    config_shed_max_callers: int = 1
     p1_guard_active: bool = False
     duty_enabled: bool = False          # #9 duty-cycle switch
     duty_max_stint: timedelta | None = None

@@ -577,6 +577,16 @@ RACK_GUARD_MIN_DROP = 0.3
 # RELEASE_DROP). Comfort (not hardware), so a gentler default threshold.
 OPT_P1_GUARD_THRESHOLD = "p1_guard_threshold"
 DEFAULT_P1_GUARD_THRESHOLD = 27.0
+
+# --- v0.74.0 mass-aware summer control (system review 2026-09-30 §4) ----------
+# Opt-in via switch.mass_maintenance / switch.demand_shedding (default OFF).
+# Via in summer caps its offset at this while outdoor is below the peak
+# threshold (duty_peak_outdoor): bank coolth, never let the mass charge.
+OPT_MASS_VIA_OFFSET = "mass_via_offset"
+DEFAULT_MASS_VIA_OFFSET = 2.0
+# Demand shedding starts only when at most this many rooms hold the PdC on.
+OPT_SHED_MAX_CALLERS = "shed_max_callers"
+DEFAULT_SHED_MAX_CALLERS = 1
 # The manuale switches whose ONLY owners are the two guards. Neither the steady
 # governor (living_room) nor camere silenziose (bedrooms) ever touches these, so
 # at HA start — when every guard latch is empty by construction — a switch found

@@ -81,6 +81,8 @@ from .const import (
     OPT_PV_BIAS_EFF_MIN,
     OPT_PV_BIAS_FLOOR_POOR,
     OPT_P1_GUARD_THRESHOLD,
+    OPT_MASS_VIA_OFFSET,
+    OPT_SHED_MAX_CALLERS,
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_RETURN_MARGIN_MIN,
     OPT_RACK_TEMP_RELEASE,
@@ -103,6 +105,8 @@ from .const import (
     SEASON_SUMMER,
     SEASON_WINTER,
     WEATHER_ENTITY_DEFAULT,
+    DEFAULT_MASS_VIA_OFFSET,
+    DEFAULT_SHED_MAX_CALLERS,
 )
 
 
@@ -161,6 +165,14 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_P1_GUARD_THRESHOLD, DEFAULT_P1_GUARD_THRESHOLD
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=22, max=32)),
+                vol.Optional(
+                    OPT_MASS_VIA_OFFSET,
+                    default=options.get(OPT_MASS_VIA_OFFSET, DEFAULT_MASS_VIA_OFFSET),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=6)),
+                vol.Optional(
+                    OPT_SHED_MAX_CALLERS,
+                    default=options.get(OPT_SHED_MAX_CALLERS, DEFAULT_SHED_MAX_CALLERS),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=3)),
                 vol.Optional(
                     OPT_AUTO_WAKE_TIME,
                     default=options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME),

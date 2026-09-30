@@ -132,6 +132,8 @@ from .controller import (
     supervisor_enabled,
     unified_planner_enabled,
     windows_free_cool_enabled,
+    demand_shedding_enabled,
+    mass_maintenance_enabled,
 )
 from .policies import (
     CoolingController,
@@ -141,6 +143,7 @@ from .returnhome import AwayReturnController
 from .supervisor_config import SupervisorConfig
 from .supervisor.fan_actuator import FanLive, FanUnit, resolve_fan_units
 from .supervisor.house_model import HouseRuntimeModel
+from .supervisor.mass import apply_mass_maintenance
 from .supervisor.telemetry import HouseTelemetry
 from .supervisor import (
     BLOCCO_LEVER,
@@ -691,6 +694,9 @@ def build_house_state(
         rack_guard_escalated=bool(getattr(rack_state, "escalated", False)),
         p1_guard_enabled=p1_guard_enabled(hass, entry),
         p1_guard_threshold=cfg.p1_guard_threshold,
+        mass_maintenance_enabled=mass_maintenance_enabled(hass, entry),
+        demand_shedding_enabled=demand_shedding_enabled(hass, entry),
+        config_shed_max_callers=cfg.shed_max_callers,
         p1_guard_active=bool(getattr(p1_state, "active", False)),
         duty_enabled=duty_cycle_enabled(hass, entry),
         duty_max_stint=cfg.duty_max_stint,
@@ -779,6 +785,8 @@ class SupervisorEngine:
         # v0.73.0 house-level runtime model (run-hours/day vs CDH + solar),
         # persisted in the room-model Store under the reserved "_house" key.
         self.house_model = HouseRuntimeModel()
+        # v0.74.0 mass maintenance: peak-coast latch (hysteresis across cycles).
+        self._mass_coasting = False
         # S_eff diagnostics: per-leader (value, source, units_tag) computed every
         # build_house_state (deploy-dark style) — the model sensor exposes it so
         # the geometry can be validated live before any consumer switches.
@@ -1025,6 +1033,14 @@ class SupervisorEngine:
             # only advances on an actuating pass.
             state = self.away_return.apply(
                 state, self.hass, self.entry, commit=actuate
+            )
+            # v0.74.0 mass maintenance: AFTER the #8 override (an armed return
+            # already rewrote Via), BEFORE anything reads mode_offset.
+            cfg = state.config
+            state, self._mass_coasting, _phase = apply_mass_maintenance(
+                state, self._mass_coasting,
+                mild=cfg.mass_via_offset if cfg is not None else 2.0,
+                peak=cfg.duty_peak_outdoor if cfg is not None else 30.0,
             )
             # PV/energy-aware daily pre-cool (F4c-lite): sets pv_mode/floor on the
             # state so the band controller banks in efficient hours / defers in the

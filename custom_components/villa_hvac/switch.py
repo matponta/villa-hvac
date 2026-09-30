@@ -58,6 +58,9 @@ async def async_setup_entry(
         P1GuardSwitch(entry),
         GovernorOptInSwitch(entry, "steady_pacing", "Steady pacing"),
         GovernorOptInSwitch(entry, "paced_living_room", "Paced living room"),
+        # v0.74.0 mass-aware summer control (restored, default OFF).
+        GovernorOptInSwitch(entry, "mass_maintenance", "Mass maintenance"),
+        GovernorOptInSwitch(entry, "demand_shedding", "Demand shedding"),
     ]
     entities += [
         NightSilenceSwitch(entry, zone_id, entity_id)

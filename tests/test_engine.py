@@ -1510,13 +1510,16 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     it); Cooling precedes Night (Night's Notte-exit one-shot manuale release must
     yield to the band re-taking a bedroom on the same cycle). SplitGroupController
     (#6) is last: its lever set (aircon_* hvac_mode/temperature/fan_mode) is
-    disjoint from the rest, so its position is immaterial."""
+    disjoint from the rest, so its position is immaterial. DemandShedController
+    (v0.74.0) sits after every lever owner (guards, governor, Cooling, Night) so
+    it can only outrank the pure house_mode setpoint of a room it rests."""
     from custom_components.villa_hvac.night import NightSilenceController
     from custom_components.villa_hvac.rack import (
         P1GuardController,
         RackGuardController,
     )
     from custom_components.villa_hvac.governor import SteadyGovernorController
+    from custom_components.villa_hvac.supervisor.mass import DemandShedController
     from custom_components.villa_hvac.policies import (
         CoolingController,
         SplitGroupController,
@@ -1527,7 +1530,7 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     assert [type(c) for c in engine.controllers] == [
         RackGuardController, P1GuardController, SteadyGovernorController,
         CoolingController, NightSilenceController,
-        SplitGroupController,
+        DemandShedController, SplitGroupController,
     ]
     assert engine._cooling is engine.controllers[3]
 

@@ -14,6 +14,7 @@ from .governor import SteadyGovernorController
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
 from .rack import P1GuardController, RackGuardController
+from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
 from .vmc import VmcController
 from .window import WindowController
@@ -79,9 +80,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # rack FIRST (hardware safety wins the shared rack levers); p1_guard next
         # (its office nudge must outrank house_mode while P1 is hot); then the
         # cooling controller + night + splits.
+        # DemandShedController (v0.74.0) after every lever owner above: guards,
+        # the governor and #2b always win; it only outranks the pure house_mode
+        # setpoint for the rooms it is resting.
         controllers=(
             rack, p1_guard, governor, CoolingController(), night,
-            SplitGroupController(),
+            DemandShedController(), SplitGroupController(),
         ),
         model_store=model_store,
         house_store=house_store,

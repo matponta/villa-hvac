@@ -252,6 +252,16 @@ def paced_living_room_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "paced_living_room") == STATE_ON
 
 
+def mass_maintenance_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.74.0 opt-in: summer Via banks coolth instead of a deep setback."""
+    return _switch_state(hass, entry, "mass_maintenance") == STATE_ON
+
+
+def demand_shedding_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.74.0 opt-in: let the PdC rest when one in-comfort room holds it on."""
+    return _switch_state(hass, entry, "demand_shedding") == STATE_ON
+
+
 def pv_bias_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """True when the PV/energy-aware pre-cool switch is on (opt-in). It executes via
     the band center, so it also needs fan_pacing on to have any effect."""

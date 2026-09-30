@@ -43,6 +43,8 @@ from .const import (
     DEFAULT_PV_BIAS_FLOOR_RICH,
     DEFAULT_REGIME_ENABLED,
     DEFAULT_P1_GUARD_THRESHOLD,
+    DEFAULT_MASS_VIA_OFFSET,
+    DEFAULT_SHED_MAX_CALLERS,
     DEFAULT_RACK_TEMP_RELEASE,
     DEFAULT_RACK_TEMP_THRESHOLD,
     DEFAULT_RETURN_MARGIN_MIN,
@@ -85,6 +87,8 @@ from .const import (
     OPT_PV_BIAS_FLOOR_RICH,
     OPT_REGIME_ENABLED,
     OPT_P1_GUARD_THRESHOLD,
+    OPT_MASS_VIA_OFFSET,
+    OPT_SHED_MAX_CALLERS,
     OPT_RACK_TEMP_RELEASE,
     OPT_RACK_TEMP_THRESHOLD,
     OPT_REGIME_MEDIUM_RATIO,
@@ -154,6 +158,9 @@ class SupervisorConfig:
     rack_temp_threshold: float
     rack_temp_release: float
     p1_guard_threshold: float
+    # v0.74.0 mass-aware control (enables are switches)
+    mass_via_offset: float
+    shed_max_callers: int
     # F4a solar
     solar_forecast_enabled: bool
     # S_eff per-facade solar (STORY_SEFF; structurally dark until consumers ready)
@@ -246,6 +253,12 @@ class SupervisorConfig:
             p1_guard_threshold=_f(
                 options, OPT_P1_GUARD_THRESHOLD, DEFAULT_P1_GUARD_THRESHOLD, 22, 32
             ),
+            mass_via_offset=_f(
+                options, OPT_MASS_VIA_OFFSET, DEFAULT_MASS_VIA_OFFSET, 0, 6
+            ),
+            shed_max_callers=int(_f(
+                options, OPT_SHED_MAX_CALLERS, DEFAULT_SHED_MAX_CALLERS, 1, 3
+            )),
             solar_forecast_enabled=_b(options, OPT_SOLAR_FORECAST, DEFAULT_SOLAR_FORECAST),
             # ANDed with the code-level readiness constant: the option can never
             # light S_eff up while any §6 b-consumer still reads house GHI.

@@ -59,7 +59,9 @@
           "pv_coast_relax": "PV bias · coast relax (°C)",
           "pv_eff_fraction": "PV bias · bank effectiveness fraction",
           "pv_eff_min": "PV bias · min effective rate (°C/h)",
-          "pv_daily_need_kwh": "PV bias · estimated daily consumption (kWh)"
+          "pv_daily_need_kwh": "PV bias · estimated daily consumption (kWh)",
+          "mass_via_offset": "Mass maintenance · summer Via offset cap (°C)",
+          "shed_max_callers": "Demand shedding · max rooms holding the PdC on"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
@@ -105,7 +107,9 @@
           "pv_coast_relax": "How much to raise the band centre to DEFER cooling in the hot, inefficient evening (capped at the duty comfort-max).",
           "pv_eff_fraction": "Bank now when this hour's cooling effectiveness is at least this fraction of the best upcoming hour.",
           "pv_eff_min": "Net cooling rate (°C/h) below which an hour is 'ineffective' — defer/hold instead of banking.",
-          "pv_daily_need_kwh": "Rough estimate of the Condominio's daily electricity use, to judge whether forecast solar covers the day (solar-rich vs solar-poor). Tunable."
+          "pv_daily_need_kwh": "Rough estimate of the Condominio's daily electricity use, to judge whether forecast solar covers the day (solar-rich vs solar-poor). Tunable.",
+          "mass_via_offset": "With switch.mass_maintenance on: in summer Via, cap the setback at this below the peak outdoor temperature (bank coolth; the full Via offset applies at the peak).",
+          "shed_max_callers": "With switch.demand_shedding on: when the compressor runs only for this many rooms already within comfort, lift their setpoint so the PdC can rest."
         }
       }
     }
