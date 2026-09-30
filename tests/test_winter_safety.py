@@ -134,3 +134,48 @@ def test_return_precond_inert_in_winter(monkeypatch):
     summer = replace(src, season=SEASON_SUMMER)
     ctrl.apply(summer, None, _E(), commit=True)
     assert ctrl.decision is not None
+
+
+# --- review v0.78.0 follow-ups -----------------------------------------------------
+
+def test_winter_release_mid_notte_does_not_spin_bedroom_fans():
+    """A cool->heat flip during Notte releases #2b: manuale back, but NO fan-on
+    over sleepers (the summer release still re-arms — unchanged)."""
+    from tests.test_night import _night_ctrl, _night_state
+    from custom_components.villa_hvac.night import bedrooms
+    from custom_components.villa_hvac.supervisor import fan_lever, switch_lever
+
+    c = _night_ctrl()
+    c(_night_state(night_active=True))
+    out = c(_night_state(night_active=False, season=SEASON_WINTER))
+    for _zid, zone in bedrooms():
+        assert out[switch_lever(zone["manuale_switch"])] == "off"
+        assert fan_lever(zone["fancoils"][0]) not in out
+    c = _night_ctrl()
+    c(_night_state(night_active=True))
+    out = c(_night_state(night_active=False, mode="Casa"))
+    assert any(k.startswith("fan") or "fan." in k for k in out)
+
+
+async def test_season_memory_survives_a_restart(hass, hass_storage):
+    """Persisted last-conclusive season: a boot with both signals down resumes
+    WINTER even in a shoulder-season date the calendar calls summer."""
+    from custom_components.villa_hvac.controller import (
+        _LAST_SEASON,
+        async_load_season_memory,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, data={})
+    hass_storage["villa_hvac_season"] = {
+        "version": 1, "key": "villa_hvac_season", "data": {"season": SEASON_WINTER},
+    }
+    await async_load_season_memory(hass, entry)
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "unavailable")
+    with freeze_time("2026-10-05 07:00:00"):
+        assert current_season(hass, entry) == SEASON_WINTER
+    # a conclusive change is written back
+    _LAST_SEASON.clear()
+    await async_load_season_memory(hass, entry)
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool")
+    assert current_season(hass, entry) == SEASON_SUMMER
+    await hass.async_block_till_done()

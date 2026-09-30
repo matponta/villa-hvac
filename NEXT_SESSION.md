@@ -1,5 +1,59 @@
 # Next session — kickstart prompts
 
+## v0.76.0–v0.78.1 — WINTER LIGHT (2026-09-30) — RELEASED v0.78.1, NOT DEPLOYED
+(LIVE at the time = v0.75.2, installed by the other 30/9 session; house in Vacanza,
+all 17 thermostats still `cool` + BP, `sensor.s5a_stagione` = Estate.)
+
+Read-only winter audit first (code + live). Findings that drove the releases:
+free_air (ON, restored) would have held the 7 fancoil-labelled thermostats in BP
+all winter; the ONE house slider sat at 24.5 → would have been written as a
+HEATING setpoint to every radiant floor; #8 return-precond lead is cooling-only
+(house in BP the whole absence, ramp 30 min before ETA); #2b silenced bedroom
+fans nightly; the estimator would fit radiant heat into {a,b,c}; season blind
+default = SUMMER. Nothing reads EV HEAT valves / consenso caldo (not needed).
+
+- **v0.76.0 safety**: free_air, #2b night_active, #8 (+ its Via ask) and the F2
+  estimator are summer-only; season fallback = last conclusive → calendar
+  (15 Oct–15 Apr).
+- **v0.77.0 winter light** (owner decisions): heating ONLY via thermostat
+  setpoints; winter = preset `comfort` for Casa/Via/Notte (Vacanza keeps BP);
+  separate `number.house_setpoint_winter` (default 21); Notte −1 / Via −2;
+  `number.<zone>_offset` + `switch.<zone>_economy` (−3, option
+  `winter_eco_offset`) on ALL 17 thermostat zones; writes clamped [15, 25].
+- **v0.78.0 winter sun**: `switch.winter_sun` (default ON) — winter + Via/Vacanza
+  + sun on the facade + gw3000a ≥ `winter_sun_solar` (150) → open that facade's
+  covers once/day; at sunset restore ONLY the ones we opened; hand-moved covers
+  are the owner's. Edge-triggered, outside the arbiter, Store-persisted.
+
+- **v0.78.1 review fixes** (adversarial review: 0 blocker/major, 5 minor): a
+  stop at home no longer forgets the opened covers (sunset still puts back ours,
+  any mode; a shade-blocked room is hands-off); failed sunset put-back retried
+  (≤10); takeover margin 15 % (a cover stopping at 92 is not "the owner");
+  winter #2b release + fan-actuator re-arm don't spin bedroom fans in heat mode
+  (deferred to summer); last conclusive season PERSISTED (`villa_hvac_season`
+  Store) and winter-sun holds until a LIVE season signal; its cycles are entry
+  background tasks with a stop flag. Known, not fixed: fail-safe restores
+  BP→auto but not setpoints, so an unload during winter Via/Economy leaves the
+  setback on the thermostats until the next write (existing behaviour).
+
+DEPLOY CHECKLIST (owner):
+1. HACS update → v0.78.1 + restart. Verify loaded, BLOCCO off, levers 0.
+2. **Options flow: set `winter_notte_offset` −4 → −1** (the live entry stores −4
+   explicitly, so the new default does NOT apply by itself).
+3. Set `number.house_setpoint_winter` (default 21) BEFORE the flip.
+4. Retire/disable the legacy `script.alza_riscaldamento` / `abbassa_riscaldamento`
+   (20/18 °C on all 17) — they'd fight #2a (re-asserted, then 2 h concede).
+5. At the first real heat flip (salotto → `heat`), LIVE-VERIFY: KNX `comfort`
+   + our temperature is what the radiant regulates; consenso caldo follows; the
+   summer slider is no longer written; bedroom fans untouched in Notte.
+6. First sunny winter Via: covers on the sunny facade open once, back down at
+   sunset (INFO log "Winter sun: …"). Note the living-room `tenda_*` (blind,
+   south) are in the #6 map too — they will RAISE.
+Open: Palestra split turned `off` in winter by the split trio if used in heat;
+#7 pre-heat (anticipatory radiant) still not built — the natural home for the
+F4c planner in winter.
+
+
 ## v0.70.0 — VMC boost: outdoor-cap hysteresis + duration cap (2026-09-10) — DEPLOYED
 (HACS v0.70.0 + restart 10/9 19:31; loaded clean, `update.villa_hvac_update` installed_version
 = v0.70.0, BLOCCO off, hvac_levers 0, no villa_hvac errors in the log.)

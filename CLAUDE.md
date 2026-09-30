@@ -519,6 +519,21 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        `DEFAULT_OVERRIDE_BACKOFF`) — fought the owner live 5/9 08:16–10:18.
 9. [ ] #7 Anticipatory (summer pre-cool live + winter radiant pre-heat) — caldo
        consenso mechanism TBD (behind a flag, verify in heating season)
+   [x] **WINTER LIGHT (v0.76.0–v0.78.1, 2026-09-30)** — owner rule: heat ONLY
+       through the KNX thermostat SETPOINT (never the radiant valves). Winter =
+       preset `comfort` for Casa/Via/Notte (Vacanza keeps BP), temperature =
+       `number.house_setpoint_winter` (own slider, default 21 — the summer one
+       must never be written as a heating setpoint) + mode offset (Notte −1,
+       Via −2) + `number.<zone>_offset` + `switch.<zone>_economy` (−3) on ALL 17
+       thermostat zones, clamped [15, 25] (`_winter_house_mode`, policies.py).
+       Summer-only now: free_air, #2b night_active, #8 return-precond, the F2
+       estimator. Season blind fallback = last conclusive → calendar (was
+       SUMMER). `switch.winter_sun` (`sungain.py`, default ON): winter +
+       Via/Vacanza + sun on the facade → open those covers once/day, sunset
+       restores only ours (even after a stop at home); edge-triggered, outside
+       the arbiter. Last conclusive season persisted (`villa_hvac_season`). UNVERIFIED
+       LIVE until the first heat flip: KNX `comfort`+temperature regulates the
+       radiant as expected. Legacy `script.alza/abbassa_riscaldamento` to retire.
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",
         reframed with the owner: on entering **Via** an actionable notification
         asks *when you're back* (coarse: date + `mattino/pomeriggio/sera`); the

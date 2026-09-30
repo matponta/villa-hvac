@@ -16,8 +16,10 @@ def auto_enable_custom_integrations(enable_custom_integrations):
 def _reset_season_memory():
     """current_season remembers the last conclusive read per entry (v0.76.0);
     keep tests independent."""
-    from custom_components.villa_hvac.controller import _LAST_SEASON
+    from custom_components.villa_hvac.controller import _LAST_SEASON, _SEASON_STORES
 
     _LAST_SEASON.clear()
+    _SEASON_STORES.clear()
     yield
     _LAST_SEASON.clear()
+    _SEASON_STORES.clear()

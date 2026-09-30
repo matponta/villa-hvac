@@ -34,10 +34,12 @@ from .const import (
     SHADING_AZIMUTH_BANDS,
     SHADING_MIN_ELEVATION,
     SOLAR_RADIATION,
+    WINTER_SUN_CLOSE_RETRIES,
     WINTER_SUN_TAKEOVER_GRACE_MIN,
 )
 from .controller import (
     _entity_id,
+    season_conclusive,
     current_house_mode,
     current_season,
     shade_blocked,
@@ -70,6 +72,9 @@ class WinterSunController:
         self._store = Store(hass, 1, "villa_hvac_winter_sun")
         self._lock = asyncio.Lock()
         self._unsub = None
+        self._stopped = False
+        # cover -> consecutive failed sunset put-backs (retried, then given up).
+        self._close_failures: dict[str, int] = {}
 
     # -- lifecycle -------------------------------------------------------------
     async def async_start(self) -> None:
@@ -83,13 +88,18 @@ class WinterSunController:
     async def async_stop(self) -> None:
         """Unsubscribe. Never moves a cover on shutdown — the persisted state
         lets the next boot finish the day (sunset close) instead."""
+        self._stopped = True
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
 
     @callback
     def _on_update(self) -> None:
-        self.hass.async_create_task(self._evaluate())
+        # Tied to the entry: cancelled on unload/reload, so a queued cycle of an
+        # old instance can never write covers or clobber the shared Store.
+        self.entry.async_create_background_task(
+            self.hass, self._evaluate(), "villa_hvac winter sun"
+        )
 
     # -- one cycle -------------------------------------------------------------
     def _covers(self, engine) -> tuple[SunCover, ...]:
@@ -120,7 +130,9 @@ class WinterSunController:
             st = self.hass.states.get(eid) if eid else None
             if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 return False
-        return True
+        # ...and a LIVE season signal: a memory/calendar guess must not make us
+        # forget (season "not winter") or move covers (review v0.78.0).
+        return season_conclusive(self.hass, self.entry)
 
     def _threshold(self) -> float:
         v = _float(self.entry.options.get(OPT_WINTER_SUN_SOLAR, DEFAULT_WINTER_SUN_SOLAR))
@@ -128,6 +140,8 @@ class WinterSunController:
 
     async def _evaluate(self) -> None:
         async with self._lock:
+            if self._stopped:
+                return
             engine = getattr(self.entry.runtime_data, "engine", None)
             if engine is None or not self._ready():
                 return  # boot: hold the persisted bookkeeping, decide nothing
@@ -156,7 +170,7 @@ class WinterSunController:
                 sun_elevation=elevation,
                 sun_on=sun_on,
                 bright=solar is not None and solar >= self._threshold(),
-                covers=self._covers(engine) if active and away else (),
+                covers=self._covers(engine) if active else (),
                 now=now,
                 local_day=dt_util.as_local(now).date().isoformat(),
                 state=before,
@@ -164,15 +178,34 @@ class WinterSunController:
                 tolerance=SHADE_POSITION_TOLERANCE,
                 grace=timedelta(minutes=WINTER_SUN_TAKEOVER_GRACE_MIN),
             )
+            sunset = elevation is not None and elevation <= 0
             for entity_id, position in commands.items():
+                if self._stopped:
+                    return
                 ok = await self._write(entity_id, position)
-                if not ok:
-                    # A failed open must not be "closed back" at sunset.
-                    self.state.opened.pop(entity_id, None)
                 _LOGGER.info(
                     "Winter sun: %s -> %s%s", entity_id, position, "" if ok else " (FAILED)"
                 )
-            if self.state != before:
+                if ok:
+                    self._close_failures.pop(entity_id, None)
+                elif not sunset:
+                    # A failed open must not be "closed back" at sunset.
+                    self.state.opened.pop(entity_id, None)
+                else:
+                    # A failed put-back is retried next tick (KNX hiccup), a
+                    # bounded number of times — never a cover up all night
+                    # because of one lost telegram, never an endless retry.
+                    n = self._close_failures.get(entity_id, 0) + 1
+                    self._close_failures[entity_id] = n
+                    if n < WINTER_SUN_CLOSE_RETRIES and entity_id in before.opened:
+                        self.state.opened[entity_id] = before.opened[entity_id]
+                    else:
+                        _LOGGER.warning(
+                            "Winter sun: giving up putting back %s after %d tries",
+                            entity_id, n,
+                        )
+                        self._close_failures.pop(entity_id, None)
+            if self.state != before and not self._stopped:
                 await self._save()
 
     async def _write(self, entity_id: str, position: int) -> bool:

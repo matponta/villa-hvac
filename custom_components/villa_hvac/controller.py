@@ -18,6 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -94,16 +95,46 @@ def current_season(hass: HomeAssistant, entry: ConfigEntry) -> str:
             elif stagione.state == SEASON_STAGIONE_SUMMER:
                 season = SEASON_SUMMER
     if season is not None:
-        _LAST_SEASON[entry.entry_id] = season
+        if _LAST_SEASON.get(entry.entry_id) != season:
+            _LAST_SEASON[entry.entry_id] = season
+            if (store := _SEASON_STORES.get(entry.entry_id)) is not None:
+                store.async_delay_save(lambda: {"season": season}, 1)
         return season
     if (last := _LAST_SEASON.get(entry.entry_id)) is not None:
         return last
     return calendar_season(dt_util.now().date())
 
 
-# Last CONCLUSIVE season per config entry (in-memory; a restart re-learns it on
-# the first conclusive read — the calendar covers the gap until then).
+# Last CONCLUSIVE season per config entry, persisted (review v0.76.0): a boot
+# with both signals still down must not fall to the calendar in a shoulder
+# season (cold snap before 15 Oct) — it resumes the season it last saw.
 _LAST_SEASON: dict[str, str] = {}
+_SEASON_STORES: dict[str, Store] = {}
+
+
+async def async_load_season_memory(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Load the persisted last-conclusive season (best-effort) at setup."""
+    store: Store = Store(hass, 1, "villa_hvac_season")
+    _SEASON_STORES[entry.entry_id] = store
+    try:
+        data = await store.async_load()
+    except Exception:  # noqa: BLE001 - a corrupt store must never block setup
+        _LOGGER.warning("Could not load the season memory", exc_info=True)
+        return
+    if isinstance(data, dict) and data.get("season") in (SEASON_SUMMER, SEASON_WINTER):
+        _LAST_SEASON.setdefault(entry.entry_id, data["season"])
+
+
+def season_conclusive(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the season is forced or a live signal is affirmative (not a
+    memory/calendar guess). Used to hold actuators that must not act blind."""
+    if entry.options.get(OPT_SEASON) in (SEASON_SUMMER, SEASON_WINTER):
+        return True
+    ref = hass.states.get(SEASON_REFERENCE_CLIMATE)
+    if ref is not None and ref.state in ("heat", "cool"):
+        return True
+    st = hass.states.get(SEASON_STAGIONE_SENSOR)
+    return st is not None and st.state in (SEASON_STAGIONE_WINTER, SEASON_STAGIONE_SUMMER)
 
 
 def calendar_season(day: date) -> str:

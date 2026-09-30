@@ -7,7 +7,11 @@ from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 
 from .away import AwayController
 from .const import PLATFORMS
-from .controller import apply_house_mode, current_house_mode
+from .controller import (
+    apply_house_mode,
+    async_load_season_memory,
+    current_house_mode,
+)
 from .coordinator import VillaHvacCoordinator
 from .engine import HouseModelStore, RoomModelStore, SupervisorEngine
 from .governor import SteadyGovernorController
@@ -26,6 +30,7 @@ VillaHvacConfigEntry = ConfigEntry[VillaHvacCoordinator]
 
 async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) -> bool:
     """Set up Villa HVAC from a config entry."""
+    await async_load_season_memory(hass, entry)
     coordinator = VillaHvacCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator

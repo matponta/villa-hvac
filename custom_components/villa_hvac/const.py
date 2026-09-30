@@ -779,6 +779,7 @@ SHADE_POSITION_STEP = 5
 OPT_WINTER_SUN_SOLAR = "winter_sun_solar"
 DEFAULT_WINTER_SUN_SOLAR = 150.0     # W/m² (gw3000a) — "there is real sun"
 WINTER_SUN_TAKEOVER_GRACE_MIN = 5    # min after our open before a move = owner
+WINTER_SUN_CLOSE_RETRIES = 10        # failed sunset put-backs retried per cover
 SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't land exact)
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")

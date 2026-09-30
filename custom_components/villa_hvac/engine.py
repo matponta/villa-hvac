@@ -621,10 +621,6 @@ def build_house_state(
             setpoint_offset=_zone_setpoint_offset(
                 hass, entry, zone_id, zone, season, eco_offset
             ),
-            economy=(
-                season == SEASON_WINTER and _is_controllable_zone(zone)
-                and zone_economy(hass, entry, zone_id)
-            ),
             fancoil=fancoil,
             manuale=manuale,
             follows=zone.get("follows"),
@@ -1220,7 +1216,12 @@ class SupervisorEngine:
         serving thermostat is (going to) building_protection — the same gates
         the stranded-fan watchdog carries — or the fan is known dead."""
         desired = desired or {}
-        free = _is_free_cooling(state) or state.mode_offset is None
+        free = (
+            _is_free_cooling(state) or state.mode_offset is None
+            # v0.76.0: no fancoil re-arm in heat mode (radiant heats; a fan
+            # would only blow air). Deferred, not dropped: it re-arms in summer.
+            or state.season == SEASON_WINTER
+        )
         paused_by_fan: dict[str, bool] = {}
         owner_zone: dict[str, str] = {}
         zones = sorted(state.zones.values(), key=lambda z: z.follows is not None)

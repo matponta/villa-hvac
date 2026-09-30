@@ -33,7 +33,6 @@ class ZoneSnapshot:
     bedroom: bool = False          # camere silenziose zone (#2b)
     fan_min: int = 0               # rest/min-circulation fan % for this zone (#3 v2)
     setpoint_offset: float = 0.0   # #2: °C added to this zone's base center (per-room trim)
-    economy: bool = False          # v0.77.0: winter per-room Economy switch on
     fancoil: str | None = None     # primary fan entity
     manuale: str | None = None     # primary manuale switch entity
     follows: str | None = None     # leader zone_id this zone defers to (open-space)

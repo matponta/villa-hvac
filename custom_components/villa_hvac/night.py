@@ -53,6 +53,7 @@ from .const import (
     OPT_AUTO_WAKE_TIME,
     OPT_NIGHT_THRESHOLD,
     SEASON_SUMMER,
+    SEASON_WINTER,
     ZONES,
 )
 from .controller import current_house_mode
@@ -341,7 +342,14 @@ class NightSilenceController:
         out: dict = {switch_lever(zone["manuale_switch"]): "off"}
         z = state.zones.get(zid)
         paused = z is not None and z.paused
-        if not paused and not free_cooling and not self._guards[zid].cooling:
+        # v0.76.0: a WINTER release (season flipped mid-Notte) hands manuale back
+        # but does NOT spin the fan up over sleepers — a fancoil fan does nothing
+        # in heat mode; the fan-actuator re-arm defers in winter too and the
+        # summer self-heal watchdog revives it on the first summer demand.
+        if (
+            not paused and not free_cooling and not self._guards[zid].cooling
+            and state.season != SEASON_WINTER
+        ):
             out[fan_lever(zone["fancoils"][0])] = NIGHT_GUARD_FAN_PCT
         if zid in self._nudged:
             live = self._mode_base(state, z) if z is not None else None

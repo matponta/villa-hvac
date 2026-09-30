@@ -132,7 +132,6 @@ async def test_winter_state_reads_winter_slider_trim_and_economy(hass):
     assert st.house_setpoint == 21.5                      # NOT the summer 24.5
     assert st.zones[RADIANT].setpoint_offset == 1.0        # radiant trim honoured
     assert st.zones[FANCOIL].setpoint_offset == -3.0       # Economy default
-    assert st.zones[FANCOIL].economy is True
     out = house_mode_policy(st)
     assert out[temperature_lever(ZONES[FANCOIL]["climate"])] == 18.5
     assert out[temperature_lever(ZONES[RADIANT]["climate"])] == 22.5
@@ -142,7 +141,7 @@ async def test_winter_state_reads_winter_slider_trim_and_economy(hass):
     su = build_house_state(hass, entry, entry.runtime_data)
     assert su.house_setpoint == 24.5
     assert su.zones[RADIANT].setpoint_offset == 0.0
-    assert su.zones[FANCOIL].setpoint_offset == 0.0 and su.zones[FANCOIL].economy is False
+    assert su.zones[FANCOIL].setpoint_offset == 0.0
 
 
 async def test_winter_night_default_is_gentle(hass):

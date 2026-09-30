@@ -98,12 +98,38 @@ def test_travelling_cover_within_grace_is_not_a_takeover():
     assert "cover.s" in st.opened
 
 
-def test_coming_home_forgets_without_writing():
+def test_home_stop_keeps_ours_and_sunset_still_puts_them_back():
+    """Review v0.78.0: home 13:00, out 14:00 with #2c still on Casa -> the covers
+    must not stay open all night."""
     st, _ = _step([S])
-    st, cmd = _step([SunCover("cover.s", "south", position=100)], st,
-                    now=T0 + timedelta(hours=1), away=False)
+    up = SunCover("cover.s", "south", position=100)
+    st, cmd = _step([up], st, now=T0 + timedelta(hours=1), away=False)
+    assert cmd == {} and "cover.s" in st.opened        # kept, nothing written
+    st, cmd = _step([up], st, now=T0 + timedelta(hours=6), away=False, elevation=-1.0)
+    assert cmd == {"cover.s": 0}
+    # ...but no NEW open while home
+    assert _step([SunCover("cover.w", "south", position=0)], away=False)[1] == {}
+
+
+def test_inactive_forgets_without_writing():
+    st, _ = _step([S])
+    st, cmd = _step([SunCover("cover.s", "south", position=100)], st, active=False)
     assert cmd == {} and st.opened == {}
-    assert "cover.s" in st.done  # still no re-open today if they leave again
+    assert "cover.s" in st.done
+
+
+def test_shade_block_after_open_is_hands_off():
+    st, _ = _step([S])
+    st, cmd = _step([SunCover("cover.s", "south", blocked=True, position=100)], st,
+                    now=T0 + timedelta(hours=6), elevation=-1.0)
+    assert cmd == {} and st.opened == {}
+
+
+def test_slightly_short_of_open_is_not_a_takeover():
+    st, _ = _step([S])
+    st, _ = _step([SunCover("cover.s", "south", position=92)], st,
+                  now=T0 + timedelta(minutes=10))
+    assert "cover.s" in st.opened
 
 
 def test_new_day_rearms():
@@ -173,3 +199,55 @@ async def test_controller_opens_in_winter_via_and_skips_blocked(hass, monkeypatc
     hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat", {"preset_mode": "comfort"})
     await ctrl._evaluate()
     assert {c["entity_id"] for c in calls} == {"cover.a", "cover.b"}
+
+
+async def test_failed_sunset_put_back_is_retried_then_given_up(hass, monkeypatch):
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat", {"preset_mode": "comfort"})
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    reg = er.async_get(hass)
+    hass.states.async_set(
+        reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_supervisor"), "on"
+    )
+    hass.states.async_set("select.house_mode", "Via")
+    hass.states.async_set("sun.sun", "below_horizon", {"elevation": -3.0, "azimuth": 250.0})
+    hass.states.async_set("cover.a", "open", {"current_position": 100})
+    entry.runtime_data.engine._covers_cache = (CoverInfo("cover.a", "south", zone="x"),)
+    ctrl: WinterSunController = entry.runtime_data.winter_sun
+    ctrl.state = WinterSunState(day=None, opened={"cover.a": (0, T0)})
+    import custom_components.villa_hvac.sungain as mod
+
+    writes = []
+
+    async def _fail(self, eid, pos):
+        writes.append((eid, pos))
+        return False
+
+    monkeypatch.setattr(mod.WinterSunController, "_write", _fail)
+    await ctrl._evaluate()
+    assert writes == [("cover.a", 0)] and "cover.a" in ctrl.state.opened  # retried
+    for _ in range(20):
+        await ctrl._evaluate()
+    assert len(writes) == mod.WINTER_SUN_CLOSE_RETRIES   # bounded
+    assert ctrl.state.opened == {}
+
+
+async def test_holds_when_season_is_only_a_guess(hass):
+    """No live season signal -> the cycle holds (doesn't forget/move)."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    reg = er.async_get(hass)
+    hass.states.async_set(
+        reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_supervisor"), "on"
+    )
+    hass.states.async_set("select.house_mode", "Casa")
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "unavailable")
+    ctrl: WinterSunController = entry.runtime_data.winter_sun
+    held = WinterSunState(day="2027-01-10", opened={"cover.a": (0, T0)})
+    ctrl.state = held
+    await ctrl._evaluate()
+    assert ctrl.state is held
