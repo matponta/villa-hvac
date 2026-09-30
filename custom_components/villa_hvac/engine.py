@@ -137,6 +137,7 @@ from .policies import (
 )
 from .returnhome import AwayReturnController
 from .supervisor_config import SupervisorConfig
+from .supervisor.fan_actuator import FanLive, FanUnit, resolve_fan_units
 from .supervisor.telemetry import HouseTelemetry
 from .supervisor import (
     BLOCCO_LEVER,
@@ -158,6 +159,7 @@ from .supervisor import (
     fan_lever,
     house_load_index,
     merge_desired,
+    merge_desired_owned,
     plan_center_schedule,
     plan_run,
     reconcile,
@@ -249,6 +251,11 @@ def _outdoor_temp(hass: HomeAssistant) -> float | None:
     """Ecowitt outdoor temp, falling back to the PdC's own probe."""
     val = _num(hass, OUTDOOR_TEMP)
     return val if val is not None else _num(hass, OUTDOOR_TEMP_FALLBACK)
+
+
+def _output_name(source) -> str:
+    """Provenance label for a controller instance or a policy function."""
+    return getattr(source, "__name__", None) or type(source).__name__
 
 
 def _manuale_switch(fan_entity: str) -> str:
@@ -798,6 +805,14 @@ class SupervisorEngine:
         # "fans -> AUTO" hands back a LIVE fan, not a dead switch object (KNX AUTO
         # will not restart one). In-memory: live reads are gone on the unload path.
         self._fans_turned_off: set[str] = set()
+        # v0.72.0 fan actuator: who drives each fan this cycle (controller /
+        # policy name, "knx_auto", "manual", or the actuator's own re-arm) + a
+        # per-fan diagnostic note; the last merged desired map + lever owners.
+        self.fan_owners: dict[str, str | None] = {}
+        self.fan_notes: dict[str, str] = {}
+        self.fan_deferred: tuple[str, ...] = ()
+        self.last_desired: dict = {}
+        self.last_owners: dict[str, str] = {}
         # R1 loud fallback: leaders already warned about reaching an actuating
         # pass with no resolved band center (annotate_centers lost/misordered).
         self._unresolved_center: set[str] = set()
@@ -1016,7 +1031,14 @@ class SupervisorEngine:
                 # yields (no opinion) on disabled/paused/free-cool zones, so the
                 # higher-priority preset policies still own those.
                 ctrl_outputs = [c(state) for c in self.controllers]
-                desired = merge_desired([*ctrl_outputs, *pure_outputs])
+                desired, owners = merge_desired_owned([
+                    *zip(map(_output_name, self.controllers), ctrl_outputs),
+                    *zip(map(_output_name, self.policies), pure_outputs),
+                ])
+                # v0.72.0: the fancoil-unit invariants (re-arm / write order /
+                # provenance) applied ONCE, between the merge and the reconcile.
+                desired, owners = self._resolve_fan_units(state, desired, owners)
+                self.last_desired, self.last_owners = desired, owners
                 for lever, target in desired.items():
                     # Bail the moment teardown begins (stop()) OR a fail-safe
                     # hand-back invalidates this cycle mid-loop (epoch bump): a
@@ -1051,8 +1073,74 @@ class SupervisorEngine:
                 # deploy-dark gaps would otherwise freeze a stale count).
                 self._fan_off.clear()
                 self._stranded_fan.clear()
+                # Deploy-dark: surface the pure intent + who would drive each
+                # fan (no controllers ran, nothing is injected or written).
+                desired, owners = merge_desired_owned(
+                    list(zip(map(_output_name, self.policies), pure_outputs))
+                )
+                res = resolve_fan_units(
+                    desired, owners, self._fan_units(state), self._fan_live(),
+                    frozenset(), rearm_pct=NIGHT_GUARD_FAN_PCT,
+                )
+                self.last_desired, self.last_owners = res.desired, res.owners
+                self.fan_owners, self.fan_notes = res.unit_owner, res.notes
+                self.fan_deferred = ()
         finally:
             self._lock.release()
+
+    def _fan_units(self, state: HouseState) -> list[FanUnit]:
+        """Every fancoil unit once (leaders first, so the open-space kitchen
+        unit is attributed to living_room). A unit defers its re-arm while ANY
+        zone it serves is paused (#4 / free-air) or the house is free-cooling."""
+        free = _is_free_cooling(state)
+        paused_by_fan: dict[str, bool] = {}
+        owner_zone: dict[str, str] = {}
+        zones = sorted(state.zones.values(), key=lambda z: z.follows is not None)
+        for z in zones:
+            for fan, _manuale in z.fancoil_units:
+                owner_zone.setdefault(fan, z.zone_id)
+                paused_by_fan[fan] = paused_by_fan.get(fan, False) or z.paused
+        units: list[FanUnit] = []
+        for z in zones:
+            for fan, manuale in z.fancoil_units:
+                if owner_zone.get(fan) != z.zone_id:
+                    continue
+                units.append(FanUnit(
+                    zone_id=z.zone_id, fan=fan, manuale=manuale,
+                    defer_rearm=free or paused_by_fan.get(fan, False),
+                ))
+        return units
+
+    def _fan_live(self) -> dict[str, FanLive]:
+        live: dict[str, FanLive] = {}
+        for fan in UNIT_FANS.values():
+            fs = self.hass.states.get(fan)
+            ms = self.hass.states.get(_manuale_switch(fan))
+            live[fan] = FanLive(
+                fan_on=(fs.state == STATE_ON) if fs is not None
+                and fs.state in (STATE_ON, STATE_OFF) else None,
+                manuale_on=(ms.state == STATE_ON) if ms is not None
+                and ms.state in (STATE_ON, STATE_OFF) else None,
+            )
+        return live
+
+    def _resolve_fan_units(
+        self, state: HouseState, desired: dict, owners: dict
+    ) -> tuple[dict, dict]:
+        res = resolve_fan_units(
+            desired, owners, self._fan_units(state), self._fan_live(),
+            frozenset(self._fans_turned_off), rearm_pct=NIGHT_GUARD_FAN_PCT,
+        )
+        # I1: a fan leaves the re-arm set only on a CONFIRMED live ON read.
+        self._fans_turned_off -= res.confirmed_alive
+        for fan in res.rearmed:
+            _LOGGER.info(
+                "Fan %s: re-arming (the supervisor switched it off and no longer "
+                "holds it; KNX AUTO will not restart it on its own)", fan,
+            )
+        self.fan_owners, self.fan_notes = res.unit_owner, res.notes
+        self.fan_deferred = res.deferred
+        return res.desired, res.owners
 
     def _observe_telemetry(self, state: HouseState) -> None:
         """Feed the per-unit telemetry windows (read-only, every cycle)."""
@@ -1759,8 +1847,9 @@ class SupervisorEngine:
             # (wall press) resumes silent, not at the last RUN %.
             pct = int(float(value))
             if pct > 0:
-                # Alive again — no longer a fan the fail-safe must re-arm.
-                self._fans_turned_off.discard(entity)
+                # v0.72.0: NOT discarded from _fans_turned_off here — the fan
+                # actuator drops it only once a live read CONFIRMS it ON, so a
+                # dropped KNX telegram cannot lose a fan that still needs re-arm.
                 await self._call(
                     FAN_DOMAIN, SERVICE_TURN_ON,
                     {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: pct},

@@ -176,6 +176,22 @@ def merge_desired(
 
 
 
+def merge_desired_owned(
+    named_outputs: list[tuple[str, dict[str, str | float | None]]],
+) -> tuple[dict[str, str | float | None], dict[str, str]]:
+    """`merge_desired` + provenance: also returns lever -> name of the output
+    (controller/policy) that won it. Same first-opinion-wins semantics."""
+    merged: dict[str, str | float | None] = {}
+    owners: dict[str, str] = {}
+    for name, output in named_outputs:
+        for lever, value in output.items():
+            if lever not in merged:
+                merged[lever] = value
+                owners[lever] = name
+    return merged, owners
+
+
+
 # --- Lever-key helpers -------------------------------------------------------
 # A lever is addressed by "<kind>:<entity>"; the engine reads/writes by kind.
 # The global cooling block has no entity in its key.
