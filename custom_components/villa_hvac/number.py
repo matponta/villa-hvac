@@ -23,15 +23,19 @@ from .const import (
     DEFAULT_HOUSE_SETPOINT,
     DEFAULT_SETPOINT_OFFSET,
     DEFAULT_SHADING_POSITION,
+    DEFAULT_WINTER_HOUSE_SETPOINT,
     HOUSE_SETPOINT_MAX,
     HOUSE_SETPOINT_MIN,
     HOUSE_SETPOINT_STEP,
+    PRESET_CONTROLLABLE_EMITTERS,
     SETPOINT_OFFSET_MAX,
     SETPOINT_OFFSET_MIN,
     SETPOINT_OFFSET_STEP,
     SHADE_POSITION_MAX,
     SHADE_POSITION_MIN,
     SHADE_POSITION_STEP,
+    WINTER_HOUSE_SETPOINT_MAX,
+    WINTER_HOUSE_SETPOINT_MIN,
     ZONES,
 )
 from .controller import apply_house_mode, current_house_mode
@@ -44,7 +48,9 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """House setpoint + per-room shade position (#6) + per-zone fan-min (#3 v2)."""
-    entities: list[NumberEntity] = [HouseSetpointNumber(entry)]
+    entities: list[NumberEntity] = [
+        HouseSetpointNumber(entry), WinterHouseSetpointNumber(entry),
+    ]
     entities += [
         ShadePositionNumber(entry, zone, name)
         for zone, name in shadeable_zones(hass).items()
@@ -55,11 +61,12 @@ async def async_setup_entry(
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
     ]
-    # #2: per-zone comfort offset for the cooling fancoil zones.
+    # #2: per-zone comfort offset. v0.77.0: every thermostat zone (radiant
+    # included — the winter trim); summer still reads it on fancoil zones only.
     entities += [
         ZoneOffsetNumber(entry, zone_id, zone["name"])
         for zone_id, zone in ZONES.items()
-        if zone.get("climate") and zone.get("emitter") == "fancoil"
+        if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
     ]
     async_add_entities(entities)
 
@@ -97,6 +104,23 @@ class HouseSetpointNumber(NumberEntity, RestoreEntity):
         await apply_house_mode(
             self.hass, self._entry, current_house_mode(self.hass, self._entry)
         )
+
+
+class WinterHouseSetpointNumber(HouseSetpointNumber):
+    """v0.77.0: the WINTER whole-house heating setpoint (separate slider).
+
+    Read instead of the summer slider while the season is winter, so a summer
+    comfort value (~24-25) is never written as a heating setpoint."""
+
+    _attr_name = "House setpoint winter"
+    _attr_icon = "mdi:home-thermometer-outline"
+    _attr_native_min_value = WINTER_HOUSE_SETPOINT_MIN
+    _attr_native_max_value = WINTER_HOUSE_SETPOINT_MAX
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_house_setpoint_winter"
+        self._attr_native_value = DEFAULT_WINTER_HOUSE_SETPOINT
 
 
 class ShadePositionNumber(NumberEntity, RestoreEntity):

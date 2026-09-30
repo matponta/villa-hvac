@@ -61,7 +61,8 @@
           "pv_eff_min": "Bias PV · tasso minimo efficace (°C/h)",
           "pv_daily_need_kwh": "Bias PV · consumo giornaliero stimato (kWh)",
           "mass_via_offset": "Mantenimento massa · limite offset Via estate (°C)",
-          "shed_max_callers": "Riposo PdC · stanze max che tengono acceso il PdC"
+          "shed_max_callers": "Riposo PdC · stanze max che tengono acceso il PdC",
+          "winter_eco_offset": "Inverno · offset Economy stanza (°C)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
@@ -74,7 +75,7 @@
           "summer_via_offset": "Il setback in raffrescamento è più CALDO, quindi positivo (es. +5).",
           "summer_notte_offset": "Setback notturno in raffrescamento, più caldo (es. +3).",
           "winter_via_offset": "Il setback in riscaldamento è più FREDDO, quindi negativo (es. -2).",
-          "winter_notte_offset": "Setback notturno in riscaldamento, più freddo (es. -4).",
+          "winter_notte_offset": "Setback notturno in riscaldamento, più freddo (es. -1).",
           "free_cool_outdoor": "Esterno sotto questa soglia → sospende il raffrescamento attivo.",
           "windows_free_cool_count": "Con l'interruttore Windows free cooling attivo: almeno questo numero di contatti finestra aperti → la casa va in free-cooling.",
           "windows_free_cool_margin": "…e l'aria esterna più fresca della media interna di almeno questo margine.",
@@ -109,7 +110,8 @@
           "pv_eff_min": "Tasso di raffrescamento netto (°C/h) sotto il quale un'ora è «inefficiente» — rinvia invece di fare banking.",
           "pv_daily_need_kwh": "Stima approssimativa del consumo elettrico giornaliero del Condominio, per capire se il sole previsto copre la giornata (sole abbondante vs scarso). Regolabile.",
           "mass_via_offset": "Con switch.mass_maintenance attivo: in Via d'estate limita il setback a questo valore sotto la soglia di picco esterna (accumula fresco; al picco vale l'offset Via pieno).",
-          "shed_max_callers": "Con switch.demand_shedding attivo: quando il compressore gira solo per queste stanze già entro il comfort, alza il loro setpoint per far riposare il PdC."
+          "shed_max_callers": "Con switch.demand_shedding attivo: quando il compressore gira solo per queste stanze già entro il comfort, alza il loro setpoint per far riposare il PdC.",
+          "winter_eco_offset": "Di quanto scende d'inverno una stanza con l'interruttore Economy acceso (es. -3)."
         }
       }
     }

@@ -26,6 +26,7 @@ from .const import (
     COMFORT_FLOOR_OFFSET,
     DEFAULT_COMFORT_FLOOR,
     DEFAULT_FAN_MIN,
+    DEFAULT_WINTER_ECO_OFFSET,
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_HOME,
@@ -35,6 +36,7 @@ from .const import (
     OPT_COMFORT_FLOOR,
     OPT_FAN_MIN,
     OPT_SEASON,
+    OPT_WINTER_ECO_OFFSET,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_OFFSET_DEFAULTS,
     SEASON_OFFSET_OPTS,
@@ -218,6 +220,22 @@ def setpoint_offset(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> float
     return max(SETPOINT_OFFSET_MIN, min(SETPOINT_OFFSET_MAX, float(value)))
 
 
+def zone_economy(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
+    """True when a room's winter Economy switch is on (v0.77.0)."""
+    return _switch_state(hass, entry, f"{zone}_economy") == STATE_ON
+
+
+def winter_eco_offset(entry: ConfigEntry) -> float:
+    """°C a winter Economy room runs below its normal target (<= 0)."""
+    try:
+        value = float(entry.options.get(OPT_WINTER_ECO_OFFSET, DEFAULT_WINTER_ECO_OFFSET))
+    except (TypeError, ValueError):
+        return DEFAULT_WINTER_ECO_OFFSET
+    if not math.isfinite(value):
+        return DEFAULT_WINTER_ECO_OFFSET
+    return max(-8.0, min(0.0, value))
+
+
 def comfort_floor(
     hass: HomeAssistant, entry: ConfigEntry, house_setpoint: float | None
 ) -> float:
@@ -398,15 +416,19 @@ def current_house_mode(hass: HomeAssistant, entry: ConfigEntry) -> str:
     return HOUSE_MODE_HOME
 
 
-def current_house_setpoint(hass: HomeAssistant, entry: ConfigEntry) -> float | None:
-    """House comfort setpoint from the number entity (None if unavailable).
+def current_house_setpoint(
+    hass: HomeAssistant, entry: ConfigEntry, season: str = SEASON_SUMMER
+) -> float | None:
+    """House comfort setpoint for `season` from its number entity (None if
+    unavailable). v0.77.0: winter reads its own slider (house_setpoint_winter).
 
     Rejects NaN/inf: this value flows straight into the band center and out to a
     KNX set_temperature, so a non-finite helper value must never propagate (the
     write-side counterpart to the _num/coordinator isfinite guards)."""
+    suffix = "house_setpoint_winter" if season == SEASON_WINTER else "house_setpoint"
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        "number", DOMAIN, f"{entry.entry_id}_house_setpoint"
+        "number", DOMAIN, f"{entry.entry_id}_{suffix}"
     )
     if entity_id and (state := hass.states.get(entity_id)) is not None:
         try:

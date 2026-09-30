@@ -89,7 +89,9 @@ OPT_WINTER_NOTTE_OFFSET = "winter_notte_offset"
 # opposite by season.
 SEASON_OFFSET_DEFAULTS: dict[str, dict[str, float]] = {
     SEASON_SUMMER: {HOUSE_MODE_AWAY: 5.0, HOUSE_MODE_NIGHT: 3.0},
-    SEASON_WINTER: {HOUSE_MODE_AWAY: -2.0, HOUSE_MODE_NIGHT: -4.0},
+    # v0.77.0: winter Notte -4 -> -1 (owner: "just a bit cooler at night"; a
+    # radiant floor recovers slowly, a deep night setback costs the morning).
+    SEASON_WINTER: {HOUSE_MODE_AWAY: -2.0, HOUSE_MODE_NIGHT: -1.0},
 }
 SEASON_OFFSET_OPTS: dict[str, dict[str, str]] = {
     SEASON_SUMMER: {
@@ -107,6 +109,25 @@ DEFAULT_HOUSE_SETPOINT = 24.0
 HOUSE_SETPOINT_MIN = 16.0
 HOUSE_SETPOINT_MAX = 28.0
 HOUSE_SETPOINT_STEP = 0.5
+
+# v0.77.0 WINTER LIGHT — heating is driven through the KNX thermostats only
+# (setpoint writes; never the radiant valves). A SEPARATE winter house slider
+# (number.house_setpoint_winter): the summer one sits at ~24-25 and would have
+# been written as a HEATING setpoint to every radiant floor on the flip.
+DEFAULT_WINTER_HOUSE_SETPOINT = 21.0
+WINTER_HOUSE_SETPOINT_MIN = 16.0
+WINTER_HOUSE_SETPOINT_MAX = 24.0
+# Winter = setpoint only: Casa/Via/Notte all hold the `comfort` preset and the
+# setback lives in the written temperature (no KNX standby/economy shift stacked
+# on top — their heat-mode behaviour is unverified). Vacanza keeps BP (frost).
+WINTER_PRESET = "comfort"
+# Per-room Economy (switch.<zone>_economy, winter only): this much below the room's
+# normal target. Options-editable.
+OPT_WINTER_ECO_OFFSET = "winter_eco_offset"
+DEFAULT_WINTER_ECO_OFFSET = -3.0
+# Hard bounds on ANY winter setpoint we write (house + mode + room + economy).
+WINTER_SETPOINT_MIN = 15.0
+WINTER_SETPOINT_MAX = 25.0
 
 # #2 per-room comfort offset: °C added to the house base center for a cooling
 # zone (number.*_setpoint_offset). Negative = this room runs cooler than the

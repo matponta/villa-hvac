@@ -61,7 +61,8 @@
           "pv_eff_min": "PV bias · min effective rate (°C/h)",
           "pv_daily_need_kwh": "PV bias · estimated daily consumption (kWh)",
           "mass_via_offset": "Mass maintenance · summer Via offset cap (°C)",
-          "shed_max_callers": "Demand shedding · max rooms holding the PdC on"
+          "shed_max_callers": "Demand shedding · max rooms holding the PdC on",
+          "winter_eco_offset": "Winter · room Economy offset (°C)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte a bedroom above this runs a brief low-fan burst.",
@@ -74,7 +75,7 @@
           "summer_via_offset": "Cooling setback is WARMER, so this is positive (e.g. +5).",
           "summer_notte_offset": "Cooling night setback, warmer (e.g. +3).",
           "winter_via_offset": "Heating setback is COOLER, so this is negative (e.g. -2).",
-          "winter_notte_offset": "Heating night setback, cooler (e.g. -4).",
+          "winter_notte_offset": "Heating night setback, cooler (e.g. -1).",
           "free_cool_outdoor": "Outdoor below this → suppress active cooling.",
           "windows_free_cool_count": "With the Windows free cooling switch on: at least this many window contacts open → coast on the outside air.",
           "windows_free_cool_margin": "…and the outdoor air at least this much cooler than the house indoor mean.",
@@ -109,7 +110,8 @@
           "pv_eff_min": "Net cooling rate (°C/h) below which an hour is 'ineffective' — defer/hold instead of banking.",
           "pv_daily_need_kwh": "Rough estimate of the Condominio's daily electricity use, to judge whether forecast solar covers the day (solar-rich vs solar-poor). Tunable.",
           "mass_via_offset": "With switch.mass_maintenance on: in summer Via, cap the setback at this below the peak outdoor temperature (bank coolth; the full Via offset applies at the peak).",
-          "shed_max_callers": "With switch.demand_shedding on: when the compressor runs only for this many rooms already within comfort, lift their setpoint so the PdC can rest."
+          "shed_max_callers": "With switch.demand_shedding on: when the compressor runs only for this many rooms already within comfort, lift their setpoint so the PdC can rest.",
+          "winter_eco_offset": "How much cooler a room with its Economy switch on runs in winter (e.g. -3)."
         }
       }
     }

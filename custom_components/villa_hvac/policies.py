@@ -97,6 +97,9 @@ from .const import (
     SHADING_PROP_TEMP_FULL,
     SHADING_PROP_TEMP_REF,
     SHADING_PROP_TEMP_WEIGHT,
+    WINTER_PRESET,
+    WINTER_SETPOINT_MAX,
+    WINTER_SETPOINT_MIN,
     ZONES,
 )
 from .supervisor.thermal import (
@@ -249,6 +252,8 @@ def house_mode_policy(state: HouseState) -> Desired:
     preset = MODE_PRESET.get(state.house_mode)
     if preset is None:
         return {}
+    if state.season == SEASON_WINTER:
+        return _winter_house_mode(state, preset)
     free_cooling = _free_cooling(state)
     out: Desired = {}
     for z in state.zones.values():
@@ -260,6 +265,30 @@ def house_mode_policy(state: HouseState) -> Desired:
         if state.mode_offset is not None and state.house_setpoint is not None:
             out[temperature_lever(z.climate)] = round(
                 state.house_setpoint + state.mode_offset + z.setpoint_offset, 1
+            )
+    return out
+
+
+def _winter_house_mode(state: HouseState, preset: str) -> Desired:
+    """v0.77.0 winter light: heat through the thermostats, SETPOINT ONLY.
+
+    Casa/Via/Notte all hold the `comfort` preset (Vacanza keeps building_
+    protection = frost only); the setback lives in the written temperature:
+    winter slider + mode offset (Via/Notte) + room trim (+ Economy), clamped to
+    [WINTER_SETPOINT_MIN, WINTER_SETPOINT_MAX]. Radiant zones included. Disabled
+    and window-paused zones are left to the higher-priority policies.
+    """
+    if preset != PRESET_BUILDING_PROTECTION:
+        preset = WINTER_PRESET
+    out: Desired = {}
+    for z in state.zones.values():
+        if not _controllable(z) or not z.enabled or z.paused:
+            continue
+        out[preset_lever(z.climate)] = preset
+        if state.mode_offset is not None and state.house_setpoint is not None:
+            target = state.house_setpoint + state.mode_offset + z.setpoint_offset
+            out[temperature_lever(z.climate)] = round(
+                max(WINTER_SETPOINT_MIN, min(WINTER_SETPOINT_MAX, target)), 1
             )
     return out
 

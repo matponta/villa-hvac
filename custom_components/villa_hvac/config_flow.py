@@ -99,6 +99,7 @@ from .const import (
     OPT_SUMMER_NOTTE_OFFSET,
     OPT_SUMMER_VIA_OFFSET,
     OPT_WINTER_NOTTE_OFFSET,
+    OPT_WINTER_ECO_OFFSET,
     OPT_WINTER_VIA_OFFSET,
     SEASON_AUTO,
     SEASON_OFFSET_DEFAULTS,
@@ -107,6 +108,7 @@ from .const import (
     WEATHER_ENTITY_DEFAULT,
     DEFAULT_MASS_VIA_OFFSET,
     DEFAULT_SHED_MAX_CALLERS,
+    DEFAULT_WINTER_ECO_OFFSET,
 )
 
 
@@ -213,6 +215,12 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         SEASON_OFFSET_DEFAULTS[SEASON_WINTER][HOUSE_MODE_NIGHT],
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    OPT_WINTER_ECO_OFFSET,
+                    default=options.get(
+                        OPT_WINTER_ECO_OFFSET, DEFAULT_WINTER_ECO_OFFSET
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-8, max=0)),
                 vol.Optional(
                     OPT_FREE_COOL_OUTDOOR,
                     default=options.get(

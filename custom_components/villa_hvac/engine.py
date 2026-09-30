@@ -87,6 +87,7 @@ from .const import (
     REGIME_K_CONF_MIN,
     SCHEDULE_MAX_AGE,
     SEASON_SUMMER,
+    SEASON_WINTER,
     OPT_WEATHER_ENTITY,
     OUTDOOR_TEMP,
     OUTDOOR_TEMP_FALLBACK,
@@ -127,6 +128,8 @@ from .controller import (
     mode_offset,
     pv_bias_enabled,
     setpoint_offset,
+    winter_eco_offset,
+    zone_economy,
     shade_blocked,
     shade_position,
     split_ac_enabled,
@@ -414,6 +417,31 @@ def shadeable_zones(hass: HomeAssistant) -> dict[str, str]:
     return zones
 
 
+def _is_controllable_zone(zone: dict) -> bool:
+    """A zone #2a drives: owns a KNX thermostat with a preset emitter."""
+    return bool(zone.get("climate")) and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
+
+
+def _zone_setpoint_offset(
+    hass: HomeAssistant, entry: ConfigEntry, zone_id: str, zone: dict,
+    season: str, eco_offset: float,
+) -> float:
+    """Per-room trim (°C) stacked on the house base.
+
+    SUMMER: fancoil zones only (unchanged — the cooling paths read it).
+    WINTER (v0.77.0): every thermostat zone, radiant included, plus the room's
+    Economy offset when its switch is on. Only #2a consumes it in winter.
+    """
+    if season == SEASON_WINTER:
+        if not _is_controllable_zone(zone):
+            return 0.0
+        offset = setpoint_offset(hass, entry, zone_id)
+        if zone_economy(hass, entry, zone_id):
+            offset += eco_offset
+        return offset
+    return setpoint_offset(hass, entry, zone_id) if zone.get("emitter") == "fancoil" else 0.0
+
+
 def build_house_state(
     hass: HomeAssistant, entry: ConfigEntry, coordinator, forecast=(),
     base_covers: "tuple[CoverInfo, ...] | None" = None,
@@ -449,7 +477,9 @@ def build_house_state(
 
     # Hoisted once for the HouseState below.
     mode = current_house_mode(hass, entry)
-    house_setpoint = current_house_setpoint(hass, entry)
+    # v0.77.0: the season's own slider (winter reads house_setpoint_winter).
+    house_setpoint = current_house_setpoint(hass, entry, season)
+    eco_offset = winter_eco_offset(entry)
     house_offset = mode_offset(hass, entry, mode)
 
     # #6: enrich each shadeable cover with its room's shade target + block flag
@@ -588,8 +618,12 @@ def build_house_state(
             paused=zone_id in paused,
             bedroom=bool(zone.get("bedroom")),
             fan_min=fan_min(hass, entry, zone_id) if emitter == "fancoil" else 0,
-            setpoint_offset=(
-                setpoint_offset(hass, entry, zone_id) if emitter == "fancoil" else 0.0
+            setpoint_offset=_zone_setpoint_offset(
+                hass, entry, zone_id, zone, season, eco_offset
+            ),
+            economy=(
+                season == SEASON_WINTER and _is_controllable_zone(zone)
+                and zone_economy(hass, entry, zone_id)
             ),
             fancoil=fancoil,
             manuale=manuale,

@@ -22,7 +22,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
-from .const import NIGHT_SILENCE_SWITCHES, ZONES
+from .const import NIGHT_SILENCE_SWITCHES, PRESET_CONTROLLABLE_EMITTERS, ZONES
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import shadeable_zones
@@ -70,6 +70,12 @@ async def async_setup_entry(
         ZoneEnableSwitch(coordinator, entry, zone_id, zone)
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
+    ]
+    # v0.77.0: winter per-room Economy (every thermostat zone, radiant included).
+    entities += [
+        ZoneEconomySwitch(entry, zone_id, zone["name"])
+        for zone_id, zone in ZONES.items()
+        if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
     ]
     entities += [
         ShadeBlockSwitch(entry, zone, name)
@@ -770,3 +776,37 @@ class ZoneEnableSwitch(
         self._attr_is_on = False
         self.async_write_ha_state()
         await self._request_run()
+
+
+class ZoneEconomySwitch(SwitchEntity, RestoreEntity):
+    """v0.77.0 winter per-room Economy: while ON (heating season) this room's
+    thermostat target drops by the `winter_eco_offset` option (default −3 °C)
+    below its normal house+mode+trim value. Restored, default OFF. Inert in
+    summer. Only flips the flag and nudges the engine — no direct writes."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:leaf"
+
+    def __init__(self, entry: VillaHvacConfigEntry, zone_id: str, name: str) -> None:
+        self._entry = entry
+        self._attr_name = f"{name} economy"
+        self._attr_unique_id = f"{entry.entry_id}_{zone_id}_economy"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _set(self, value: bool) -> None:
+        self._attr_is_on = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._set(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._set(False)

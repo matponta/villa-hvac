@@ -64,7 +64,7 @@ async def test_winter_via_offset_when_thermostat_heating(hass):
         "climate.salotto_termostato_2", "heat",
         {"preset_mode": "comfort", "temperature": 20.0},
     )
-    async_mock_service(hass, "climate", "set_preset_mode")
+    presets = async_mock_service(hass, "climate", "set_preset_mode")
     temps = async_mock_service(hass, "climate", "set_temperature")
 
     await hass.services.async_call(
@@ -72,8 +72,10 @@ async def test_winter_via_offset_when_thermostat_heating(hass):
     )
     await hass.async_block_till_done()
 
-    # Winter Via = base(24) + (-2) = 22 (heating setback is cooler).
-    assert {c.data["temperature"] for c in temps} == {22.0}
+    # v0.77.0: winter reads its OWN slider (default 21, not the summer 24):
+    # Via = 21 + (-2) = 19, and winter is setpoint-only -> preset stays comfort.
+    assert {c.data["temperature"] for c in temps} == {19.0}
+    assert {c.data["preset_mode"] for c in presets} <= {"comfort"}
 
 
 async def test_vacation_pushes_no_temperature(hass):
