@@ -105,7 +105,53 @@ async def async_setup_entry(
             UnitValveStrokesSensor(coordinator, entry, zone_id),
             UnitFanDeliveredSensor(coordinator, entry, zone_id),
         ]
+    # v0.75.0: one "why" sensor per cooled room (fancoil leaders).
+    entities += [
+        RoomExplainSensor(coordinator, entry, zone_id, zone)
+        for zone_id, zone in ZONES.items()
+        if zone.get("climate") and zone.get("emitter") == "fancoil"
+        and zone.get("fancoils") and not zone.get("follows")
+    ]
     async_add_entities(entities)
+
+
+class RoomExplainSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.75.0: who is driving this room, toward what, and what the valve and
+    fan are actually doing — state code + an Italian `explanation`."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:comment-question-outline"
+    # The sentence and live numbers change every cycle: keep them out of the
+    # recorder (the telemetry sensors carry the numbers in long-term stats);
+    # the STATE (who drives the room) is what history should keep.
+    _unrecorded_attributes = frozenset({
+        "explanation", "temperature", "setpoint", "setpoint_target",
+        "valve_open", "valve_duty_1h", "valve_strokes_1h", "fan_delivered",
+        "model_reasons", "manual_levers",
+    })
+
+    def __init__(self, coordinator, entry, zone_id: str, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone_id
+        self._attr_name = f"{zone['name']} stato HVAC"
+        self._attr_unique_id = f"{entry.entry_id}_{zone_id}_explain"
+
+    @property
+    def _explain(self):
+        engine = getattr(self.coordinator, "engine", None)
+        return engine.explain(self._zone_id) if engine is not None else None
+
+    @property
+    def native_value(self) -> str | None:
+        e = self._explain
+        return e.state if e is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        e = self._explain
+        if e is None:
+            return {}
+        return {**e.attributes, "explanation": e.sentence}
 
 
 def _unit(coordinator, zone_id: str):

@@ -143,7 +143,8 @@ from .returnhome import AwayReturnController
 from .supervisor_config import SupervisorConfig
 from .supervisor.fan_actuator import FanLive, FanUnit, resolve_fan_units
 from .supervisor.house_model import HouseRuntimeModel
-from .supervisor.mass import apply_mass_maintenance
+from .supervisor.explain import LiveClimate, RoomExplain, explain_room
+from .supervisor.mass import DemandShedController, apply_mass_maintenance
 from .supervisor.telemetry import HouseTelemetry
 from .supervisor import (
     BLOCCO_LEVER,
@@ -787,6 +788,12 @@ class SupervisorEngine:
         self.house_model = HouseRuntimeModel()
         # v0.74.0 mass maintenance: peak-coast latch (hysteresis across cycles).
         self._mass_coasting = False
+        # v0.75.0 explain surface: the last fully-annotated state + the shed
+        # controller (if present) whose per-room reason the sensors quote.
+        self._last_state: HouseState | None = None
+        self._shed = next(
+            (c for c in self.controllers if isinstance(c, DemandShedController)), None
+        )
         # S_eff diagnostics: per-leader (value, source, units_tag) computed every
         # build_house_state (deploy-dark style) — the model sensor exposes it so
         # the geometry can be validated live before any consumer switches.
@@ -1058,6 +1065,7 @@ class SupervisorEngine:
             # PV/planner/precool in the resolution (no failure, just a warmer
             # house) — pinned by tests/test_resolve_center.py.
             state = annotate_centers(state, max_age=SCHEDULE_MAX_AGE)
+            self._last_state = state
             # Pure policies first — used both for the plan view and (merged with
             # the stateful controllers) for actuation.
             pure_outputs = [policy(state) for policy in self.policies]
@@ -1129,6 +1137,34 @@ class SupervisorEngine:
                 self.fan_deferred = ()
         finally:
             self._lock.release()
+
+    def explain(self, zone_id: str) -> RoomExplain | None:
+        """v0.75.0: who drives this room, toward what, and what the hardware
+        is doing — folded from the last cycle (works deploy-dark too)."""
+        state = self._last_state
+        if state is None or zone_id not in state.zones:
+            return None
+        z = state.zones[zone_id]
+        cs = self.hass.states.get(z.climate) if z.climate else None
+        live = LiveClimate(
+            setpoint=_finite(cs.attributes.get(ATTR_TEMPERATURE)) if cs else None,
+            preset=cs.attributes.get(ATTR_PRESET_MODE) if cs else None,
+        )
+        fan = z.fancoil_units[0][0] if z.fancoil_units else None
+        shed_reason = None
+        if self._shed is not None:
+            st = self._shed.state
+            if zone_id in st.shed_since:
+                shed_reason = st.last_reason.get(zone_id)
+        return explain_room(
+            z, state, live=live, desired=self.last_desired, owners=self.last_owners,
+            decisions=self._lever_decisions,
+            fan_owner=self.fan_owners.get(fan) if fan else None,
+            fan_note=self.fan_notes.get(fan) if fan else None,
+            telemetry=self.telemetry.get(zone_id),
+            validity=self.thermal.validity(zone_id),
+            shed_reason=shed_reason, enabled=self.enabled,
+        )
 
     def _fan_units(self, state: HouseState) -> list[FanUnit]:
         """Every fancoil unit once (leaders first, so the open-space kitchen
