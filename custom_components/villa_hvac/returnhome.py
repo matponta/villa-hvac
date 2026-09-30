@@ -46,8 +46,10 @@ from .const import (
     RETURN_DAYPART_EVENING,
     RETURN_DAYPART_MORNING,
     RETURN_NOTIFY_TAG,
+    SEASON_WINTER,
 )
 from .controller import (
+    current_season,
     return_armed,
     return_date,
     return_daypart,
@@ -118,7 +120,14 @@ class AwayReturnController:
         # Comfort target = the Casa setpoint (offset 0). Without it we can't size
         # the lead or the ramp -> stay inert.
         target = state.house_setpoint
-        is_via = state.house_mode == HOUSE_MODE_AWAY
+        # v0.76.0: SUMMER only. The lead-time model is cooling-only (a room below
+        # target contributes no lead), so in winter WAITING would park the whole
+        # house — radiant floors included — in building_protection for the entire
+        # absence and ramp only ~margin before the ETA: a cold house on arrival.
+        # Inert in winter -> the native Via (a soft winter setback) applies.
+        is_via = (
+            state.house_mode == HOUSE_MODE_AWAY and state.season != SEASON_WINTER
+        )
         if target is None:
             lead = timedelta(0)
         else:
@@ -200,6 +209,8 @@ class ReturnHomeManager:
             return  # already Via -> attribute churn, ask only on the transition
         if not return_precond_enabled(self.hass, self.entry):
             return
+        if current_season(self.hass, self.entry) == SEASON_WINTER:
+            return  # #8 is summer-only (v0.76.0): don't ask a question we ignore
         if return_armed(self.hass, self.entry):
             return  # already told it when we're back
         self.hass.async_create_task(self._ask())

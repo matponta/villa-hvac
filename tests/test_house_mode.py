@@ -146,11 +146,11 @@ async def test_current_season_corroborates_stagione_when_reference_inconclusive(
 
 async def test_current_season_off_unknown_and_default_branches(hass):
     """Inconclusive reference states (off/unknown) fall to s5a stagione; when
-    neither signal is conclusive, default to summer."""
+    neither signal is conclusive, keep the last conclusive season."""
     entry = MockConfigEntry(domain=DOMAIN, data={})
     hass.states.async_set(SEASON_REFERENCE_CLIMATE, "off")
     hass.states.async_set(SEASON_STAGIONE_SENSOR, "Estate")
     assert current_season(hass, entry) == SEASON_SUMMER
     hass.states.async_set(SEASON_REFERENCE_CLIMATE, "unknown")
     hass.states.async_set(SEASON_STAGIONE_SENSOR, "unavailable")
-    assert current_season(hass, entry) == SEASON_SUMMER  # both inconclusive -> default
+    assert current_season(hass, entry) == SEASON_SUMMER  # both inconclusive -> last conclusive (v0.76.0)

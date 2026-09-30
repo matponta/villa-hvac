@@ -75,6 +75,10 @@ SEASON_STAGIONE_SUMMER = "Estate"
 SEASON_STAGIONE_WINTER = "Inverno"
 
 OPT_SEASON = "season"
+# v0.76.0: blind season fallback (both signals inconclusive, no memory yet) =
+# the calendar heating season, (month, day) inclusive start / exclusive end.
+WINTER_CALENDAR_START = (10, 15)
+WINTER_CALENDAR_END = (4, 15)
 OPT_SUMMER_VIA_OFFSET = "summer_via_offset"
 OPT_SUMMER_NOTTE_OFFSET = "summer_notte_offset"
 OPT_WINTER_VIA_OFFSET = "winter_via_offset"

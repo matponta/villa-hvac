@@ -208,11 +208,14 @@ class WindowController:
         deliberateness is intent, not thermodynamics. A suppressed alert is
         RE-ARMED, never consumed (see `_alert`).
         """
+        # v0.76.0: both are SUMMER airing signals. free_air is restored across
+        # restarts; left on into winter it must not silence the long-open page
+        # (it no longer pauses anything in winter either — see build_house_state).
+        if current_season(self.hass, self.entry) != SEASON_SUMMER:
+            return False
         if free_air_enabled(self.hass, self.entry):
             return True
         if not windows_free_cool_enabled(self.hass, self.entry):
-            return False
-        if current_season(self.hass, self.entry) != SEASON_SUMMER:
             return False
         cfg_count = self._windows_free_cool_count()
         open_count = sum(

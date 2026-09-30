@@ -87,6 +87,7 @@ from .const import (
     PRESET_BUILDING_PROTECTION,
     PRESET_CONTROLLABLE_EMITTERS,
     SEASON_SUMMER,
+    SEASON_WINTER,
     SHADE_POSITION_MAX,
     SHADE_POSITION_MIN,
     SHADE_POSITION_STEP,
@@ -754,6 +755,15 @@ class ThermalEstimator:
         """One read-only learning tick over all cooling leaders. Mutates params
         only; returns nothing. Safe to call deploy-dark."""
         if not state.model_learning_enabled:
+            return
+        if state.season == SEASON_WINTER:
+            # v0.76.0: the model is a COOLING envelope model. In heat mode the
+            # chilled valve is always closed, so every window looked "passive"
+            # and the radiant heat input was fitted into {a,b,c} (mostly c) and
+            # persisted — next summer's fan sizing would start contaminated.
+            # Drop the rolling windows so a resume can't bridge the gap.
+            self._buf.clear()
+            self._last_w.clear()
             return
         for z in state.zones.values():
             if _is_cooling_leader(z):

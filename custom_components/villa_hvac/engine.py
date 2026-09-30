@@ -431,10 +431,14 @@ def build_house_state(
     window = getattr(coordinator, "window", None)
     # Copy: we may union free-air zones below and must not mutate window.paused.
     paused = set(window.paused) if window is not None else set()
+    season = current_season(hass, entry)
     # #3: a manual free-air / windows-open flag pauses the cooled fancoil zones
     # house-wide (same mechanism as a #4 window contact opening) so the AC doesn't
     # fight the open air. Released by turning the switch back off.
-    if free_air_enabled(hass, entry):
+    # v0.76.0: SUMMER only — the switch is restored across restarts, and left on
+    # into winter it held the 7 fancoil-labelled thermostats (which drive the
+    # radiant floor in heat mode) in building_protection: no heating.
+    if season == SEASON_SUMMER and free_air_enabled(hass, entry):
         paused |= {zid for zid, z in ZONES.items() if z.get("emitter") == "fancoil"}
     # F2: the learned thermal model (blended prior->learned) for each leader.
     thermal = getattr(getattr(coordinator, "engine", None), "thermal", None)
@@ -622,12 +626,17 @@ def build_house_state(
     # so a reboot-in-Notte re-silences with no startup-resync branch.
     night = getattr(coordinator, "night", None)
     setback_on = auto_setback_enabled(hass, entry)
+    # v0.76.0: SUMMER only. Camere silenziose is a fancoil-noise feature; in winter
+    # the bedrooms heat through the radiant floor and silencing (manuale on + fan
+    # 0 each night, one-shot fan-on each morning) was pure bus churn. A season
+    # flip mid-Notte lands in the controller's release path (full hand-back).
     night_active = (
-        mode == HOUSE_MODE_NIGHT and setback_on and not getattr(night, "woken", False)
+        season == SEASON_SUMMER
+        and mode == HOUSE_MODE_NIGHT and setback_on
+        and not getattr(night, "woken", False)
     )
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
-    season = current_season(hass, entry)
     # Windows → free-cool inference (v0.56.0, owner rule 2): enough window
     # CONTACTS open + outdoor meaningfully cooler than the house indoor mean →
     # the house is being aired deliberately; `_is_free_cooling` ORs the verdict

@@ -10,6 +10,7 @@ and never pulled back into a cooling preset.
 """
 from __future__ import annotations
 
+from datetime import date
 import logging
 import math
 
@@ -17,6 +18,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .const import (
     COMFORT_FLOOR_MAX,
@@ -44,6 +46,8 @@ from .const import (
     SEASON_WINTER,
     SETPOINT_OFFSET_MAX,
     SETPOINT_OFFSET_MIN,
+    WINTER_CALENDAR_END,
+    WINTER_CALENDAR_START,
     ZONES,
 )
 
@@ -63,25 +67,48 @@ def current_season(hass: HomeAssistant, entry: ConfigEntry) -> str:
     CLAUDE.md warns about): an AFFIRMATIVE hvac mode on the reference thermostat
     (heat/cool) wins; when that is inconclusive (unavailable/off/unknown) fall back
     to the robust s5a stagione sensor (Estate/Inverno); only if neither is
-    conclusive default to summer (the cooling season here — and a wrong winter
-    guess merely warms a setback offset, since the cooling controllers separately
-    gate on affirmative demand).
+    conclusive keep the LAST conclusive season (v0.76.0), and with no memory yet
+    (a boot with both signals down) fall back to the calendar heating season.
+
+    v0.76.0: the old blind default was SUMMER, which in winter pushed the summer
+    setback offsets (+5/+3) onto HEATING thermostats and re-armed the summer-only
+    features (#6 shading could lower covers on a sunny January day).
     """
     forced = entry.options.get(OPT_SEASON)
     if forced in (SEASON_SUMMER, SEASON_WINTER):
         return forced
+    season: str | None = None
     state = hass.states.get(SEASON_REFERENCE_CLIMATE)
     if state is not None:
         if state.state == "heat":
-            return SEASON_WINTER
-        if state.state == "cool":
-            return SEASON_SUMMER
-    stagione = hass.states.get(SEASON_STAGIONE_SENSOR)
-    if stagione is not None:
-        if stagione.state == SEASON_STAGIONE_WINTER:
-            return SEASON_WINTER
-        if stagione.state == SEASON_STAGIONE_SUMMER:
-            return SEASON_SUMMER
+            season = SEASON_WINTER
+        elif state.state == "cool":
+            season = SEASON_SUMMER
+    if season is None:
+        stagione = hass.states.get(SEASON_STAGIONE_SENSOR)
+        if stagione is not None:
+            if stagione.state == SEASON_STAGIONE_WINTER:
+                season = SEASON_WINTER
+            elif stagione.state == SEASON_STAGIONE_SUMMER:
+                season = SEASON_SUMMER
+    if season is not None:
+        _LAST_SEASON[entry.entry_id] = season
+        return season
+    if (last := _LAST_SEASON.get(entry.entry_id)) is not None:
+        return last
+    return calendar_season(dt_util.now().date())
+
+
+# Last CONCLUSIVE season per config entry (in-memory; a restart re-learns it on
+# the first conclusive read — the calendar covers the gap until then).
+_LAST_SEASON: dict[str, str] = {}
+
+
+def calendar_season(day: date) -> str:
+    """Italian heating season (zona E: 15 Oct – 15 Apr) as a blind fallback."""
+    md = (day.month, day.day)
+    if md >= WINTER_CALENDAR_START or md < WINTER_CALENDAR_END:
+        return SEASON_WINTER
     return SEASON_SUMMER
 
 
