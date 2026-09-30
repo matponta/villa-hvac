@@ -141,6 +141,25 @@ COOL_VALVES: dict[str, str] = {
     # trigger). Not a cooling leader; no valve entry (demand is via its thermostat).
     "rack": "binary_sensor.fancoil_locale_rack_valvola",
 }
+# The PHYSICAL fan paired with each valve above (one fancoil unit = valve + fan
+# + manuale). Same swap as COOL_VALVES: fan.fancoil_cucina is the Salotto unit.
+# Used by the per-unit telemetry (v0.71.0) and the fan actuator (v0.72.0).
+UNIT_FANS: dict[str, str] = {
+    "living_room": "fan.fancoil_cucina",
+    "kitchen": "fan.fancoil_salotto",
+    "main_bedroom": "fan.fancoil_camera_padronale",
+    "gabriroom": "fan.fancoil_camera_gabriele",
+    "studio_v": "fan.fancoil_camera_ospiti",
+    "sala_giochi": "fan.fancoil_sala_giochi",
+    "office": "fan.fancoil_studio_pianerottolo_p1",
+    "rack": "fan.fancoil_locale_rack",
+}
+# Fancoils known to be physically dead / non-responsive (owner-verified
+# 2026-07-15: sala giochi cools only through the open door). A zone whose units
+# are all dead has NO cooling actuator: its capacity k is not learnable and its
+# model must never be planner-trusted (v0.73.0 model validity).
+DEAD_FANCOILS: frozenset[str] = frozenset({"fan.fancoil_sala_giochi"})
+
 # Central lever (#9): force-stop the villa cooling call to the PdC.
 # WARNING: verify polarity (block vs enable) live before actuating. Observed live
 # 2026-06-27: switch OFF while cooling ran normally -> OFF = released (not

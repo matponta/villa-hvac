@@ -18,6 +18,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONSENSO_CALDO,
     CONSENSO_FREDDO,
+    COOL_VALVES,
     FANCOILS,
     TEMP_STALE_AFTER,
     ZONES,
@@ -74,6 +75,9 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._runtime_base_s = 0.0
         self.cool_runtime_s = 0.0
         self.cool_cycles = 0
+        # v0.71.0: restored base so the compressor-start count is a monotonic
+        # total_increasing KPI (HA statistics then give starts per day/hour).
+        self._cycles_base = 0
         self._last_kpi_ts = None
         self._last_consenso_kpi: str | None = None
 
@@ -81,6 +85,15 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Seed the accumulated run-time from a restored sensor value (hours)."""
         if hours >= 0:
             self._runtime_base_s = hours * 3600.0
+
+    def seed_cycles_base(self, starts: float) -> None:
+        """Seed the accumulated compressor starts from a restored sensor value."""
+        if starts >= 0:
+            self._cycles_base = int(starts)
+
+    @property
+    def cool_starts_total(self) -> int:
+        return self._cycles_base + self.cool_cycles
 
     @property
     def cool_runtime_hours(self) -> float:
@@ -183,12 +196,19 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         speeds = {eid: self._fan_pct(eid) for eid in FANCOILS}
         cooling_zones = [eid for eid, pct in speeds.items() if pct and pct > 0]
         zone_temps = {zid: self._zone_temperature(z) for zid, z in ZONES.items()}
+        # The REAL per-room demand is the EV FAN valve (ETS-verified), not the
+        # fan % (which runs in AUTO regardless). Unavailable valves are skipped.
+        valves_open = [
+            zid for zid, eid in COOL_VALVES.items() if self._bin_state(eid) == "on"
+        ]
         consenso_freddo = self._bin_state(CONSENSO_FREDDO)
         self._accumulate_runtime(consenso_freddo)
         return {
             "speeds": speeds,
             "cooling_zones": cooling_zones,
             "cooling_zone_count": len(cooling_zones),
+            "valves_open": valves_open,
+            "valves_open_count": len(valves_open),
             "consenso_freddo": consenso_freddo,
             "consenso_caldo": self._bin_state(CONSENSO_CALDO),
             "zone_temps": zone_temps,

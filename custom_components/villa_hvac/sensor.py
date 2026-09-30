@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -25,6 +25,7 @@ from .const import (
     OUTDOOR_TEMP_FALLBACK,
     PDC_LOAD_POWER,
     SOLAR_RADIATION,
+    UNIT_FANS,
     ZONES,
 )
 from .controller import (
@@ -63,6 +64,7 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         CoolingDemandZonesSensor(coordinator, entry),
         CoolingRuntimeSensor(coordinator, entry),
+        CoolingStartsSensor(coordinator, entry),
         HvacPlanSensor(coordinator, entry),
         ReturnPlanSensor(coordinator, entry),
         EnergyBiasSensor(coordinator, entry),
@@ -80,7 +82,119 @@ async def async_setup_entry(
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") == "fancoil"
     ]
+    # v0.71.0 telemetry: per fancoil unit valve duty / strokes / delivered fan,
+    # MEASUREMENT so HA long-term statistics keep what the 7-day recorder drops.
+    for zone_id in UNIT_FANS:
+        entities += [
+            UnitValveDutySensor(coordinator, entry, zone_id),
+            UnitValveStrokesSensor(coordinator, entry, zone_id),
+            UnitFanDeliveredSensor(coordinator, entry, zone_id),
+        ]
     async_add_entities(entities)
+
+
+def _unit(coordinator, zone_id: str):
+    engine = getattr(coordinator, "engine", None)
+    telemetry = getattr(engine, "telemetry", None)
+    return telemetry.get(zone_id) if telemetry is not None else None
+
+
+class _UnitTelemetrySensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """Base for the per-unit telemetry sensors (v0.71.0)."""
+
+    _attr_has_entity_name = True
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _kind = ""
+    _label = ""
+
+    def __init__(self, coordinator, entry, zone_id: str) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone_id
+        self._attr_name = f"{ZONES[zone_id]['name']} {self._label}"
+        self._attr_unique_id = f"{entry.entry_id}_{zone_id}_{self._kind}"
+
+    @property
+    def _t(self):
+        return _unit(self.coordinator, self._zone_id)
+
+
+class UnitValveDutySensor(_UnitTelemetrySensor):
+    """% of the last 60 min this unit's EV FAN valve was OPEN (time-weighted)."""
+
+    _attr_icon = "mdi:valve"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_suggested_display_precision = 0
+    _kind = "valve_duty"
+    _label = "valve duty"
+
+    @property
+    def native_value(self) -> float | None:
+        t = self._t
+        if t is None or t.valve_duty is None:
+            return None
+        return round(t.valve_duty * 100.0, 1)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        t = self._t
+        return {
+            "valve_open": t.valve_open if t else None,
+            "window_minutes": 60,
+            "observed_minutes": round(t.observed_s / 60.0, 1) if t else 0.0,
+        }
+
+
+class UnitValveStrokesSensor(_UnitTelemetrySensor):
+    """CLOSED→OPEN valve edges in the last 60 min (bang-bang / chatter)."""
+
+    _attr_icon = "mdi:swap-vertical"
+    _attr_native_unit_of_measurement = "strokes/h"
+    _kind = "valve_strokes"
+    _label = "valve strokes"
+
+    @property
+    def native_value(self) -> int | None:
+        t = self._t
+        if t is None or t.observed_s <= 0:
+            return None
+        return t.valve_strokes
+
+
+class UnitFanDeliveredSensor(_UnitTelemetrySensor):
+    """Airflow actually delivered by the fan (0 when its ON/OFF object is OFF)."""
+
+    _attr_icon = "mdi:fan"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _kind = "fan_delivered"
+    _label = "fan delivered"
+
+    @property
+    def native_value(self) -> int | None:
+        t = self._t
+        return t.fan_delivered if t is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        t = self._t
+        engine = getattr(self.coordinator, "engine", None)
+        fan = UNIT_FANS[self._zone_id]
+        owners = getattr(engine, "fan_owners", {}) or {}
+        if t is None:
+            mode = None
+        elif t.fan_delivered == 0 and t.manuale_on is False:
+            mode = "off"
+        elif t.manuale_on:
+            mode = "manual"
+        elif t.manuale_on is False:
+            mode = "auto"
+        else:
+            mode = None
+        return {
+            "fan": fan,
+            "mode": mode,
+            "manuale_on": t.manuale_on if t else None,
+            "owner": owners.get(fan, "knx_auto" if mode == "auto" else None),
+        }
 
 
 class LivingRoomGovernorSensor(
@@ -145,7 +259,10 @@ def _num_state(hass: HomeAssistant, entity_id: str) -> float | None:
 class CoolingDemandZonesSensor(
     CoordinatorEntity[VillaHvacCoordinator], SensorEntity
 ):
-    """Number of zones currently calling for cooling (fancoil fan > 0)."""
+    """Number of fancoil units currently calling for cooling (EV FAN valve OPEN).
+
+    v0.71.0: was "fancoil fan > 0", which is NOT demand (fans run in AUTO with
+    the valve closed); the fan count is kept as the `fans_running` attribute."""
 
     _attr_has_entity_name = True
     _attr_name = "Cooling demand zones"
@@ -161,13 +278,14 @@ class CoolingDemandZonesSensor(
 
     @property
     def native_value(self) -> int | None:
-        return self.coordinator.data.get("cooling_zone_count")
+        return self.coordinator.data.get("valves_open_count")
 
     @property
     def extra_state_attributes(self) -> dict:
         data = self.coordinator.data
         return {
-            "zones": data.get("cooling_zones"),
+            "zones": data.get("valves_open"),
+            "fans_running": data.get("cooling_zones"),
             "consenso_freddo": data.get("consenso_freddo"),
             "consenso_caldo": data.get("consenso_caldo"),
         }
@@ -217,6 +335,37 @@ class CoolingRuntimeSensor(CoordinatorEntity[VillaHvacCoordinator], RestoreSenso
             "cooling_zones_now": data.get("cooling_zone_count"),
             "cycles_since_restart": self.coordinator.cool_cycles,
         }
+
+
+class CoolingStartsSensor(CoordinatorEntity[VillaHvacCoordinator], RestoreSensor):
+    """v0.71.0 KPI: compressor starts (consenso_freddo off→on), restored across
+    restarts so it is a monotonic total — HA statistics give starts/day, the
+    short-cycling signal #9 is judged against (fewer, longer runs = better)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Cooling compressor starts"
+    _attr_icon = "mdi:counter"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = "starts"
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_cooling_starts"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self.coordinator.seed_cycles_base(float(last.native_value))
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def native_value(self) -> int:
+        return self.coordinator.cool_starts_total
 
 
 class ZoneTemperatureSensor(

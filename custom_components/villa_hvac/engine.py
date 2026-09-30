@@ -99,6 +99,7 @@ from .const import (
     SPLIT_GROUP,
     STALE_TEMP_CYCLES,
     STRANDED_FAN_CYCLES,
+    UNIT_FANS,
     WEATHER_ENTITY_DEFAULT,
     WINDOW_OPEN_STATES,
     WINDOWS_FREE_COOL_DWELL,
@@ -136,6 +137,7 @@ from .policies import (
 )
 from .returnhome import AwayReturnController
 from .supervisor_config import SupervisorConfig
+from .supervisor.telemetry import HouseTelemetry
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -752,6 +754,10 @@ class SupervisorEngine:
         # actuates; the engine ticks it every cycle (even deploy-dark) so passive
         # params converge before actuation lights up.
         self.thermal = ThermalEstimator()
+        # v0.71.0 telemetry OBSERVER: rolling per-unit valve duty / strokes /
+        # delivered fan, fed every cycle (even deploy-dark) and exposed as
+        # MEASUREMENT sensors so HA long-term statistics keep them.
+        self.telemetry = HouseTelemetry()
         # S_eff diagnostics: per-leader (value, source, units_tag) computed every
         # build_house_state (deploy-dark style) — the model sensor exposes it so
         # the geometry can be validated live before any consumer switches.
@@ -971,6 +977,7 @@ class SupervisorEngine:
             # Observe the RAW state (before the #8 mode override, which only
             # changes intended presets/setpoints, not the measured conditions).
             self.thermal.observe(state)
+            self._observe_telemetry(state)
             await self._maybe_persist_model()
             # #8: override the effective house mode while Via+armed (deep setback
             # -> pre-cond ramp). Both the plan view and actuation see it; the latch
@@ -1046,6 +1053,25 @@ class SupervisorEngine:
                 self._stranded_fan.clear()
         finally:
             self._lock.release()
+
+    def _observe_telemetry(self, state: HouseState) -> None:
+        """Feed the per-unit telemetry windows (read-only, every cycle)."""
+        units: dict[str, tuple[bool | None, int | None, bool | None]] = {}
+        for zone_id, fan in UNIT_FANS.items():
+            z = state.zones.get(zone_id)
+            delivered = self._read_current(fan_lever(fan))
+            try:
+                delivered = int(float(delivered)) if delivered is not None else None
+            except (TypeError, ValueError):
+                delivered = None
+            ms = self.hass.states.get(_manuale_switch(fan))
+            manuale = (
+                ms.state == STATE_ON
+                if ms is not None and ms.state in (STATE_ON, STATE_OFF)
+                else None
+            )
+            units[zone_id] = (z.demand if z is not None else None, delivered, manuale)
+        self.telemetry.observe(state.now, units)
 
     async def _maybe_persist_model(self) -> None:
         """Persist the learned models at most once per FORECAST_REFRESH; best-effort."""
