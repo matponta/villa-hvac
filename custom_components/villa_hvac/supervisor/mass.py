@@ -70,6 +70,9 @@ class ShedState:
     shed_since: dict[str, datetime] = field(default_factory=dict)
     rearm_until: dict[str, datetime] = field(default_factory=dict)
     last_reason: dict[str, str] = field(default_factory=dict)
+    # climate -> the base setpoint recorded when the room was lifted (the
+    # fail-safe restores it; live reads are gone on the unload path).
+    snapshot: dict[str, float] = field(default_factory=dict)
 
 
 def _unit_demand(state: HouseState, zone_id: str) -> bool:
@@ -177,6 +180,12 @@ class DemandShedController:
                 continue
             target = min(ceiling, round(z.temp + SHED_SETPOINT_LIFT, 1))
             out[temperature_lever(z.climate)] = max(base, target)
+            st.snapshot[z.climate] = base
+        # Snapshots of rooms no longer lifted are handed back by house_mode.
+        live = {state.zones[zid].climate for zid in st.shed_since if zid in state.zones}
+        for climate in list(st.snapshot):
+            if climate not in live:
+                st.snapshot.pop(climate)
         return out
 
     def _release(self, zid: str, now: datetime, reason: str) -> None:
@@ -187,6 +196,13 @@ class DemandShedController:
     def _release_all(self, now: datetime, reason: str) -> None:
         for zid in list(self.state.shed_since):
             self._release(zid, now, reason)
+
+    def failsafe_setpoints(self) -> dict[str, float]:
+        """Hand-back targets for the engine fail-safe: the base setpoint of every
+        room currently lifted. Clears the shed state (nothing re-asserts)."""
+        out = dict(self.state.snapshot)
+        self.state = ShedState()
+        return out
 
     def view(self) -> dict:
         st = self.state

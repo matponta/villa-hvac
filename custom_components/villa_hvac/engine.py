@@ -2303,6 +2303,26 @@ class SupervisorEngine:
                             climate,
                         )
                     self._lever_states.pop(temperature_lever(climate), None)
+            # v0.75.1 demand shedding: restore the base setpoint (snapshotted at
+            # shed time) of any room the shed controller lifted — a lifted
+            # setpoint must not outlive the supervisor (same pattern as above).
+            if self._shed is not None:
+                try:
+                    shed_targets = self._shed.failsafe_setpoints()
+                except Exception:  # noqa: BLE001 - fail-safe must continue
+                    _LOGGER.exception("Fail-safe: demand-shed setpoint targets failed")
+                    shed_targets = {}
+                for climate, target in shed_targets.items():
+                    try:
+                        await self._call(
+                            CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                            {ATTR_ENTITY_ID: climate, ATTR_TEMPERATURE: float(target)},
+                        )
+                    except Exception:  # noqa: BLE001
+                        _LOGGER.exception(
+                            "Fail-safe: could not restore shed setpoint for %s", climate
+                        )
+                    self._lever_states.pop(temperature_lever(climate), None)
             # B1: un-stick any zone left in building_protection (skip #10-disabled +
             # window-paused, which SHOULD stay in it) -> neutral `auto` preset.
             await self._restore_presets()

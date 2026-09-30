@@ -1551,7 +1551,10 @@ def test_failsafe_functions_byte_identical():
     was left off) and the P1-guard restore (async_fail_safe writes back any P1 +
     office setpoint the "both fans" secondary trigger nudged, via
     p1_guard.failsafe_setpoints — a no-op unless the P1 guard displaced a setpoint
-    this episode). If this fails, either the change is unintended (revert it) or
+    this episode) and the v0.75.1 demand-shed restore (async_fail_safe writes
+    back the base setpoint snapshotted when DemandShedController lifted a room,
+    via _shed.failsafe_setpoints — a no-op unless a room is currently lifted).
+    If this fails, either the change is unintended (revert it) or
     it is a NEW deliberate hardening: own commit, own pin, update the hash here
     in that same commit."""
     import hashlib
@@ -1561,7 +1564,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
             "async_fail_safe":
-                "741b762be680e97c9f855ee18be324570bb61917b5cddfc9fc3b34e0bbef8466",
+                "1edc605e41be35994099459ecf96559c8ba26c8a01b68632ba683e780b0cbc31",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":

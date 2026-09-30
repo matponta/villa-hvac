@@ -192,6 +192,38 @@ do local bang-bang regulation.
   per-optimizer {enabled, active, inert_reason} — "why did a feature do nothing"),
   per-zone temp/model, `Energy bias`, and `hvac_levers` (B2: per-lever reconcile
   decision log — state = # levers conceded to manual). `config_flow.py` — single-instance.
+- **System review 2026-09-30 → v0.71–v0.75** (evidence: live model sensors + the
+  Aug–Sep hourly statistics; the recorder only keeps ~7 days raw):
+  - `supervisor/telemetry.py` (v0.71.0): per fancoil unit (`UNIT_FANS`, same
+    physical swap as `COOL_VALVES`) rolling 60-min **valve duty** + **strokes** +
+    **delivered fan** (MEASUREMENT sensors → long-term stats) + restored
+    `Cooling compressor starts`. `Cooling demand zones` now counts OPEN VALVES.
+  - `supervisor/fan_actuator.py` (v0.72.0): `resolve_fan_units` runs ONCE between
+    `merge_desired_owned` (priority merge + provenance) and the reconcile —
+    I1 re-arm any fan WE switched off once nobody holds it and the unit goes AUTO
+    (deferred while paused/free-cool; leaves `_fans_turned_off` only on a
+    CONFIRMED live ON read), I2 write order (manuale on → % → manuale off),
+    I3 `engine.fan_owners`. A human wall-press OFF is NOT re-armed (only the
+    temperature-gated watchdog may revive that).
+  - Model validity (v0.73.0): the live fits were confident but wrong (salotto
+    a/b/c all pinned on the old clamps). Tighter clamps + `model_validity`
+    (plausibility, saturation, out-of-sample skill on a-priori innovations,
+    `DEAD_FANCOILS` ⇒ no k); invalid parts fall back to the priors and are never
+    planner-eligible; paused/free-cool windows not learned; k also from AUTO
+    windows. `supervisor/house_model.py`: run-hours/day ~ β0+β1·CDH+β2·solar over
+    occupied summer days, recovery days (first present day after Via/Vacanza)
+    reported as excess → `sensor.cooling_runtime_model` (own Store, NOT in the
+    SHA-pinned fail-safe).
+  - `supervisor/mass.py` (v0.74.0, both opt-in, default OFF):
+    `switch.mass_maintenance` caps the summer Via offset at `mass_via_offset`
+    (+2) below `duty_peak_outdoor` (full offset at the peak, 1 °C hysteresis);
+    `switch.demand_shedding` = `DemandShedController` (after every lever owner):
+    lifts the setpoint of ≤`shed_max_callers` in-comfort rooms that alone hold the
+    PdC on (compressor AND the room's valve ≥20 min), releases at comfort_max /
+    another caller (after 10 min) / 90 min; 30 min re-arm.
+  - `supervisor/explain.py` (v0.75.0): `sensor.<room>_stato_hvac` per cooled
+    leader — who drives it (owner state), live vs target, valve/fan, model
+    validity, Italian `explanation`.
 
 Control WRITES through the engine's arbiter (idempotent, manual-override-robust),
 never by fighting KNX. **Strict deploy-dark (v0.9.0):** nothing actuates until

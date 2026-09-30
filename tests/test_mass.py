@@ -203,3 +203,31 @@ async def test_engine_via_writes_mild_offset_with_mass_maintenance(hass):
     await engine._run()
     written = {c.data["temperature"] for c in temps}
     assert written and written <= {26.0}          # 24 + 2, not 24 + 5
+
+
+def test_failsafe_setpoints_return_the_snapshotted_base_and_clear():
+    ctl = DemandShedController()
+    ctl(_state(T0, _sept9(T0)))
+    ctl(_state(T0 + SHED_MIN_RUN, _sept9(T0)))
+    assert ctl.failsafe_setpoints() == {"climate.office": 24.0}
+    assert ctl.state.shed_since == {} and ctl.failsafe_setpoints() == {}
+
+
+async def test_engine_failsafe_restores_a_lifted_room(hass):
+    seed_thermostats(hass, temperature=24.0)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    engine = entry.runtime_data.engine
+    ctl = engine._shed
+    assert ctl is not None
+    ctl(_state(T0, _sept9(T0)))
+    ctl(_state(T0 + SHED_MIN_RUN, _sept9(T0)))
+    temps = async_mock_service(hass, "climate", "set_temperature")
+    for dom, svc in (("switch", "turn_off"), ("switch", "turn_on"),
+                     ("climate", "set_preset_mode"), ("fan", "turn_on")):
+        async_mock_service(hass, dom, svc)
+    await engine.async_fail_safe()
+    assert {c.data["entity_id"]: c.data["temperature"] for c in temps
+            if c.data["entity_id"] == "climate.office"} == {"climate.office": 24.0}
