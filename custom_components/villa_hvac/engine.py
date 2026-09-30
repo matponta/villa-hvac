@@ -78,7 +78,9 @@ from .const import (
     PV_BIAS_MIN_DWELL,
     COOL_VALVES,
     FORECAST_REFRESH,
+    HOUSE_MODE_AWAY,
     HOUSE_MODE_NIGHT,
+    HOUSE_MODE_VACATION,
     NIGHT_GUARD_FAN_PCT,
     PLAN_SIM_DOWNSAMPLE_MIN,
     PLAN_SIM_STEP_MIN,
@@ -138,6 +140,7 @@ from .policies import (
 from .returnhome import AwayReturnController
 from .supervisor_config import SupervisorConfig
 from .supervisor.fan_actuator import FanLive, FanUnit, resolve_fan_units
+from .supervisor.house_model import HouseRuntimeModel
 from .supervisor.telemetry import HouseTelemetry
 from .supervisor import (
     BLOCCO_LEVER,
@@ -324,6 +327,13 @@ class RoomModelStore:
 
     async def async_save(self, data: dict) -> None:
         await self._store.async_save(data)
+
+
+class HouseModelStore(RoomModelStore):
+    """v0.73.0: durable house-level runtime model (own file, best-effort)."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store = Store(hass, 1, "villa_hvac_house_model")
 
 
 def _make_run_plan(
@@ -742,6 +752,7 @@ class SupervisorEngine:
         policies=None,
         controllers=None,
         model_store: "RoomModelStore | None" = None,
+        house_store: "HouseModelStore | None" = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
@@ -765,6 +776,9 @@ class SupervisorEngine:
         # delivered fan, fed every cycle (even deploy-dark) and exposed as
         # MEASUREMENT sensors so HA long-term statistics keep them.
         self.telemetry = HouseTelemetry()
+        # v0.73.0 house-level runtime model (run-hours/day vs CDH + solar),
+        # persisted in the room-model Store under the reserved "_house" key.
+        self.house_model = HouseRuntimeModel()
         # S_eff diagnostics: per-leader (value, source, units_tag) computed every
         # build_house_state (deploy-dark style) — the model sensor exposes it so
         # the geometry can be validated live before any consumer switches.
@@ -775,6 +789,7 @@ class SupervisorEngine:
         # pre-cond ramp). Applied to the state before policies run. Holds the latch.
         self.away_return = AwayReturnController()
         self._model_store = model_store
+        self._house_store = house_store
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         # B2: last reconcile decision per lever this cycle (diagnostic only, surfaced
@@ -993,6 +1008,17 @@ class SupervisorEngine:
             # changes intended presets/setpoints, not the measured conditions).
             self.thermal.observe(state)
             self._observe_telemetry(state)
+            self.house_model.observe(
+                now_s=state.now.timestamp(),
+                local_day=dt_util.as_local(state.now).date().isoformat(),
+                consenso_on=(
+                    state.consenso_freddo == STATE_ON
+                    if state.consenso_freddo in (STATE_ON, STATE_OFF) else None
+                ),
+                outdoor=state.outdoor_temp, ghi=state.solar,
+                absent=state.house_mode in (HOUSE_MODE_AWAY, HOUSE_MODE_VACATION),
+                summer=state.season == SEASON_SUMMER,
+            )
             await self._maybe_persist_model()
             # #8: override the effective house mode while Via+armed (deep setback
             # -> pre-cond ramp). Both the plan view and actuation see it; the latch
@@ -1173,6 +1199,17 @@ class SupervisorEngine:
             await self._model_store.async_save(self.thermal.dump())
         except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
             _LOGGER.debug("Room-model persist failed", exc_info=True)
+        await self.async_persist_house_model()
+
+    async def async_persist_house_model(self) -> None:
+        """v0.73.0: persist the house runtime model (own Store, best-effort;
+        also run on unload — deliberately OUTSIDE the SHA-pinned fail-safe)."""
+        if self._house_store is None:
+            return
+        try:
+            await self._house_store.async_save(self.house_model.dump())
+        except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
+            _LOGGER.debug("House-model persist failed", exc_info=True)
 
     def _build_split_view(self, state: HouseState) -> dict:
         """Project the split-AC trio's live state into a read-only observe view (#6).

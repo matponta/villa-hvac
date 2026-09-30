@@ -46,6 +46,15 @@ class ThermalParams:
     #                                     windows (solar-excitation of b). abc is
     #                                     only planner-trustworthy once this crosses
     #                                     the excitation threshold.
+    # v0.73.0 out-of-sample skill: EWMA of the A-PRIORI |prediction error| of
+    # the passive model (computed BEFORE the update, so the model has not seen
+    # the sample) vs the EWMA |dT/dt| of the trivial "no change" predictor.
+    # skill = 1 - err/ref. Count-based confidence says "stopped moving"; skill
+    # says "actually predicts" — the salotto fit had confidence 0.994 while
+    # every coefficient sat pinned on its clamp.
+    err_ewma: float = 0.0
+    ref_ewma: float = 0.0
+    n_val: int = 0
 
 
 
@@ -121,6 +130,11 @@ def rls_passive_update(
         return params
     gain = (px[0] / denom, px[1] / denom, px[2] / denom)
     err = dt_dt - (x[0] * theta[0] + x[1] * theta[1] + x[2] * theta[2])
+    # v0.73.0 skill bookkeeping on the a-priori innovation (honest: pre-update).
+    n_val = params.n_val + 1
+    alpha = max(SKILL_ALPHA, 1.0 / n_val)   # plain mean until 1/alpha samples
+    err_ewma = params.err_ewma + alpha * (abs(err) - params.err_ewma)
+    ref_ewma = params.ref_ewma + alpha * (abs(dt_dt) - params.ref_ewma)
     a = _clamp(theta[0] + gain[0] * err, 0.0, bounds.max_a)
     b = _clamp(theta[1] + gain[1] * err, 0.0, bounds.max_b)
     c = _clamp(theta[2] + gain[2] * err, 0.0, bounds.max_c)
@@ -135,7 +149,10 @@ def rls_passive_update(
     # never identified -> not planner-eligible (though the count-based confidence,
     # used by the live blend, still rises — this gate is planner-only).
     s_hi = max(params.s_hi, solar) if solar >= 0 else params.s_hi
-    return replace(params, a=a, b=b, c=c, p=new_p, n=params.n + 1, s_hi=s_hi)
+    return replace(
+        params, a=a, b=b, c=c, p=new_p, n=params.n + 1, s_hi=s_hi,
+        err_ewma=err_ewma, ref_ewma=ref_ewma, n_val=n_val,
+    )
 
 
 
@@ -168,6 +185,103 @@ def rls_capacity_update(
         return params
     return replace(params, k=k, p_k=new_p_k, n_k=params.n_k + 1)
 
+
+
+# --- v0.73.0 model validity (system review 2026-09-30 §3) ---------------------
+SKILL_ALPHA = 0.02            # EWMA weight of the skill trackers (~50 windows)
+# Saturation: a coefficient within this fraction of its clamp is not "learned",
+# it is the clamp — the estimator has diverged into the corner of the box.
+SATURATION_FRACTION = 0.98
+
+
+@dataclass(frozen=True)
+class Plausibility:
+    """Physical plausibility limits for a room's grey-box params (NOT the RLS
+    clamps: a value inside the clamp box can still be physically absurd)."""
+
+    max_a: float      # 1/h  — a=0.08 is a 12.5 h envelope time constant
+    max_b: float      # °C/h per W/m²
+    max_c: float      # °C/h — internal gain with no sun, no outdoor drive
+    max_k: float      # °C/h at 100 % — measured best 0.85 (padronale)
+    min_skill: float  # out-of-sample skill needed to trust {a,b,c}
+    min_val: int      # a-priori innovations needed before skill is judged
+
+
+@dataclass(frozen=True)
+class ModelValidity:
+    abc_valid: bool
+    k_valid: bool
+    skill: float | None
+    reasons: tuple[str, ...]
+
+
+def model_skill(params: ThermalParams) -> float | None:
+    """1 - err/ref over the a-priori innovations; None until any were seen."""
+    if params.n_val <= 0 or params.ref_ewma <= 0:
+        return None
+    return 1.0 - params.err_ewma / params.ref_ewma
+
+
+def model_validity(
+    params: ThermalParams, *, bounds: ParamBounds, limits: Plausibility,
+    abc_conf_min: float, k_conf_min: float, has_actuator: bool,
+) -> ModelValidity:
+    """Is this room's learned model fit to FEED control/planning? Pure.
+
+    {a,b,c}: enough data, not pinned on a clamp, physically plausible, and it
+    beats the trivial "no change" predictor out of sample. k: the room has a
+    working cooling actuator, {a,b,c} is valid (k_obs is derived from G), and k
+    is plausible + has enough windows. Invalid parts fall back to the priors."""
+    reasons: list[str] = []
+    skill = model_skill(params)
+    if params.n < abc_conf_min or params.n_val < limits.min_val:
+        reasons.append("insufficient_data")
+    if (
+        params.a >= SATURATION_FRACTION * bounds.max_a
+        or params.b >= SATURATION_FRACTION * bounds.max_b
+        or params.c >= SATURATION_FRACTION * bounds.max_c
+    ):
+        reasons.append("saturated")
+    if params.a > limits.max_a:
+        reasons.append("implausible_a")
+    if params.b > limits.max_b:
+        reasons.append("implausible_b")
+    if params.c > limits.max_c:
+        reasons.append("implausible_c")
+    if (
+        params.n_val >= limits.min_val
+        and (skill is None or skill < limits.min_skill)
+    ):
+        reasons.append("low_skill")
+    abc_valid = not reasons
+    k_reasons: list[str] = []
+    if not has_actuator:
+        k_reasons.append("no_actuator")
+    if not abc_valid:
+        k_reasons.append("abc_invalid")
+    if params.k > limits.max_k or params.k >= SATURATION_FRACTION * bounds.max_k:
+        k_reasons.append("implausible_k")
+    if params.n_k < k_conf_min:
+        k_reasons.append("k_insufficient_data")
+    reasons.extend(r for r in k_reasons if r != "abc_invalid")
+    return ModelValidity(
+        abc_valid=abc_valid, k_valid=not k_reasons, skill=skill,
+        reasons=tuple(reasons),
+    )
+
+
+def reseed_passive(params: ThermalParams, prior: ThermalParams) -> ThermalParams:
+    """Drop a diverged {a,b,c} back to the prior (fresh covariance, counts and
+    skill reset). k is reset too: its observations were residuals of the bad G."""
+    return replace(
+        params, a=prior.a, b=prior.b, c=prior.c, p=prior.p, n=0, s_hi=0.0,
+        err_ewma=0.0, ref_ewma=0.0, n_val=0,
+        k=prior.k, p_k=prior.p_k, n_k=0,
+    )
+
+
+def reseed_capacity(params: ThermalParams, prior: ThermalParams) -> ThermalParams:
+    return replace(params, k=prior.k, p_k=prior.p_k, n_k=0)
 
 
 def abc_confidence(params: ThermalParams, *, conf_min: float) -> float:

@@ -9,7 +9,7 @@ from .away import AwayController
 from .const import PLATFORMS
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
-from .engine import RoomModelStore, SupervisorEngine
+from .engine import HouseModelStore, RoomModelStore, SupervisorEngine
 from .governor import SteadyGovernorController
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
@@ -61,6 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # F2: load the persisted per-room thermal models and seed the estimator.
     model_store = RoomModelStore(hass)
     model_data = await model_store.async_load()
+    house_store = HouseModelStore(hass)
     rack = RackGuardController(hass, entry)
     coordinator.rack = rack
     p1_guard = P1GuardController(hass, entry)
@@ -83,12 +84,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
             SplitGroupController(),
         ),
         model_store=model_store,
+        house_store=house_store,
     )
     engine.thermal.load(model_data)
+    engine.house_model.load(await house_store.async_load())
     coordinator.engine = engine
     engine.start()
     entry.async_on_unload(engine.stop)
     entry.async_on_unload(engine.async_fail_safe)
+    entry.async_on_unload(engine.async_persist_house_model)
 
     # #5 VMC free-cooling boost: a self-contained, edge-triggered controller off
     # the coordinator tick (opt-in switch.vmc_auto + master; deploy-dark). Kept

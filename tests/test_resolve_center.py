@@ -288,7 +288,8 @@ async def test_annotate_runs_after_schedule_attach(hass):
     # D1: make living_room planner-eligible (abc identified + k converged).
     engine.thermal.load({
         "living_room": {"a": 0.03, "b": 0.0008, "c": 0.0, "k": 1.2, "p": [0.0] * 9,
-                        "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0},
+                        "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0,
+                        "err_ewma": 0.02, "ref_ewma": 0.1, "n_val": 100},
     })
     sched = _sched("living_room", 23.0, created=dt_util.utcnow())
     engine._maybe_refresh_schedule = lambda state: replace(

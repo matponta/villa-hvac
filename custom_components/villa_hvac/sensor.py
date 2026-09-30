@@ -54,6 +54,20 @@ def _s_eff_attributes(engine, zone_id: str) -> dict:
     }
 
 
+def _validity_attributes(thermal, zone_id: str) -> dict:
+    """v0.73.0: is the learned model fit to feed control, and if not, why."""
+    if thermal is None or not hasattr(thermal, "validity"):
+        return {}
+    v = thermal.validity(zone_id)
+    return {
+        "abc_valid": v.abc_valid,
+        "k_valid": v.k_valid,
+        "skill": round(v.skill, 3) if v.skill is not None else None,
+        "validity_reasons": list(v.reasons),
+        "has_actuator": thermal.has_actuator(zone_id),
+    }
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: VillaHvacConfigEntry,
@@ -65,6 +79,7 @@ async def async_setup_entry(
         CoolingDemandZonesSensor(coordinator, entry),
         CoolingRuntimeSensor(coordinator, entry),
         CoolingStartsSensor(coordinator, entry),
+        CoolingRuntimeModelSensor(coordinator, entry),
         HvacPlanSensor(coordinator, entry),
         ReturnPlanSensor(coordinator, entry),
         EnergyBiasSensor(coordinator, entry),
@@ -366,6 +381,81 @@ class CoolingStartsSensor(CoordinatorEntity[VillaHvacCoordinator], RestoreSensor
     @property
     def native_value(self) -> int:
         return self.coordinator.cool_starts_total
+
+
+class CoolingRuntimeModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.73.0 house-level model: expected compressor run-hours for TODAY's
+    weather so far (β0·day_fraction + β1·CDH + β2·solar), fitted on occupied
+    summer days. Attributes carry the fit, today's actuals, the last closed day
+    with its residual, and the mean EXCESS run-hours of recovery days (the first
+    present day after a Via/Vacanza) — the measured cost of a deep setback."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Cooling runtime model"
+    _attr_icon = "mdi:chart-timeline-variant"
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _unrecorded_attributes = frozenset({"recent_days"})
+
+    def __init__(
+        self, coordinator: VillaHvacCoordinator, entry: VillaHvacConfigEntry
+    ) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_cooling_runtime_model"
+
+    @property
+    def _model(self):
+        engine = getattr(self.coordinator, "engine", None)
+        return getattr(engine, "house_model", None)
+
+    @property
+    def native_value(self) -> float | None:
+        m = self._model
+        fit = m.fit() if m is not None else None
+        if fit is None or m.today is None:
+            return None
+        frac = min(1.0, m.today.observed_s / 86400.0)
+        return round(fit.predict(m.today.cdh, m.today.solar_kwh, frac), 2)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        m = self._model
+        if m is None:
+            return {}
+        fit = m.fit()
+        last = m.rows[-1] if m.rows else None
+        attrs: dict = {
+            "fit_days": fit.n if fit else 0,
+            "r2": round(fit.r2, 3) if fit else None,
+            "beta_base_h": round(fit.beta[0], 3) if fit else None,
+            "beta_per_cdh": round(fit.beta[1], 4) if fit else None,
+            "beta_per_solar_kwh": round(fit.beta[2], 4) if fit else None,
+            "today_actual_h": round(m.today.runtime_h, 2) if m.today else None,
+            "today_cdh": round(m.today.cdh, 1) if m.today else None,
+            "today_solar_kwh": round(m.today.solar_kwh, 2) if m.today else None,
+            "recovery_excess_h": (
+                round(x, 2) if (x := m.recovery_excess(fit)) is not None else None
+            ),
+            "recent_days": [
+                {
+                    "day": r.day, "runtime_h": r.runtime_h, "cdh": r.cdh,
+                    "solar_kwh": r.solar_kwh, "absent": r.absent,
+                    "recovery": r.recovery,
+                    "predicted_h": round(fit.predict(r.cdh, r.solar_kwh), 2)
+                    if fit else None,
+                }
+                for r in m.rows[-14:]
+            ],
+        }
+        if last is not None:
+            attrs["last_day"] = last.day
+            attrs["last_day_actual_h"] = last.runtime_h
+            if fit is not None:
+                attrs["last_day_residual_h"] = round(
+                    last.runtime_h - fit.predict(last.cdh, last.solar_kwh), 2
+                )
+        return attrs
 
 
 class ZoneTemperatureSensor(
@@ -672,6 +762,7 @@ class HvacModelSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "abc_identified": thermal.abc_identified(self._zone_id) if thermal else False,
             "planner_eligible": thermal.planner_eligible(self._zone_id)
             if thermal else False,
+            **_validity_attributes(thermal, self._zone_id),
             **_s_eff_attributes(engine, self._zone_id),
         }
 

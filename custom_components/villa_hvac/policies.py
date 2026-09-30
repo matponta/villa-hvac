@@ -38,11 +38,13 @@ INVARIANTS (regression = stop; pinned by tests/test_composition.py):
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 import logging
 import math
 
 from .const import (
+    DEAD_FANCOILS,
     COOL_CAPACITY,
     COOL_GAIN_BASE,
     COOL_GAIN_OUTDOOR,
@@ -67,6 +69,12 @@ from .const import (
     MODEL_MAX_C,
     MODEL_MAX_K,
     MODEL_MIN_K,
+    MODEL_MIN_SKILL,
+    MODEL_MIN_VALIDATION,
+    MODEL_PLAUSIBLE_MAX_A,
+    MODEL_PLAUSIBLE_MAX_B,
+    MODEL_PLAUSIBLE_MAX_C,
+    MODEL_PLAUSIBLE_MAX_K,
     MODEL_P0_K,
     MODEL_P0_PASSIVE,
     MODEL_RATE_MAX_MIN,
@@ -88,6 +96,14 @@ from .const import (
     SHADING_PROP_TEMP_FULL,
     SHADING_PROP_TEMP_REF,
     SHADING_PROP_TEMP_WEIGHT,
+    ZONES,
+)
+from .supervisor.thermal import (
+    ModelValidity,
+    Plausibility,
+    model_validity,
+    reseed_capacity,
+    reseed_passive,
 )
 from .supervisor import (
     _is_free_cooling,
@@ -614,6 +630,12 @@ class ThermalEstimator:
         )
         self._window_h = MODEL_RATE_WINDOW_MIN / 60.0
         self._max_window = timedelta(minutes=MODEL_RATE_MAX_MIN)
+        # v0.73.0 validity gate: physical plausibility + out-of-sample skill.
+        self._limits = Plausibility(
+            max_a=MODEL_PLAUSIBLE_MAX_A, max_b=MODEL_PLAUSIBLE_MAX_B,
+            max_c=MODEL_PLAUSIBLE_MAX_C, max_k=MODEL_PLAUSIBLE_MAX_K,
+            min_skill=MODEL_MIN_SKILL, min_val=MODEL_MIN_VALIDATION,
+        )
 
     @staticmethod
     def _prior() -> ThermalParams:
@@ -649,17 +671,44 @@ class ThermalEstimator:
             zone_id, old, tag,
         )
 
+    @staticmethod
+    def has_actuator(zone_id: str) -> bool:
+        """True when the zone owns at least one WORKING fancoil (k learnable)."""
+        zone = ZONES.get(zone_id)
+        if zone is None:
+            return True   # unknown (synthetic) zone: only KNOWN-dead units count
+        fans = zone.get("fancoils") or []
+        return any(f not in DEAD_FANCOILS for f in fans)
+
+    def validity(self, zone_id: str) -> ModelValidity:
+        """v0.73.0: may this room's learned model feed control / the planner?"""
+        learned = self.params.get(zone_id) or self._prior()
+        return model_validity(
+            learned, bounds=self._bounds, limits=self._limits,
+            abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
+            has_actuator=self.has_actuator(zone_id),
+        )
+
     def model_for(self, zone_id: str) -> ThermalParams:
         """Blended (prior->learned) params for control + diagnostics. Below
-        confidence the prior dominates, so control behaves exactly like F1."""
+        confidence the prior dominates, so control behaves exactly like F1.
+        v0.73.0: an INVALID part (implausible / saturated / no skill / no
+        actuator) is replaced by the prior outright, whatever its confidence."""
         learned = self.params.get(zone_id)
         if learned is None:
             return self._prior()
-        return blend_params(
-            learned, self._prior(),
+        prior = self._prior()
+        v = self.validity(zone_id)
+        if not v.abc_valid:
+            return replace(learned, a=prior.a, b=prior.b, c=prior.c, k=prior.k)
+        blended = blend_params(
+            learned, prior,
             abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
             solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
         )
+        if not v.k_valid:
+            blended = replace(blended, k=prior.k)
+        return blended
 
     def confidence(self, zone_id: str) -> tuple[float, float]:
         """(abc_confidence, k_confidence) in [0,1] for this zone."""
@@ -692,6 +741,9 @@ class ThermalEstimator:
         learned = self.params.get(zone_id)
         if learned is None:
             return False
+        v = self.validity(zone_id)
+        if not (v.abc_valid and v.k_valid):
+            return False
         return planner_eligible(
             learned, abc_conf_min=MODEL_ABC_CONF_MIN, k_conf_min=MODEL_K_CONF_MIN,
             solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
@@ -710,6 +762,14 @@ class ThermalEstimator:
     def _observe_zone(self, z: ZoneSnapshot, state: HouseState) -> None:
         zid = z.zone_id
         self.params.setdefault(zid, self._prior())
+        # v0.73.0: an aired room is not a passive envelope. Window-paused (#4 /
+        # free-air) or free-cooling windows mix outside air straight in — they
+        # were feeding the passive {a,b,c} fit (salotto: Porta Cucina, free_air)
+        # and are the likeliest source of its runaway a/c. Drop the window.
+        if z.paused or _is_free_cooling(state):
+            self._buf.pop(zid, None)
+            self._last_w.pop(zid, None)
+            return
         # S_eff (STORY_SEFF §6 row 1): the regressor input is the zone's own
         # effective irradiance — the SAME value control consumes. Learn only
         # from units-pure sources: "fallback" (sun/GHI missing → value degraded
@@ -779,6 +839,20 @@ class ThermalEstimator:
                 self.params[zid], dt_dt=rate, t_out=mt_out, temp=mtemp, solar=msolar,
                 forgetting=MODEL_FORGETTING, bounds=self._bounds,
             )
+            # v0.73.0 self-heal: a fit pinned on its clamps has diverged; the
+            # RLS covariance would keep it there. Restart from the prior.
+            # Only once the fit has had its data: a clamp touched in the first
+            # high-gain updates is a transient, not a divergence.
+            if (
+                self.params[zid].n >= MODEL_ABC_CONF_MIN
+                and "saturated" in self.validity(zid).reasons
+            ):
+                _LOGGER.info(
+                    "Zone %s thermal model saturated its bounds "
+                    "(a=%.4f b=%.6f c=%.3f): re-seeding from the prior",
+                    zid, self.params[zid].a, self.params[zid].b, self.params[zid].c,
+                )
+                self.params[zid] = reseed_passive(self.params[zid], self._prior())
         else:
             # F2b: capacity k — only on a HELD, STEADY fan window (manuale on by
             # us + a known %), never from AUTO/unknown or a pull-down transient.
@@ -794,8 +868,15 @@ class ThermalEstimator:
                 solar_excitation_min=MODEL_SOLAR_EXCITATION_MIN,
             )
             fans = [s[4] for s in buf]
-            held = all(s[5] for s in buf)
-            if identified and held and all(f is not None for f in fans) and (
+            # v0.73.0: the regressor is the valve (open for the whole window by
+            # construction — windows split on every valve edge) times the
+            # DELIVERED airflow. A known, steady % is enough; it no longer has
+            # to be held by us in manual — KNX AUTO runs these fans at a known
+            # %, so AUTO windows are valid k evidence (they were ~all the data).
+            # A room with no working fancoil never learns k (sala giochi).
+            if identified and self.has_actuator(zid) and all(
+                f is not None for f in fans
+            ) and (
                 max(fans) - min(fans) <= MODEL_CAP_FAN_STABILITY
             ):
                 u = (sum(fans) / n) / 100.0
@@ -819,6 +900,9 @@ class ThermalEstimator:
                     p=tuple(float(x) for x in d["p"]), p_k=float(d["p_k"]),
                     n=int(d.get("n", 0)), n_k=int(d.get("n_k", 0)),
                     s_hi=float(d.get("s_hi", 0.0)),
+                    err_ewma=float(d.get("err_ewma", 0.0)),
+                    ref_ewma=float(d.get("ref_ewma", 0.0)),
+                    n_val=int(d.get("n_val", 0)),
                 )
             except (KeyError, TypeError, ValueError):
                 continue
@@ -827,6 +911,22 @@ class ThermalEstimator:
                 and all(math.isfinite(x) for x in (p.a, p.b, p.c, p.k, p.p_k, p.s_hi, *p.p))
                 and p.a >= 0 and p.b >= 0 and p.c >= 0 and p.k > 0 and p.s_hi >= 0
             ):
+                # v0.73.0 migration: a row outside the tightened clamp box (or a
+                # k for a room without a working fancoil) is not a learned model,
+                # it is a divergence — restart that part from the prior.
+                prior = self._prior()
+                if p.a > MODEL_MAX_A or p.b > MODEL_MAX_B or p.c > MODEL_MAX_C:
+                    _LOGGER.info(
+                        "Zone %s stored model outside the physical bounds "
+                        "(a=%.4f b=%.6f c=%.3f): re-seeding from the prior",
+                        zid, p.a, p.b, p.c,
+                    )
+                    p = reseed_passive(p, prior)
+                elif p.k > MODEL_MAX_K or (p.n_k > 0 and not self.has_actuator(zid)):
+                    _LOGGER.info(
+                        "Zone %s stored capacity k=%.3f invalid: re-seeding k", zid, p.k
+                    )
+                    p = reseed_capacity(p, prior)
                 self.params[zid] = p
                 # S_eff: rows without the tag were fitted to GHI by construction
                 # (pre-STORY_SEFF store); ensure_units rebases on first mismatch.
@@ -837,6 +937,7 @@ class ThermalEstimator:
             zid: {
                 "a": p.a, "b": p.b, "c": p.c, "k": p.k,
                 "p": list(p.p), "p_k": p.p_k, "n": p.n, "n_k": p.n_k, "s_hi": p.s_hi,
+                "err_ewma": p.err_ewma, "ref_ewma": p.ref_ewma, "n_val": p.n_val,
                 "s_units": self._s_units.get(zid, SEFF_UNITS_GHI),
             }
             for zid, p in self.params.items()

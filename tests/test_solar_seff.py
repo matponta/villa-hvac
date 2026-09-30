@@ -426,7 +426,8 @@ async def test_ensure_units_seam_fires_with_learning_disabled(hass, monkeypatch)
     thermal = entry.runtime_data.engine.thermal
     thermal.load({
         "main_bedroom": {
-            "a": 0.02, "b": 0.004, "c": 0.1, "k": 0.9,
+            # b inside the v0.73.0 clamp box (0.003) so the load keeps the row
+            "a": 0.02, "b": 0.002, "c": 0.1, "k": 0.9,
             "p": [0.1, 0.01, 0.01, 0.01, 5e-6, 0.01, 0.01, 0.01, 2.0],
             "p_k": 1.0, "n": 200, "n_k": 30, "s_hi": 900.0,
         }

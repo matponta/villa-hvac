@@ -848,11 +848,25 @@ MODEL_RATE_MAX_MIN = 45.0          # cap the rate window (track slowly-varying c
 MODEL_W_EDGE_SKIP = 3              # cycles to skip after a chilled-water edge (KNX off-delay)
 # Physical bounds (project every update; reject NaN/inf; clamp k>0 so capacity_fan
 # never sees a sign-flipping negative k):
-MODEL_MAX_A = 0.5
-MODEL_MAX_B = 0.01
-MODEL_MAX_C = 3.0
+# v0.73.0 (system review 2026-09-30 §3): tightened from 0.5 / 0.01 / 3.0 / 5.0.
+# The old box was wide enough for the salotto fit to diverge into its corner
+# (a=0.497, b=0.00994, c=2.98 — every coefficient on its clamp) while reading
+# "confidence 0.994". a<=0.1 is a >=10 h envelope time constant; b<=0.003 is
+# <=2.4 °C/h at 800 W/m²; c<=0.5 °C/h internal gain; k<=3 °C/h at 100 %.
+MODEL_MAX_A = 0.1
+MODEL_MAX_B = 0.003
+MODEL_MAX_C = 0.5
 MODEL_MIN_K = 0.1
-MODEL_MAX_K = 5.0
+MODEL_MAX_K = 3.0
+# Plausibility (validity gate, not clamps): a fit beyond these is kept for
+# diagnostics but never feeds control or the planner (the prior does instead).
+MODEL_PLAUSIBLE_MAX_A = 0.08     # 12.5 h time constant; measured rooms 80-170 h
+MODEL_PLAUSIBLE_MAX_B = 0.002
+MODEL_PLAUSIBLE_MAX_C = 0.3
+MODEL_PLAUSIBLE_MAX_K = 1.5      # measured best 0.85 °C/h (padronale, fan 100 %)
+# Out-of-sample skill vs the "no change" predictor, over a-priori innovations.
+MODEL_MIN_SKILL = 0.1
+MODEL_MIN_VALIDATION = 30
 # Initial RLS covariance (weak prior: lets data move the params, bounded so a bad
 # first sample can't explode them). Passive diag for (a, b, c); scalar for k.
 MODEL_P0_PASSIVE = (0.5, 1e-5, 4.0)

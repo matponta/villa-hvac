@@ -939,14 +939,20 @@ def test_passive_update_tracks_solar_excitation():
 
 def test_estimator_exposes_planner_eligibility():
     est = ThermalEstimator()
+    # v0.73.0: eligibility also needs a VALIDATED fit (out-of-sample skill).
     ok = {"a": 0.03, "b": 0.0008, "c": 0.0, "k": 1.2, "p": [0.0] * 9,
-          "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0}
+          "p_k": 0.0, "n": 100, "n_k": 100, "s_hi": 400.0,
+          "err_ewma": 0.02, "ref_ewma": 0.1, "n_val": 100}
     night = {**ok, "s_hi": 0.0}
     est.load({"day": ok, "night": night})
     assert est.solar_excitation("day") == 400.0
     assert est.abc_identified("day") is True and est.planner_eligible("day") is True
     assert est.abc_identified("night") is False and est.planner_eligible("night") is False
     assert est.planner_eligible("unknown") is False  # no model -> not eligible
+    # identified + converged but never validated -> NOT eligible (v0.73.0)
+    est.load({"unvalidated": {**ok, "n_val": 0, "err_ewma": 0.0, "ref_ewma": 0.0}})
+    assert est.abc_identified("unvalidated") is True
+    assert est.planner_eligible("unvalidated") is False
 
 
 def test_estimator_persists_solar_excitation():
