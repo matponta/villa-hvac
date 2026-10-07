@@ -1,6 +1,13 @@
 # Next session — kickstart prompts
 
-## v0.81.0 — WINTER BRAIN W2–W4 (2026-10-07) — released, RESTART PENDING
+## v0.81.0 — WINTER BRAIN W2–W4 (2026-10-07) — LIVE (owner restart ~20:40)
+Live check 7/10 evening: all 16 `*_inverno` sensors populated (rooms 21.2–22.8 °C,
+all at/over target → 0 min), plan=idle, `switch.pv_heating` turned ON by Claude
+(owner asked), `sensor.riscaldamento_fv`=idle/no surplus (SoC reads 0 % at night —
+verify `sensor.battery_percentage_2` at midday), return date still 8/9 → no advice.
+Dashboard CoolClima → Casa: new winter-only section "Cervello invernale" (tempo,
+riduzione/rientro entities + table, PV switches + status). Entity ids: master
+`switch.pv_heating`, per room `switch.<name>_pv_heating`, `switch.return_pre_cond`.
 Owner decisions 7/10: PV rooms = camera padronale, bagno padronale (01+02),
 living room → their CASA target; surplus = battery > 90 % AND a real PV surplus
 judged on NET Condominio flows (other apartments share the PdC). Built per
