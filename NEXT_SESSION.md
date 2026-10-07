@@ -1,5 +1,24 @@
 # Next session — kickstart prompts
 
+## v0.80.0 — WINTER BRAIN W1: radiant observer (2026-10-07)
+Spec: `STORY_WINTER_BRAIN.md` (owner goals: time-to-temperature, how deep a
+weekend setback can go, PV heating of chosen rooms even while away — all via
+thermostat SETPOINTS). Owner created the 15 radiant valve STATE sensors
+(`binary_sensor.radiante_*_valvola`, read-only) → `HEAT_VALVES` in const.py
+(bagno padronale shared by 01/02; pianerottolo_p2 none). Dashboard: CoolClima →
+Diagnostica got a winter-only "Valvole radiante" section (tiles + 24 h graph with
+the heating call), added live 7/10.
+W1 = pure `supervisor/winter_model.py` (`WinterModel`: loss a on long
+valve-closed low-sun windows after a 90 min slab residual; heating rate k_h on
+valve-open windows after the lag; lag by back-extrapolating the measured climb;
+running means, priors a 0.03/h · k_h 0.6 °C/h · lag 45 min; own Store
+`villa_hvac_winter_models`) + `engine._observe_winter` (winter only, never
+actuates) + `sensor.<room>_inverno` (minutes to the room's comfort target) +
+`sensor.tempo_riscaldamento` (slowest room). NEXT: W2 setback advisor, then W3
+winter return pre-conditioning, W4 PV heating (see story). Valve signals not yet
+seen moving live (all closed at 21–22 °C on 7/10) — check the first heat call.
+
+
 ## v0.79.0 — winter: fancoils always OFF (2026-10-07)
 Owner 7/10: central plant switched to INVERNO (salotto `heat`, s5a Inverno,
 `binary_sensor.impianto_inverno` on, consenso caldo ON). v0.78.1 was already live

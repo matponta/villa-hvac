@@ -204,6 +204,8 @@ covers carry an orientation label.)
 | Winter light (setpoint-only heating, winter slider, per-room offset + Economy) | v0.77.0 | 17 thermostat zones |
 | Winter sun (open sunny covers while away, restore at sunset) | v0.78.0 | edge-triggered |
 | Fancoils always OFF in winter (`fan_power:` lever) | v0.79.0 | radiant only |
+| Winter brain W1: radiant observer + time-to-temperature (STORY_WINTER_BRAIN) | v0.80.0 | read-only |
+| Winter brain W2–W4: setback advisor, winter return pre-cond, PV heating | — | next |
 | **BACKLOG: winter rack cooling via the rack fancoil fan** | — | owner 2026-10-07; exception to fancoils-off when the rack is hot |
 | BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter |
 

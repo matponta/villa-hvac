@@ -28,6 +28,7 @@ class ZoneSnapshot:
     emitter: str | None
     temp: float | None = None      # fused current temperature (#1)
     demand: bool | None = None     # EV FAN valve open = actually cooling
+    heat_demand: bool | None = None  # v0.80.0: radiant valve open = actually heating
     enabled: bool = True           # #10 zone enable switch
     paused: bool = False           # #4 window pause
     bedroom: bool = False          # camere silenziose zone (#2b)

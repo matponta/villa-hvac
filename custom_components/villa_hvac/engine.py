@@ -77,6 +77,7 @@ from .const import (
     GUARD_MANUALE_SWITCHES,
     PV_BIAS_MIN_DWELL,
     COOL_VALVES,
+    HEAT_VALVES,
     FORECAST_REFRESH,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_NIGHT,
@@ -150,6 +151,8 @@ from .supervisor.house_model import HouseRuntimeModel
 from .supervisor.explain import LiveClimate, RoomExplain, explain_room
 from .supervisor.mass import DemandShedController, apply_mass_maintenance
 from .supervisor.telemetry import HouseTelemetry
+from .supervisor.winter_model import WinterModel
+from .supervisor.winter_model import recovery_minutes as winter_recovery_minutes
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
@@ -516,6 +519,11 @@ def build_house_state(
         if valve is not None and (vs := hass.states.get(valve)) is not None:
             if vs.state in (STATE_ON, STATE_OFF):
                 demand = vs.state == STATE_ON
+        heat_demand: bool | None = None
+        hv = HEAT_VALVES.get(zone_id)
+        if hv is not None and (hs := hass.states.get(hv)) is not None:
+            if hs.state in (STATE_ON, STATE_OFF):
+                heat_demand = hs.state == STATE_ON
         fancoils = zone.get("fancoils") or []
         fancoil = fancoils[0] if fancoils else None
         # manuale switch: explicit in ZONES (bedrooms) else derived from the fan
@@ -614,6 +622,7 @@ def build_house_state(
             emitter=emitter,
             temp=(zone_temps.get(zone_id) or {}).get("value"),
             demand=demand,
+            heat_demand=heat_demand,
             enabled=not is_zone_disabled(hass, entry, zone_id),
             paused=zone_id in paused,
             bedroom=bool(zone.get("bedroom")),
@@ -784,6 +793,13 @@ def build_house_state(
     )
 
 
+class WinterModelStore(RoomModelStore):
+    """v0.80.0: durable winter radiant models (own file, best-effort)."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        self._store = Store(hass, 1, "villa_hvac_winter_models")
+
+
 class SupervisorEngine:
     """Runs the policy stack each coordinator tick and applies the result.
 
@@ -801,6 +817,7 @@ class SupervisorEngine:
         controllers=None,
         model_store: "RoomModelStore | None" = None,
         house_store: "HouseModelStore | None" = None,
+        winter_store: "WinterModelStore | None" = None,
     ) -> None:
         self.hass = hass
         self.entry = entry
@@ -846,6 +863,11 @@ class SupervisorEngine:
         self.away_return = AwayReturnController()
         self._model_store = model_store
         self._house_store = house_store
+        # v0.80.0 STORY_WINTER_BRAIN W1: radiant observer (winter-only learning,
+        # never actuates) + the per-room view the winter sensors read.
+        self.winter = WinterModel()
+        self._winter_store = winter_store
+        self.winter_view: dict[str, dict] = {}
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         # B2: last reconcile decision per lever this cycle (diagnostic only, surfaced
@@ -1064,6 +1086,7 @@ class SupervisorEngine:
             # Observe the RAW state (before the #8 mode override, which only
             # changes intended presets/setpoints, not the measured conditions).
             self.thermal.observe(state)
+            self._observe_winter(state)
             self._observe_telemetry(state)
             self.house_model.observe(
                 now_s=state.now.timestamp(),
@@ -1331,13 +1354,54 @@ class SupervisorEngine:
 
     async def async_persist_house_model(self) -> None:
         """v0.73.0: persist the house runtime model (own Store, best-effort;
-        also run on unload — deliberately OUTSIDE the SHA-pinned fail-safe)."""
+        also run on unload — deliberately OUTSIDE the SHA-pinned fail-safe).
+        v0.80.0: the winter radiant model rides the same best-effort hook."""
+        if self._winter_store is not None:
+            try:
+                await self._winter_store.async_save(self.winter.dump())
+            except Exception:  # noqa: BLE001 - persistence is best-effort
+                _LOGGER.debug("Winter-model persist failed", exc_info=True)
         if self._house_store is None:
             return
         try:
             await self._house_store.async_save(self.house_model.dump())
         except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
             _LOGGER.debug("House-model persist failed", exc_info=True)
+
+    def _observe_winter(self, state: HouseState) -> None:
+        """v0.80.0 W1: learn the radiant model + publish the per-room winter view
+        (recovery minutes to the room's comfort target). Winter only; read-only."""
+        if state.season != SEASON_WINTER:
+            self.winter_view = {}
+            return
+        views: dict[str, dict] = {}
+        for z in state.zones.values():
+            if z.zone_id not in HEAT_VALVES:
+                continue
+            self.winter.observe(
+                z.zone_id, now=state.now, temp=z.temp, outdoor=state.outdoor_temp,
+                valve=z.heat_demand, solar=state.solar,
+            )
+            p = self.winter.get(z.zone_id)
+            target = (
+                round(state.house_setpoint + z.setpoint_offset, 1)
+                if state.house_setpoint is not None else None
+            )
+            views[z.zone_id] = {
+                "name": z.name,
+                "temp": z.temp,
+                "target": target,
+                "valve": z.heat_demand,
+                "enabled": z.enabled and not z.paused,
+                "recovery_min": winter_recovery_minutes(
+                    z.temp, target, state.outdoor_temp, p
+                ),
+                "a": round(p.a, 4), "k_h": round(p.k_h, 3),
+                "lag_min": round(p.lag_min, 1),
+                "n_a": p.n_a, "n_k": p.n_k, "n_lag": p.n_lag,
+                "confidence": round(p.confidence(), 2),
+            }
+        self.winter_view = views
 
     def _build_split_view(self, state: HouseState) -> dict:
         """Project the split-AC trio's live state into a read-only observe view (#6).

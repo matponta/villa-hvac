@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
 from .const import (
+    HEAT_VALVES,
     CONDOMINIO_BATTERY_POWER,
     CONDOMINIO_BATTERY_SOC,
     CONDOMINIO_GRID_POWER,
@@ -112,7 +113,96 @@ async def async_setup_entry(
         if zone.get("climate") and zone.get("emitter") == "fancoil"
         and zone.get("fancoils") and not zone.get("follows")
     ]
+    # v0.80.0 STORY_WINTER_BRAIN W1: winter radiant model per heated room +
+    # the house "time to temperature".
+    entities.append(HouseHeatUpSensor(coordinator, entry))
+    entities += [
+        WinterRoomSensor(coordinator, entry, zone_id, ZONES[zone_id])
+        for zone_id in HEAT_VALVES
+    ]
     async_add_entities(entities)
+
+
+def _winter_view(coordinator) -> dict:
+    engine = getattr(coordinator, "engine", None)
+    return getattr(engine, "winter_view", None) or {}
+
+
+class WinterRoomSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.80.0: the room's radiant model (winter). State = minutes until the
+    room reaches its comfort target with the floor heating (0 = already there,
+    unknown = unreachable/no data). Attributes: learned a / k_h / lag + counts."""
+
+    _attr_has_entity_name = True
+    _attr_icon = "mdi:heating-coil"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator, entry, zone_id: str, zone: dict) -> None:
+        super().__init__(coordinator)
+        self._zone_id = zone_id
+        self._attr_name = f"{zone['name']} inverno"
+        self._attr_unique_id = f"{entry.entry_id}_winter_{zone_id}"
+
+    @property
+    def native_value(self) -> float | None:
+        v = _winter_view(self.coordinator).get(self._zone_id)
+        if not v or v.get("recovery_min") is None:
+            return None
+        return round(v["recovery_min"])
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(_winter_view(self.coordinator).get(self._zone_id) or {})
+        v.pop("name", None)
+        return v
+
+
+class HouseHeatUpSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.80.0: "tempo per portare in temperatura la casa" — minutes until the
+    SLOWEST heated room reaches its comfort target from where it is now (winter
+    radiant model; rooms window-paused / disabled are left out)."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Tempo riscaldamento"
+    _attr_icon = "mdi:home-clock"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_suggested_display_precision = 0
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_house_heat_up"
+
+    def _rooms(self) -> list[tuple[str, dict]]:
+        return [
+            (z, v) for z, v in _winter_view(self.coordinator).items()
+            if v.get("enabled")
+        ]
+
+    @property
+    def native_value(self) -> float | None:
+        mins = [v["recovery_min"] for _, v in self._rooms()
+                if v.get("recovery_min") is not None]
+        return round(max(mins)) if mins else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        rooms = self._rooms()
+        known = [(z, v) for z, v in rooms if v.get("recovery_min") is not None]
+        slowest = max(known, key=lambda zv: zv[1]["recovery_min"], default=None)
+        return {
+            "slowest_room": slowest[1]["name"] if slowest else None,
+            "rooms": {
+                v["name"]: (None if v.get("recovery_min") is None
+                            else round(v["recovery_min"]))
+                for _, v in rooms
+            },
+            "unknown_rooms": [v["name"] for _, v in rooms
+                              if v.get("recovery_min") is None],
+            "model_confidence": round(
+                sum(v["confidence"] for _, v in rooms) / len(rooms), 2
+            ) if rooms else None,
+        }
 
 
 class RoomExplainSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):

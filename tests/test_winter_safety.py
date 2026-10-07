@@ -79,12 +79,21 @@ async def test_free_air_is_inert_in_winter(hass):
 
 
 async def test_night_silence_not_active_in_winter(hass):
+    from homeassistant.util import dt as dt_util
+
     entry = await _setup(hass, "heat")
     hass.states.async_set("select.house_mode", "Notte")
     hass.states.async_set("switch.auto_setback", "on")
-    assert build_house_state(hass, entry, entry.runtime_data).night_active is False
-    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool", {"preset_mode": "comfort"})
-    assert build_house_state(hass, entry, entry.runtime_data).night_active is True
+    # 03:00 local: outside the clock-derived wake window [08:00, 20:00).
+    night = dt_util.as_utc(
+        datetime(2026, 7, 1, 3, 0, tzinfo=dt_util.get_default_time_zone())
+    )
+    with freeze_time(night):
+        assert build_house_state(hass, entry, entry.runtime_data).night_active is False
+        hass.states.async_set(
+            SEASON_REFERENCE_CLIMATE, "cool", {"preset_mode": "comfort"}
+        )
+        assert build_house_state(hass, entry, entry.runtime_data).night_active is True
 
 
 # --- thermal estimator ----------------------------------------------------------

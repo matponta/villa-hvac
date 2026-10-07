@@ -540,6 +540,11 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        fan as satisfied — every fan sat ON/0 in AUTO after the 7/10 changeover);
        one ON each on leaving winter. BACKLOG: winter rack cooling with the rack
        fan only (exception).
+       **Winter brain (STORY_WINTER_BRAIN.md):** W1 v0.80.0 = radiant OBSERVER
+       driven by the 15 radiant valve STATES (`HEAT_VALVES`, read-only — never
+       commanded): per room a (loss), k_h (heating rate), lag → recovery minutes
+       (`sensor.<room>_inverno`, `sensor.tempo_riscaldamento`). Next W2 setback
+       advisor, W3 winter #8, W4 PV heating — all via setpoints.
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",
         reframed with the owner: on entering **Via** an actionable notification
         asks *when you're back* (coarse: date + `mattino/pomeriggio/sera`); the

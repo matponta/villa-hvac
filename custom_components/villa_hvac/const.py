@@ -179,6 +179,32 @@ UNIT_FANS: dict[str, str] = {
     "office": "fan.fancoil_studio_pianerottolo_p1",
     "rack": "fan.fancoil_locale_rack",
 }
+# v0.80.0 (STORY_WINTER_BRAIN): the radiant-floor valve STATES (owner-created
+# KNX binary_sensors 2026-10-07) — read-only, the true per-room winter heating
+# demand (we never command valves). bagno_padronale_01/02 share one valve;
+# pianerottolo_p2 has none.
+def _rv(name: str) -> str:
+    return f"binary_sensor.radiante_{name}_valvola"
+
+
+HEAT_VALVES: dict[str, str] = {
+    "living_room": _rv("zona_giorno"),
+    "main_bedroom": _rv("camera_padronale"),
+    "gabriroom": _rv("camera_gabriele"),
+    "studio_v": _rv("camera_ospiti"),
+    "office": _rv("studio"),
+    "sala_giochi": _rv("sala_giochi"),
+    "stairs_p1": _rv("pianerottolo_p1"),
+    "palestra": _rv("palestra"),
+    "ingresso": _rv("ingresso"),
+    "lavanderia": _rv("lavanderia"),
+    "bagno_gabriele": _rv("bagno_gabriele"),
+    "bagno_giochi": _rv("bagno_p1"),
+    "bagno_ingresso": _rv("bagno_pt"),
+    "bagno_palestra": _rv("bagno_palestra"),
+    "bagno_padronale_01": _rv("bagno_padronale"),
+    "bagno_padronale_02": _rv("bagno_padronale"),
+}
 # Fancoils known to be physically dead / non-responsive (owner-verified
 # 2026-07-15: sala giochi cools only through the open door). A zone whose units
 # are all dead has NO cooling actuator: its capacity k is not learnable and its

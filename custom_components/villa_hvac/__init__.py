@@ -13,7 +13,12 @@ from .controller import (
     current_house_mode,
 )
 from .coordinator import VillaHvacCoordinator
-from .engine import HouseModelStore, RoomModelStore, SupervisorEngine
+from .engine import (
+    HouseModelStore,
+    RoomModelStore,
+    SupervisorEngine,
+    WinterModelStore,
+)
 from .governor import SteadyGovernorController
 from .night import NightSilenceController
 from .policies import POLICIES, CoolingController, SplitGroupController
@@ -70,6 +75,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     model_store = RoomModelStore(hass)
     model_data = await model_store.async_load()
     house_store = HouseModelStore(hass)
+    winter_store = WinterModelStore(hass)
     rack = RackGuardController(hass, entry)
     coordinator.rack = rack
     p1_guard = P1GuardController(hass, entry)
@@ -99,9 +105,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         ),
         model_store=model_store,
         house_store=house_store,
+        winter_store=winter_store,
     )
     engine.thermal.load(model_data)
     engine.house_model.load(await house_store.async_load())
+    engine.winter.load(await winter_store.async_load())
     coordinator.engine = engine
     engine.start()
     entry.async_on_unload(engine.stop)
