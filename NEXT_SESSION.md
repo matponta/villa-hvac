@@ -1,5 +1,27 @@
 # Next session — kickstart prompts
 
+## v0.79.0 — winter: fancoils always OFF (2026-10-07)
+Owner 7/10: central plant switched to INVERNO (salotto `heat`, s5a Inverno,
+`binary_sensor.impianto_inverno` on, consenso caldo ON). v0.78.1 was already live
+and the winter light took over cleanly: Casa → 16 thermostats `comfort`/21
+(P1 20 with its −1 trim), lavanderia BP (vasistas window pause), plan=`heating`.
+Owner rule: in winter ONLY the radiant floor heats (thermostat-regulated); the
+fancoils must stay OFF. Live: all 8 fans sat ON at 0 % in AUTO after the
+changeover, valves closed — and the `fan:` % lever reads ON-at-0 as "0" =
+satisfied, so it could never assert OFF. → new `fan_power:` lever (switch object
+only) + `WinterFancoilController` (winter.py): winter → all 8 fancoil fans OFF
+(arbiter re-asserts; a wall press concedes 2 h then off again); first non-winter
+cycle → one ON each. `fan_power` OFF discards the fan from `_fans_turned_off` and
+the engine clears it in winter, so the fail-safe won't spin fans up on a winter
+unload. In-memory: after a summer restart the summer watchdog revives fans.
+
+BACKLOG (owner 7/10): **winter rack cooling with the rack fancoil FAN only**
+(no chilled water in winter — ventilation of the rack room / P1). Today the rack
+guard is summer-gated and the rack fan is held OFF all winter → watch
+`sensor.rack_temperatura_media` this winter; design a winter rack guard that
+may run `fan.fancoil_locale_rack` (exception to WinterFancoilController) when hot.
+
+
 ## v0.76.0–v0.78.1 — WINTER LIGHT (2026-09-30) — RELEASED v0.78.1, NOT DEPLOYED
 (LIVE at the time = v0.75.2, installed by the other 30/9 session; house in Vacanza,
 all 17 thermostats still `cool` + BP, `sensor.s5a_stagione` = Estate.)

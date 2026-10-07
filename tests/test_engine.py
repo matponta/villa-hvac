@@ -1512,7 +1512,8 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     (#6) is last: its lever set (aircon_* hvac_mode/temperature/fan_mode) is
     disjoint from the rest, so its position is immaterial. DemandShedController
     (v0.74.0) sits after every lever owner (guards, governor, Cooling, Night) so
-    it can only outrank the pure house_mode setpoint of a room it rests."""
+    it can only outrank the pure house_mode setpoint of a room it rests.
+    WinterFancoilController (v0.79.0) owns only the disjoint `fan_power:` levers."""
     from custom_components.villa_hvac.night import NightSilenceController
     from custom_components.villa_hvac.rack import (
         P1GuardController,
@@ -1525,12 +1526,14 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
         SplitGroupController,
     )
 
+    from custom_components.villa_hvac.winter import WinterFancoilController
+
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
     assert [type(c) for c in engine.controllers] == [
         RackGuardController, P1GuardController, SteadyGovernorController,
         CoolingController, NightSilenceController,
-        DemandShedController, SplitGroupController,
+        DemandShedController, SplitGroupController, WinterFancoilController,
     ]
     assert engine._cooling is engine.controllers[3]
 

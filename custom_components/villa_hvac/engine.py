@@ -1123,6 +1123,11 @@ class SupervisorEngine:
                 # yields (no opinion) on disabled/paused/free-cool zones, so the
                 # higher-priority preset policies still own those.
                 ctrl_outputs = [c(state) for c in self.controllers]
+                if state.season == SEASON_WINTER:
+                    # v0.79.0: in winter the fancoils are held OFF on purpose
+                    # (WinterFancoilController) — no summer dead-fan re-arm is
+                    # owed, so the fail-safe must not turn them on at unload.
+                    self._fans_turned_off.clear()
                 desired, owners = merge_desired_owned([
                     *zip(map(_output_name, self.controllers), ctrl_outputs),
                     *zip(map(_output_name, self.policies), pure_outputs),
@@ -1951,6 +1956,9 @@ class SupervisorEngine:
             if s.state == STATE_ON:
                 return s.attributes.get(ATTR_PERCENTAGE)
             return None
+        if kind == "fan_power":
+            # v0.79.0: the fan's ON/OFF switch object alone (on / off).
+            return s.state if s.state in (STATE_ON, STATE_OFF) else None
         if kind == "cover":
             # position-controlled shading: compare on current_position (0-100).
             pos = s.attributes.get(ATTR_CURRENT_POSITION)
@@ -1995,6 +2003,19 @@ class SupervisorEngine:
                 CLIMATE_DOMAIN, SERVICE_SET_FAN_MODE,
                 {ATTR_ENTITY_ID: entity, ATTR_FAN_MODE: value},
             )
+        elif kind == "fan_power":
+            # v0.79.0 winter fancoils-off. OFF: the winter owner now HOLDS this
+            # fan off, so no dead-fan re-arm is owed (the fail-safe must not spin
+            # it up on an unload in winter); the summer hand-back is the owner's
+            # explicit "on". ON: a live fan for KNX AUTO to drive.
+            if str(value) == STATE_OFF:
+                self._fans_turned_off.discard(entity)
+                await self._call(FAN_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: entity})
+            else:
+                await self._call(
+                    FAN_DOMAIN, SERVICE_TURN_ON,
+                    {ATTR_ENTITY_ID: entity, ATTR_PERCENTAGE: NIGHT_GUARD_FAN_PCT},
+                )
         elif kind == "fan":
             # Assert the on/off STATE together with the % — set_percentage alone
             # left an off fan off when the bus already held the commanded %

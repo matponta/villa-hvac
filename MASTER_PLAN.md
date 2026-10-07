@@ -195,3 +195,15 @@ BLOCCO polarity · held-low-fan% cooling/valve test (#3) · mild-weather valve
 history (#9 tuning) · winter `caldo` mechanism (#7). (#6 cover/orientation map is
 runtime registry-resolved + verified — no longer a gate; just confirm all relevant
 covers carry an orientation label.)
+
+## Winter (2026-09-30 →)
+
+| Item | Release | Notes |
+|---|---|---|
+| Winter safety gates + season memory | v0.76.0 / v0.78.1 | free_air, #2b, #8, estimator summer-only |
+| Winter light (setpoint-only heating, winter slider, per-room offset + Economy) | v0.77.0 | 17 thermostat zones |
+| Winter sun (open sunny covers while away, restore at sunset) | v0.78.0 | edge-triggered |
+| Fancoils always OFF in winter (`fan_power:` lever) | v0.79.0 | radiant only |
+| **BACKLOG: winter rack cooling via the rack fancoil fan** | — | owner 2026-10-07; exception to fancoils-off when the rack is hot |
+| BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter |
+

@@ -22,6 +22,7 @@ from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
 from .sungain import WinterSunController
 from .vmc import VmcController
+from .winter import WinterFancoilController
 from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
@@ -92,6 +93,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         controllers=(
             rack, p1_guard, governor, CoolingController(), night,
             DemandShedController(), SplitGroupController(),
+            # v0.79.0: winter = radiant only -> every fancoil fan held OFF
+            # (own fan_power: lever, disjoint from every other owner).
+            WinterFancoilController(),
         ),
         model_store=model_store,
         house_store=house_store,

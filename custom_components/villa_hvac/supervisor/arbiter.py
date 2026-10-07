@@ -215,6 +215,14 @@ def fan_lever(fan_entity: str) -> str:
 
 
 
+def fan_power_lever(fan_entity: str) -> str:
+    """v0.79.0: a fancoil fan's ON/OFF switch object alone ("on"/"off").
+
+    Distinct from `fan:` (the % lever, which reads an ON-at-0 % fan as already
+    "0" and so can never assert a real OFF)."""
+    return f"fan_power:{fan_entity}"
+
+
 def cover_lever(cover_entity: str) -> str:
     return f"cover:{cover_entity}"
 

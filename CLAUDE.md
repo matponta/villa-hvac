@@ -534,6 +534,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        the arbiter. Last conclusive season persisted (`villa_hvac_season`). UNVERIFIED
        LIVE until the first heat flip: KNX `comfort`+temperature regulates the
        radiant as expected. Legacy `script.alza/abbassa_riscaldamento` to retire.
+       **Fancoils OFF in winter (v0.79.0, owner rule 2026-10-07):** heating is the
+       radiant floor ONLY. `WinterFancoilController` holds all 8 fancoil fans OFF
+       via the dedicated `fan_power:` lever (the `fan:` % lever reads an ON-at-0 %
+       fan as satisfied — every fan sat ON/0 in AUTO after the 7/10 changeover);
+       one ON each on leaving winter. BACKLOG: winter rack cooling with the rack
+       fan only (exception).
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",
         reframed with the owner: on entering **Via** an actionable notification
         asks *when you're back* (coarse: date + `mattino/pomeriggio/sera`); the
