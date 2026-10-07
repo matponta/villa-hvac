@@ -125,6 +125,18 @@ WINTER_PRESET = "comfort"
 # normal target. Options-editable.
 OPT_WINTER_ECO_OFFSET = "winter_eco_offset"
 DEFAULT_WINTER_ECO_OFFSET = -3.0
+# v0.81.0 W2/W3 winter setback advisor + return pre-conditioning: the advised
+# away setback never goes under this absolute floor nor deeper than max.
+OPT_WINTER_SETBACK_FLOOR = "winter_setback_floor"
+DEFAULT_WINTER_SETBACK_FLOOR = 16.0
+OPT_WINTER_SETBACK_MAX = "winter_setback_max"
+DEFAULT_WINTER_SETBACK_MAX = 6.0
+# v0.81.0 W4 PV heating: rooms that go to their Casa target on a real
+# Condominio PV surplus even in Via/Notte/Vacanza (owner 2026-10-07). Each room
+# has its own switch.<zone>_pv_heat (these default ON); master switch.pv_heat.
+PV_HEAT_DEFAULT_ZONES: frozenset[str] = frozenset({
+    "main_bedroom", "bagno_padronale_01", "bagno_padronale_02", "living_room",
+})
 # Hard bounds on ANY winter setpoint we write (house + mode + room + economy).
 WINTER_SETPOINT_MIN = 15.0
 WINTER_SETPOINT_MAX = 25.0

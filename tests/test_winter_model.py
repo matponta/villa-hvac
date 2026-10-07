@@ -86,6 +86,8 @@ def test_learns_lag_and_heating_rate_on_an_open_window():
     def temp(i):  # flat until the dead time, then rises at k - a*(T-To)
         return 18.0 if i < lag else 18.0 + (k_true - a * 13) * (i - lag) / 60
 
+    m.observe("z", now=T0 - timedelta(minutes=5), temp=18.0, outdoor=5.0,
+              valve=False, solar=0.0)                      # the observed edge
     _drive(m, "z", start=T0, minutes=240, valve=True, temp_fn=temp)
     p = m.get("z")
     assert p.n_lag == 1 and abs(p.lag_min - lag) <= 10   # dead time, climb removed
@@ -127,3 +129,12 @@ async def test_engine_feeds_valves_and_sensors_in_winter(hass):
     hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool", {"preset_mode": "comfort"})
     engine._observe_winter(build_house_state(hass, entry, entry.runtime_data))
     assert engine.winter_view == {}
+
+
+def test_lag_not_learned_from_a_segment_without_an_observed_opening():
+    """Review: after a restart / data gap mid-episode the room is already
+    climbing — back-extrapolating would clamp the lag to ~0."""
+    m = WinterModel()
+    _drive(m, "z", start=T0, minutes=120, valve=True,
+           temp_fn=lambda i: 19.0 + 0.4 * i / 60)
+    assert m.get("z").n_lag == 0

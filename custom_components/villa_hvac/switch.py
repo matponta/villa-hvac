@@ -22,7 +22,13 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
-from .const import NIGHT_SILENCE_SWITCHES, PRESET_CONTROLLABLE_EMITTERS, ZONES
+from .const import (
+    HEAT_VALVES,
+    NIGHT_SILENCE_SWITCHES,
+    PRESET_CONTROLLABLE_EMITTERS,
+    PV_HEAT_DEFAULT_ZONES,
+    ZONES,
+)
 from .controller import apply_house_mode, current_house_mode
 from .coordinator import VillaHvacCoordinator
 from .engine import shadeable_zones
@@ -62,6 +68,7 @@ async def async_setup_entry(
         GovernorOptInSwitch(entry, "mass_maintenance", "Mass maintenance"),
         GovernorOptInSwitch(entry, "demand_shedding", "Demand shedding"),
         WinterSunSwitch(entry),
+        GovernorOptInSwitch(entry, "pv_heat", "PV heating"),
     ]
     entities += [
         NightSilenceSwitch(entry, zone_id, entity_id)
@@ -77,6 +84,11 @@ async def async_setup_entry(
         ZoneEconomySwitch(entry, zone_id, zone["name"])
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
+    ]
+    # v0.81.0 W4: per-room PV heating (owner rooms default ON).
+    entities += [
+        ZonePvHeatSwitch(entry, zone_id, ZONES[zone_id]["name"])
+        for zone_id in HEAT_VALVES
     ]
     entities += [
         ShadeBlockSwitch(entry, zone, name)
@@ -843,3 +855,16 @@ class WinterSunSwitch(SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False
         self.async_write_ha_state()
+
+
+class ZonePvHeatSwitch(ZoneEconomySwitch):
+    """v0.81.0 W4: this room joins PV heating (to its Casa target on a real
+    Condominio surplus, also while away). Owner rooms default ON; restored."""
+
+    _attr_icon = "mdi:solar-power-variant"
+
+    def __init__(self, entry: VillaHvacConfigEntry, zone_id: str, name: str) -> None:
+        super().__init__(entry, zone_id, name)
+        self._attr_name = f"{name} PV heating"
+        self._attr_unique_id = f"{entry.entry_id}_{zone_id}_pv_heat"
+        self._attr_is_on = zone_id in PV_HEAT_DEFAULT_ZONES

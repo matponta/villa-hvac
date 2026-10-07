@@ -62,6 +62,14 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONDOMINIO_BATTERY_POWER,
+    DEFAULT_RETURN_DAYPART_HOURS,
+    DEFAULT_WINTER_SETBACK_FLOOR,
+    DEFAULT_WINTER_SETBACK_MAX,
+    OPT_WINTER_SETBACK_FLOOR,
+    OPT_WINTER_SETBACK_MAX,
+    CONDOMINIO_BATTERY_SOC,
+    CONDOMINIO_GRID_POWER,
     CONDOMINIO_PV_REMAINING,
     CONSENSO_BLOCCO,
     COOL_CAPACITY,
@@ -130,6 +138,10 @@ from .controller import (
     pv_bias_enabled,
     setpoint_offset,
     winter_eco_offset,
+    return_date,
+    return_daypart,
+    pv_heat_enabled,
+    zone_pv_heat,
     zone_economy,
     shade_blocked,
     shade_position,
@@ -151,7 +163,14 @@ from .supervisor.house_model import HouseRuntimeModel
 from .supervisor.explain import LiveClimate, RoomExplain, explain_room
 from .supervisor.mass import DemandShedController, apply_mass_maintenance
 from .supervisor.telemetry import HouseTelemetry
+from .supervisor.returnhome import return_eta
 from .supervisor.winter_model import WinterModel
+from .supervisor.winter_plan import (
+    WinterAdvice,
+    WinterRoom,
+    outdoor_estimate,
+    winter_setback_advice,
+)
 from .supervisor.winter_model import recovery_minutes as winter_recovery_minutes
 from .supervisor import (
     BLOCCO_LEVER,
@@ -224,6 +243,15 @@ _FAILSAFE_LOCK_TIMEOUT = 5.0
 # reconcile re-asserts next cycle). Kept above _FAILSAFE_LOCK_TIMEOUT so the
 # fail-safe still pre-empts a hang by releasing without the lock.
 LEVER_CALL_TIMEOUT = 10.0
+
+
+def _opt(options, key: str, default: float) -> float:
+    """A numeric option (finite) or its default."""
+    try:
+        val = float(options.get(key, default))
+    except (TypeError, ValueError):
+        return default
+    return val if math.isfinite(val) else default
 
 
 def _num(hass: HomeAssistant, entity_id: str) -> float | None:
@@ -782,6 +810,13 @@ def build_house_state(
         config=cfg,
         consenso_freddo=data.get("consenso_freddo"),
         consenso_caldo=data.get("consenso_caldo"),
+        pv_heat_enabled=pv_heat_enabled(hass, entry),
+        pv_heat_zones=frozenset(
+            z for z in HEAT_VALVES if zone_pv_heat(hass, entry, z)
+        ),
+        condo_soc=_num(hass, CONDOMINIO_BATTERY_SOC),
+        condo_grid_w=_num(hass, CONDOMINIO_GRID_POWER),
+        condo_battery_w=_num(hass, CONDOMINIO_BATTERY_POWER),
         blocco=blocco_state.state if blocco_state is not None else None,
         split_enabled=split_ac_enabled(hass, entry),
         split_cantina_setpoint=cfg.split_cantina_setpoint,
@@ -868,6 +903,7 @@ class SupervisorEngine:
         self.winter = WinterModel()
         self._winter_store = winter_store
         self.winter_view: dict[str, dict] = {}
+        self.winter_advice: WinterAdvice | None = None
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         # B2: last reconcile decision per lever this cycle (diagnostic only, surfaced
@@ -1103,8 +1139,11 @@ class SupervisorEngine:
             # #8: override the effective house mode while Via+armed (deep setback
             # -> pre-cond ramp). Both the plan view and actuation see it; the latch
             # only advances on an actuating pass.
+            # v0.81.0 W2: the winter setback advice (also feeds #8 in winter).
+            self.winter_advice = self._winter_advice(state)
             state = self.away_return.apply(
-                state, self.hass, self.entry, commit=actuate
+                state, self.hass, self.entry, commit=actuate,
+                winter_advice=self.winter_advice,
             )
             # v0.74.0 mass maintenance: AFTER the #8 override (an armed return
             # already rewrote Via), BEFORE anything reads mode_offset.
@@ -1367,6 +1406,39 @@ class SupervisorEngine:
             await self._house_store.async_save(self.house_model.dump())
         except Exception:  # noqa: BLE001 - persistence is best-effort, never fatal
             _LOGGER.debug("House-model persist failed", exc_info=True)
+
+    def _winter_advice(self, state: HouseState) -> "WinterAdvice | None":
+        """v0.81.0 W2 "quanto posso abbassare": for the return ETA (the #8 date +
+        daypart, armed or not) the deepest uniform setback that still recovers
+        every heated room by the ETA, and when to start. Winter only; pure."""
+        if state.season != SEASON_WINTER or state.house_setpoint is None:
+            return None
+        eta = return_eta(
+            return_date(self.hass, self.entry), return_daypart(self.hass, self.entry),
+            DEFAULT_RETURN_DAYPART_HOURS, dt_util.as_local(state.now),
+        )
+        if eta is None:
+            return None
+        rooms = [
+            WinterRoom(
+                zone=z.zone_id, name=z.name, temp=z.temp,
+                target=round(state.house_setpoint + z.setpoint_offset, 1),
+                params=self.winter.get(z.zone_id),
+            )
+            for z in state.zones.values()
+            if z.zone_id in HEAT_VALVES and z.enabled and not z.paused
+            and z.temp is not None
+        ]
+        opts = self.entry.options
+        floor = _opt(opts, OPT_WINTER_SETBACK_FLOOR, DEFAULT_WINTER_SETBACK_FLOOR)
+        max_depth = _opt(opts, OPT_WINTER_SETBACK_MAX, DEFAULT_WINTER_SETBACK_MAX)
+        outdoor = outdoor_estimate(self._forecast, state.now, eta, state.outdoor_temp)
+        via = mode_offset(self.hass, self.entry, HOUSE_MODE_AWAY)
+        return winter_setback_advice(
+            rooms, now=state.now, eta=eta, outdoor=outdoor,
+            floor=floor, max_depth=max_depth,
+            min_depth=-via if via is not None and via < 0 else 0.0,
+        )
 
     def _observe_winter(self, state: HouseState) -> None:
         """v0.80.0 W1: learn the radiant model + publish the per-room winter view

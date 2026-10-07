@@ -27,7 +27,7 @@ from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
 from .sungain import WinterSunController
 from .vmc import VmcController
-from .winter import WinterFancoilController
+from .winter import PvHeatController, WinterFancoilController
 from .window import WindowController
 
 # Typed config entry (HA 2024.6+): coordinator lives in entry.runtime_data
@@ -102,6 +102,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
             # v0.79.0: winter = radiant only -> every fancoil fan held OFF
             # (own fan_power: lever, disjoint from every other owner).
             WinterFancoilController(),
+            # v0.81.0 W4: PV surplus -> chosen rooms to their Casa target (owns
+            # preset+temperature of those rooms only while active; above the
+            # house_mode policy, below nothing it could fight in winter).
+            PvHeatController(),
         ),
         model_store=model_store,
         house_store=house_store,

@@ -205,7 +205,7 @@ covers carry an orientation label.)
 | Winter sun (open sunny covers while away, restore at sunset) | v0.78.0 | edge-triggered |
 | Fancoils always OFF in winter (`fan_power:` lever) | v0.79.0 | radiant only |
 | Winter brain W1: radiant observer + time-to-temperature (STORY_WINTER_BRAIN) | v0.80.0 | read-only |
-| Winter brain W2–W4: setback advisor, winter return pre-cond, PV heating | — | next |
+| Winter brain W2–W4: setback advisor, winter return pre-cond, PV heating | v0.81.0 | opt-in (pv_heat / return_precond) |
 | **BACKLOG: winter rack cooling via the rack fancoil fan** | — | owner 2026-10-07; exception to fancoils-off when the rack is hot |
 | BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter |
 

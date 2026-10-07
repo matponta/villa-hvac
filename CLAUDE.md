@@ -543,8 +543,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        **Winter brain (STORY_WINTER_BRAIN.md):** W1 v0.80.0 = radiant OBSERVER
        driven by the 15 radiant valve STATES (`HEAT_VALVES`, read-only — never
        commanded): per room a (loss), k_h (heating rate), lag → recovery minutes
-       (`sensor.<room>_inverno`, `sensor.tempo_riscaldamento`). Next W2 setback
-       advisor, W3 winter #8, W4 PV heating — all via setpoints.
+       (`sensor.<room>_inverno`, `sensor.tempo_riscaldamento`). W2–W4 v0.81.0:
+       `sensor.riduzione_consigliata` (how deep an away setback can go for the
+       return ETA + pre-heat start); W3 = #8 in winter (Via at the advised depth,
+       Casa from the start, hold past the ETA until presence); W4 PV heating
+       (owner rooms → Casa target on a NET Condominio surplus, SoC ≥ 90 start /
+       85 stay, opt-in `switch.pv_heat`, needs Auto setback). See STORY "As built".
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",
         reframed with the owner: on entering **Via** an actionable notification
         asks *when you're back* (coarse: date + `mattino/pomeriggio/sera`); the

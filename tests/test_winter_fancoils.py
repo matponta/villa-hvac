@@ -25,8 +25,11 @@ def _st(season):
     return HouseState(now=NOW, zones={}, season=season)
 
 
-def test_all_eight_fancoil_fans_are_covered():
-    assert set(WINTER_FANS) == set(UNIT_FANS.values()) and len(WINTER_FANS) == 8
+def test_all_live_fancoil_fans_are_covered():
+    from custom_components.villa_hvac.const import DEAD_FANCOILS
+
+    assert set(WINTER_FANS) == set(UNIT_FANS.values()) - DEAD_FANCOILS
+    assert len(WINTER_FANS) == 7
 
 
 def test_winter_holds_off_then_hands_back_once_in_summer():
@@ -35,9 +38,12 @@ def test_winter_holds_off_then_hands_back_once_in_summer():
     out = c(_st(SEASON_WINTER))
     assert out == {fan_power_lever(f): "off" for f in WINTER_FANS}
     assert c(_st(SEASON_WINTER)) == out                     # held every cycle
-    back = c(_st(SEASON_SUMMER))
-    assert back == {fan_power_lever(f): "on" for f in WINTER_FANS}
-    assert c(_st(SEASON_SUMMER)) == {}                      # one-shot
+    from custom_components.villa_hvac.winter import HANDBACK_CYCLES
+
+    on = {fan_power_lever(f): "on" for f in WINTER_FANS}
+    for _ in range(HANDBACK_CYCLES):                        # asserted for a window
+        assert c(_st(SEASON_SUMMER)) == on                  # (a lost telegram is
+    assert c(_st(SEASON_SUMMER)) == {}                      #  re-asserted), then free
 
 
 async def test_engine_turns_an_on_at_zero_fan_off_in_winter(hass):
@@ -62,6 +68,7 @@ async def test_engine_turns_an_on_at_zero_fan_off_in_winter(hass):
     await engine.request_run()
     await hass.async_block_till_done()
     assert {c.data["entity_id"] for c in offs} == set(WINTER_FANS)
+    assert "fan.fancoil_sala_giochi" not in {c.data["entity_id"] for c in offs}
     assert not ons
     # no summer dead-fan re-arm owed in winter -> the fail-safe won't spin them up
     assert engine._fans_turned_off == set()

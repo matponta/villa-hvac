@@ -1526,7 +1526,10 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
         SplitGroupController,
     )
 
-    from custom_components.villa_hvac.winter import WinterFancoilController
+    from custom_components.villa_hvac.winter import (
+        PvHeatController,
+        WinterFancoilController,
+    )
 
     entry = await _setup(hass)
     engine = entry.runtime_data.engine
@@ -1534,6 +1537,7 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
         RackGuardController, P1GuardController, SteadyGovernorController,
         CoolingController, NightSilenceController,
         DemandShedController, SplitGroupController, WinterFancoilController,
+        PvHeatController,
     ]
     assert engine._cooling is engine.controllers[3]
 

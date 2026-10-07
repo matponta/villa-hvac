@@ -60,6 +60,7 @@ class _Segment:
     min_temp: float | None = None         # for the lag (valve-open only)
     lag_done: bool = False
     rise1_at: datetime | None = None      # first +RISE_DETECT above the minimum
+    from_edge: bool = False               # began at an OBSERVED closed→open edge
 
 
 def _clamp(v: float, lo_hi: tuple[float, float]) -> float:
@@ -156,7 +157,10 @@ class WinterModel:
         if seg is not None and last is not None and now - last > 3 * SAMPLE_EVERY:
             seg = None                  # stale: restart
         if seg is None or seg.valve != valve:
-            seg = _Segment(valve=valve, start=now)
+            # The lag is only measurable from a transition we actually saw — not
+            # from a segment opened mid-episode by a restart or a data gap.
+            edge = seg is not None and seg.valve is False and valve is True
+            seg = _Segment(valve=valve, start=now, from_edge=edge)
             self._seg[zone] = seg
         if last is not None and now - last < SAMPLE_EVERY and seg.samples:
             return
@@ -175,7 +179,7 @@ class WinterModel:
         minimum took (t2 − t1), so the rise began at t1 − (t2 − t1)."""
         if seg.lag_done:
             return
-        if now - seg.start > MAX_LAG_WAIT:
+        if not seg.from_edge or now - seg.start > MAX_LAG_WAIT:
             seg.lag_done = True
             return
         if seg.rise1_at is None:

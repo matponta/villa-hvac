@@ -316,7 +316,7 @@ async def test_annotate_runs_after_away_return_override(hass):
     resolve the raw base 24 -> RUN at 23.25 -> fail."""
     entry = await _setup_band_engine(hass)
     engine = entry.runtime_data.engine
-    engine.away_return.apply = lambda state, hass_, entry_, commit: replace(
+    engine.away_return.apply = lambda state, hass_, entry_, commit, winter_advice=None: replace(
         state, mode_offset=5.0
     )
     temps = async_mock_service(hass, "climate", "set_temperature")

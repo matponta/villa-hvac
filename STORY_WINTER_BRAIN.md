@@ -53,11 +53,34 @@ capacity in minutes; the radiant floor responds in hours.
 | Phase | Content | Actuates? |
 |---|---|---|
 | **W1 v0.80.0** | Valve map (`heat_valve` in ZONES) + `WinterModel` observer (a, k_h, lag; own Store) + per-room `sensor.<room>_inverno` (recovery minutes to the comfort target, params, confidence) + house `sensor.tempo_riscaldamento` (time until the whole house is at temperature, now). Winter-only learning. | no |
-| W2 v0.81.0 | **Setback advisor** ("quanto posso abbassare"): for a return ETA (the #8 date + daypart entities) compute the deepest away setpoint ≥ floor so that the coast + recovery fits, the pre-heat start time and the degree-hours saved; sensor + dashboard. | no |
-| W3 v0.82.0 | **Winter return pre-conditioning**: #8 re-enabled in winter on the winter model — Via+armed holds the advised setback, then ramps to comfort at the computed start. Opt-in. | setpoints |
-| W4 v0.83.0 | **PV heating**: per-room `switch.<room>_pv_heat`; on real Condominio surplus (export / battery full, dwell + hysteresis) raise those rooms' setpoint by `pv_heat_boost` (cap) — also in Via/Vacanza (lifting BP → comfort for those rooms only). The slab is the thermal battery. Opt-in. | setpoints |
+| **W2 v0.81.0** | **Setback advisor** ("quanto posso abbassare"): for a return ETA (the #8 date + daypart entities) compute the deepest away setpoint ≥ floor so that the coast + recovery fits, the pre-heat start time and the degree-hours saved; sensor + dashboard. | no |
+| **W3 v0.81.0** | **Winter return pre-conditioning**: #8 re-enabled in winter on the winter model — Via+armed holds the advised setback, then ramps to comfort at the computed start. Opt-in. | setpoints |
+| **W4 v0.81.0** | **PV heating**: per-room `switch.<room>_pv_heat`; on real Condominio surplus (export / battery full, dwell + hysteresis) raise those rooms' setpoint by `pv_heat_boost` (cap) — also in Via/Vacanza (lifting BP → comfort for those rooms only). The slab is the thermal battery. Opt-in. | setpoints |
 | W5 | Wake pre-heat / sun-aware evening (tomorrow sunny → lower tonight), F4c planner hook. | setpoints |
 
 Guardrails: setpoint-only (never valves); every winter write stays inside
 [15, 25]; manual override wins (arbiter); fail-safe unchanged; advisory before
 actuation; every actuating feature opt-in and summer-inert.
+
+## As built (v0.81.0, 2026-10-07, adversarial-reviewed)
+
+- **W2** `winter_setback_advice`: uniform depth = min(max_depth, the smallest
+  `target − floor` over rooms that can still go down), never shallower than the
+  native winter Via; per room the recovery start is BISECTED on
+  `t + recovery(T(t)) = hours` (monotone: the room only cools); house pre-heat =
+  earliest room start. `sensor.riduzione_consigliata` state = how far the house
+  ACTUALLY drops (°C below Casa); attrs: depth applied, pre-heat start (local),
+  per-room lowest temp + start, degree-hours saved, executing decision.
+  Outdoor = min(current, forecast mean to the ETA).
+- **W3** `AwayReturnController._apply_winter`: Via + `return_armed` +
+  `return_precond` → WAITING = Via with mode_offset −depth; PRECOND = Casa from the
+  advised start; the latch HOLDS Casa past the ETA / through advice gaps until
+  presence (#2c) or disarm. The "when are you back?" push is asked in winter too.
+  (Also fixed: the summer #8 ETA was built in UTC → ramped 1–2 h late.)
+- **W4** `PvHeatController` + `pv_surplus_step`: owner rooms (switch
+  `<zone>_pv_heat`, default ON for main_bedroom, bagno_padronale_01/02,
+  living_room; master `switch.pv_heat` default OFF; needs Auto setback) go to
+  their Casa target (BP lifted in Vacanza). NET Condominio flow −(grid + battery):
+  START SoC ≥ 90 + net ≥ 300 W for 10 min (after a 60 min rest); STOP at sunset /
+  SoC < 85 (immediate) or a net deficit ≥ 1500 W / missing data for 10 min
+  (after 30 min min-on). `sensor.riscaldamento_fv` = active / idle / off + reason.

@@ -391,6 +391,16 @@ def windows_free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "windows_free_cool") == STATE_ON
 
 
+def pv_heat_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.81.0 W4 master switch (default OFF)."""
+    return _switch_state(hass, entry, "pv_heat") == STATE_ON
+
+
+def zone_pv_heat(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
+    """v0.81.0 W4 per-room PV-heating switch."""
+    return _switch_state(hass, entry, f"{zone}_pv_heat") == STATE_ON
+
+
 def winter_sun_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """v0.78.0 winter solar gain switch — default ON (only OFF disables)."""
     return _switch_state(hass, entry, "winter_sun") != STATE_OFF

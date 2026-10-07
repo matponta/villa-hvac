@@ -101,6 +101,8 @@ from .const import (
     OPT_WINTER_NOTTE_OFFSET,
     OPT_WINTER_ECO_OFFSET,
     OPT_WINTER_SUN_SOLAR,
+    OPT_WINTER_SETBACK_FLOOR,
+    OPT_WINTER_SETBACK_MAX,
     OPT_WINTER_VIA_OFFSET,
     SEASON_AUTO,
     SEASON_OFFSET_DEFAULTS,
@@ -111,6 +113,8 @@ from .const import (
     DEFAULT_SHED_MAX_CALLERS,
     DEFAULT_WINTER_ECO_OFFSET,
     DEFAULT_WINTER_SUN_SOLAR,
+    DEFAULT_WINTER_SETBACK_FLOOR,
+    DEFAULT_WINTER_SETBACK_MAX,
 )
 
 
@@ -223,6 +227,18 @@ class VillaHvacOptionsFlow(OptionsFlow):
                         OPT_WINTER_ECO_OFFSET, DEFAULT_WINTER_ECO_OFFSET
                     ),
                 ): vol.All(vol.Coerce(float), vol.Range(min=-8, max=0)),
+                vol.Optional(
+                    OPT_WINTER_SETBACK_FLOOR,
+                    default=options.get(
+                        OPT_WINTER_SETBACK_FLOOR, DEFAULT_WINTER_SETBACK_FLOOR
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=15, max=20)),
+                vol.Optional(
+                    OPT_WINTER_SETBACK_MAX,
+                    default=options.get(
+                        OPT_WINTER_SETBACK_MAX, DEFAULT_WINTER_SETBACK_MAX
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=10)),
                 vol.Optional(
                     OPT_WINTER_SUN_SOLAR,
                     default=options.get(

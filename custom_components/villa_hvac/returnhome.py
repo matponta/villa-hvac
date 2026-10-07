@@ -49,7 +49,6 @@ from .const import (
     SEASON_WINTER,
 )
 from .controller import (
-    current_season,
     return_armed,
     return_date,
     return_daypart,
@@ -104,7 +103,8 @@ class AwayReturnController:
         return rooms
 
     def apply(
-        self, state, hass: HomeAssistant, entry: ConfigEntry, *, commit: bool
+        self, state, hass: HomeAssistant, entry: ConfigEntry, *, commit: bool,
+        winter_advice=None,
     ):
         """Return `state`, possibly with house_mode/mode_offset overridden by #8.
 
@@ -113,21 +113,19 @@ class AwayReturnController:
         """
         opt_in = return_precond_enabled(hass, entry)
         armed = return_armed(hass, entry)
+        if state.season == SEASON_WINTER:
+            return self._apply_winter(state, opt_in, armed, winter_advice, commit)
+        # Local wall clock (review: state.now is UTC, so a "sera 19:00" ETA
+        # landed at 21:00 CEST and the summer pre-cond ramped 2 h late).
         eta = return_eta(
             return_date(hass, entry), return_daypart(hass, entry),
-            DEFAULT_RETURN_DAYPART_HOURS, state.now,
+            DEFAULT_RETURN_DAYPART_HOURS, dt_util.as_local(state.now),
         )
         # Comfort target = the Casa setpoint (offset 0). Without it we can't size
         # the lead or the ramp -> stay inert.
         target = state.house_setpoint
-        # v0.76.0: SUMMER only. The lead-time model is cooling-only (a room below
-        # target contributes no lead), so in winter WAITING would park the whole
-        # house — radiant floors included — in building_protection for the entire
-        # absence and ramp only ~margin before the ETA: a cold house on arrival.
-        # Inert in winter -> the native Via (a soft winter setback) applies.
-        is_via = (
-            state.house_mode == HOUSE_MODE_AWAY and state.season != SEASON_WINTER
-        )
+        # Summer path (winter returned above via _apply_winter, v0.81.0).
+        is_via = state.house_mode == HOUSE_MODE_AWAY
         if target is None:
             lead = timedelta(0)
         else:
@@ -153,6 +151,37 @@ class AwayReturnController:
         self.decision, self.eta, self.lead = decision, eta, lead
         if decision == RETURN_WAITING:
             return replace(state, house_mode=HOUSE_MODE_VACATION, mode_offset=None)
+        if decision == RETURN_PRECOND:
+            return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
+        return state
+
+
+    def _apply_winter(self, state, opt_in: bool, armed: bool, advice, commit: bool):
+        """v0.81.0 W3 winter return pre-conditioning on the radiant model.
+
+        WAITING keeps Via (comfort preset, setpoint-only winter) but with the
+        ADVISED depth below Casa (W2) instead of the fixed Via offset; PRECOND
+        switches to Casa at the advised start so the slow floor is warm by the
+        ETA. Never building_protection (the v0.76 reason #8 was off in winter).
+        No advice (no ETA / no data) → inert, native Via."""
+        is_via = state.house_mode == HOUSE_MODE_AWAY
+        if self._latched and is_via and armed and opt_in:
+            # Hold & wait for presence (review MAJOR): once pre-heating, stay in
+            # Casa past the ETA and through any advice gap (no ETA left, a
+            # sensor dropout) until the owner arrives (#2c → Casa) or disarms.
+            self.decision = RETURN_PRECOND
+            return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
+        eta = advice.eta if advice is not None else None
+        lead = (advice.eta - advice.start) if advice is not None else timedelta(0)
+        decision, new_latched = return_decision(
+            is_via=is_via and advice is not None, armed=armed, opt_in=opt_in,
+            eta=eta, lead_time=lead, now=state.now, latched=self._latched,
+        )
+        if commit:
+            self._latched = new_latched
+        self.decision, self.eta, self.lead = decision, eta, lead
+        if decision == RETURN_WAITING:
+            return replace(state, mode_offset=-float(advice.depth))
         if decision == RETURN_PRECOND:
             return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
         return state
@@ -209,8 +238,6 @@ class ReturnHomeManager:
             return  # already Via -> attribute churn, ask only on the transition
         if not return_precond_enabled(self.hass, self.entry):
             return
-        if current_season(self.hass, self.entry) == SEASON_WINTER:
-            return  # #8 is summer-only (v0.76.0): don't ask a question we ignore
         if return_armed(self.hass, self.entry):
             return  # already told it when we're back
         self.hass.async_create_task(self._ask())

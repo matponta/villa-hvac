@@ -116,6 +116,8 @@ async def async_setup_entry(
     # v0.80.0 STORY_WINTER_BRAIN W1: winter radiant model per heated room +
     # the house "time to temperature".
     entities.append(HouseHeatUpSensor(coordinator, entry))
+    entities.append(WinterSetbackAdviceSensor(coordinator, entry))
+    entities.append(PvHeatSensor(coordinator, entry))
     entities += [
         WinterRoomSensor(coordinator, entry, zone_id, ZONES[zone_id])
         for zone_id in HEAT_VALVES
@@ -202,6 +204,103 @@ class HouseHeatUpSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
             "model_confidence": round(
                 sum(v["confidence"] for _, v in rooms) / len(rooms), 2
             ) if rooms else None,
+        }
+
+
+class WinterSetbackAdviceSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.81.0 W2 "quanto posso abbassare": for the return ETA set on the
+    return-date + daypart entities — state = how far the house actually drops
+    below Casa (°C) holding the deepest allowed setback, while still having every
+    heated room back at its target by the ETA; attributes = when the pre-heat
+    starts, per-room lowest temperature, degree-hours saved. With switch.return_precond + return_armed it is also
+    EXECUTED (W3); otherwise advisory."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Riduzione consigliata"
+    _attr_icon = "mdi:thermometer-chevron-down"
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_suggested_display_precision = 1
+    _unrecorded_attributes = frozenset({"rooms"})
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_winter_setback_advice"
+
+    @property
+    def _advice(self):
+        return getattr(getattr(self.coordinator, "engine", None), "winter_advice", None)
+
+    @property
+    def native_value(self) -> float | None:
+        a = self._advice
+        return a.drop if a is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        a = self._advice
+        if a is None:
+            return {"reason": "nessun rientro impostato (data + fascia) o non inverno"}
+        engine = getattr(self.coordinator, "engine", None)
+        ar = getattr(engine, "away_return", None)
+        return {
+            "eta": a.eta.isoformat(),
+            "setback_depth_applied": a.depth,
+            "hours_away": a.hours,
+            "outdoor_used": a.outdoor,
+            "preheat_start": dt_util.as_local(a.start).isoformat(),
+            "limiting_room": a.limiting_room,
+            "saved_degree_hours": a.saved_dh,
+            "executing": getattr(ar, "decision", None),
+            "rooms": [
+                {"room": p.name, "target": p.target, "setback": p.setback,
+                 "start": dt_util.as_local(p.start).isoformat(),
+                 "temp_at_start": p.temp_at_start,
+                 "saved_dh": p.saved_dh}
+                for p in a.rooms
+            ],
+        }
+
+
+class PvHeatSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.81.0 W4: PV heating status (active / idle / off) + why + rooms."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Riscaldamento FV"
+    _attr_icon = "mdi:solar-power-variant"
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_pv_heat_status"
+
+    @property
+    def _ctrl(self):
+        engine = getattr(self.coordinator, "engine", None)
+        for c in getattr(engine, "controllers", ()):
+            if type(c).__name__ == "PvHeatController":
+                return c
+        return None
+
+    @property
+    def native_value(self) -> str | None:
+        c = self._ctrl
+        if c is None:
+            return None
+        if c.state.reason == "off":
+            return "off"
+        return "active" if c.state.active else "idle"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        c = self._ctrl
+        if c is None:
+            return {}
+        return {
+            "reason": c.state.reason,
+            "since": c.state.since.isoformat() if c.state.since else None,
+            "rooms_heating": list(c.rooms),
+            "battery_soc": _num_state(self.hass, CONDOMINIO_BATTERY_SOC),
+            "grid_power_w": _num_state(self.hass, CONDOMINIO_GRID_POWER),
+            "battery_power_w": _num_state(self.hass, CONDOMINIO_BATTERY_POWER),
         }
 
 

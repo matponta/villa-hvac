@@ -183,6 +183,12 @@ class HouseState:
     solar: float | None = None         # Ecowitt solar radiation W/m²
     consenso_freddo: str | None = None
     consenso_caldo: str | None = None
+    # v0.81.0 W4 PV heating inputs (Condominio net flows include every unit).
+    pv_heat_enabled: bool = False
+    pv_heat_zones: frozenset = frozenset()
+    condo_soc: float | None = None        # %
+    condo_grid_w: float | None = None     # + import / − export
+    condo_battery_w: float | None = None  # − charging / + discharging
     blocco: str | None = None          # central BLOCCO switch state
     # C3: the parsed-once options snapshot (SupervisorConfig). The clean config half
     # the planner reads; None in bare-constructed test states. Runtime-pure (the

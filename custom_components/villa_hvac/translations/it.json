@@ -63,7 +63,9 @@
           "mass_via_offset": "Mantenimento massa · limite offset Via estate (°C)",
           "shed_max_callers": "Riposo PdC · stanze max che tengono acceso il PdC",
           "winter_eco_offset": "Inverno · offset Economy stanza (°C)",
-          "winter_sun_solar": "Sole invernale · soglia irraggiamento (W/m²)"
+          "winter_sun_solar": "Sole invernale · soglia irraggiamento (W/m²)",
+          "winter_setback_floor": "Inverno · minimo riduzione (°C)",
+          "winter_setback_max": "Inverno · profondità massima (°C)"
         },
         "data_description": {
           "night_heat_threshold": "Camere silenziose (#2b): in Notte una camera sopra questa soglia fa una breve raffica a ventola bassa.",
@@ -113,7 +115,9 @@
           "mass_via_offset": "Con switch.mass_maintenance attivo: in Via d'estate limita il setback a questo valore sotto la soglia di picco esterna (accumula fresco; al picco vale l'offset Via pieno).",
           "shed_max_callers": "Con switch.demand_shedding attivo: quando il compressore gira solo per queste stanze già entro il comfort, alza il loro setpoint per far riposare il PdC.",
           "winter_eco_offset": "Di quanto scende d'inverno una stanza con l'interruttore Economy acceso (es. -3).",
-          "winter_sun_solar": "Con switch.winter_sun attivo: d'inverno, in Via/Vacanza, apre le tapparelle della facciata al sole quando l'irraggiamento è almeno questo."
+          "winter_sun_solar": "Con switch.winter_sun attivo: d'inverno, in Via/Vacanza, apre le tapparelle della facciata al sole quando l'irraggiamento è almeno questo.",
+          "winter_setback_floor": "In assenza (consiglio W2/W3) mai sotto questa temperatura.",
+          "winter_setback_max": "Il consiglio in assenza non scende mai più di così sotto Casa."
         }
       }
     }

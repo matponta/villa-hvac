@@ -1,6 +1,8 @@
 """Tests for the pure Story #8 return-home core (ETA, lead-time, latch decision)."""
 from __future__ import annotations
 
+import pytest
+
 from datetime import date, datetime, timedelta, timezone
 
 from custom_components.villa_hvac.supervisor import (
@@ -13,6 +15,18 @@ from custom_components.villa_hvac.supervisor import (
 )
 
 TZ = timezone.utc
+
+
+@pytest.fixture(autouse=True)
+def _local_is_utc():
+    """The #8 ETA is built on the LOCAL wall clock (dt_util.as_local); pin the
+    local zone to UTC so these pure tests read their hours literally."""
+    from homeassistant.util import dt as dt_util
+
+    old = dt_util.get_default_time_zone()
+    dt_util.set_default_time_zone(timezone.utc)
+    yield
+    dt_util.set_default_time_zone(old)
 HOURS = {"mattino": 8, "pomeriggio": 14, "sera": 19}
 
 

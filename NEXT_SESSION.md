@@ -1,5 +1,22 @@
 # Next session — kickstart prompts
 
+## v0.81.0 — WINTER BRAIN W2–W4 (2026-10-07) — released, RESTART PENDING
+Owner decisions 7/10: PV rooms = camera padronale, bagno padronale (01+02),
+living room → their CASA target; surplus = battery > 90 % AND a real PV surplus
+judged on NET Condominio flows (other apartments share the PdC). Built per
+`STORY_WINTER_BRAIN.md` "As built"; adversarial review → 5 MAJOR fixed before
+release (PV latch stuck on missing data; lift permanent with Auto setback off;
+start ignored grid import; one economy room zeroed the W3 depth; W3 dropped to
+Via at the ETA) + the pre-existing summer #8 UTC-ETA bug + minors (hand-back
+re-asserted 10 cycles; lag only from an observed opening; floor ≥ 15; dead
+sala-giochi fan excluded from fancoils-off). 798 tests.
+AFTER THE RESTART: verify `sensor.tempo_riscaldamento` / `*_inverno` exist; turn
+ON `switch.pv_heat` (owner asked for it); W3 needs `switch.return_precond` ON +
+arming via the "quando torni?" push or the date/daypart entities. Add a winter
+dashboard card (tempo riscaldamento, riduzione consigliata, riscaldamento FV).
+Note: v0.80.0 was downloaded AFTER the 19:52 restart, so live is still v0.79.0.
+
+
 ## v0.80.0 — WINTER BRAIN W1: radiant observer (2026-10-07)
 Spec: `STORY_WINTER_BRAIN.md` (owner goals: time-to-temperature, how deep a
 weekend setback can go, PV heating of chosen rooms even while away — all via
