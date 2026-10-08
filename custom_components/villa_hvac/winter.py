@@ -82,7 +82,8 @@ class PvHeatController:
         self.state = pv_surplus_step(
             self.state, now=state.now, soc=state.condo_soc,
             grid_w=state.condo_grid_w, battery_w=state.condo_battery_w,
-            sun_up=sun_up,
+            sun_up=sun_up, pv_remaining_kwh=state.condo_pv_remaining_kwh,
+            battery_kwh=state.condo_battery_kwh,
         )
         if not self.state.active or state.house_setpoint is None:
             self.rooms = ()

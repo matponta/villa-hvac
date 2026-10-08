@@ -84,3 +84,11 @@ actuation; every actuating feature opt-in and summer-inert.
   START SoC ≥ 90 + net ≥ 300 W for 10 min (after a 60 min rest); STOP at sunset /
   SoC < 85 (immediate) or a net deficit ≥ 1500 W / missing data for 10 min
   (after 30 min min-on). `sensor.riscaldamento_fv` = active / idle / off + reason.
+
+## v0.82.0 (2026-10-08, first live day)
+- Learning is skipped while a room is window-paused and for 60 min after (air
+  recovery after a window ≠ slab response); lag floor 15 min (bad lags dropped on
+  load); loss floor 0.001/h (the villa measures 0.005–0.02/h).
+- PV early start: strong net charge (≥ 1.5 kW) AND the PV left today fills the
+  battery with a 1.3 margin → heat now instead of exporting later; STAY below the
+  85 % threshold while that still holds.

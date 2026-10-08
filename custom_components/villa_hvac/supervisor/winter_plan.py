@@ -142,11 +142,22 @@ def winter_setback_advice(
 SOC_START = 90.0
 SOC_STAY = 85.0
 SURPLUS_MIN_W = 300.0          # net outflow (export + charging − import − discharge)
+STRONG_CHARGE_W = 1500.0       # v0.82.0 early start: net charge at least this…
+FILL_MARGIN = 1.3              # …and the PV left today ≥ 1.3 × what fills the battery
 DEFICIT_STOP_W = 1500.0        # net inflow (import + discharge) that ends it
 DWELL_ON = timedelta(minutes=10)
 DWELL_OFF = timedelta(minutes=10)
 MIN_ON = timedelta(minutes=30)
 MIN_OFF = timedelta(minutes=60)
+
+
+def battery_fills_today(soc, pv_remaining_kwh, battery_kwh) -> bool:
+    """True when the PV still to come today covers topping the battery up with
+    margin — whatever we heat with now would otherwise be exported later."""
+    if soc is None or pv_remaining_kwh is None or not battery_kwh:
+        return False
+    need = max(0.0, 100.0 - soc) / 100.0 * battery_kwh
+    return pv_remaining_kwh >= FILL_MARGIN * need
 
 
 @dataclass(frozen=True)
@@ -160,16 +171,21 @@ class PvHeatState:
 def pv_surplus_step(
     state: PvHeatState, *, now: datetime, soc: float | None,
     grid_w: float | None, battery_w: float | None, sun_up: bool,
+    pv_remaining_kwh: float | None = None, battery_kwh: float | None = None,
 ) -> PvHeatState:
     """Grid: + import / − export. Battery: − charging / + discharging.
 
     The judgement is on the NET Condominio flow `−(grid + battery)` — export and
     charging count, import and discharge subtract — so another apartment running
     the shared PdC, grid charging or one meter's spike can't fake a surplus.
-    START: SoC ≥ SOC_START, sun up, net ≥ SURPLUS_MIN_W for DWELL_ON (after a
-    MIN_OFF rest). STAY until: sun down / SoC < SOC_STAY (immediate), or a net
-    deficit ≥ DEFICIT_STOP_W — our own heat pump eating the battery once the sun
-    fades — or missing data, sustained DWELL_OFF (after MIN_ON)."""
+    START (sun up, held DWELL_ON, after a MIN_OFF rest):
+      * SoC ≥ SOC_START and net ≥ SURPLUS_MIN_W, or
+      * v0.82.0 early start: net charge ≥ STRONG_CHARGE_W and the PV left today
+        fills the battery anyway (`battery_fills_today`) — with a 41 kWh battery
+        that starts the day empty, SoC 90 % arrives late afternoon or never.
+    STAY until: sun down, or SoC < SOC_STAY while the battery would no longer
+    fill (immediate); a net deficit ≥ DEFICIT_STOP_W — our own heat pump eating
+    the battery — or missing data, sustained DWELL_OFF (after MIN_ON)."""
     have = soc is not None and grid_w is not None and battery_w is not None
     if not state.active:
         if state.since is not None and now - state.since < MIN_OFF:
@@ -177,14 +193,20 @@ def pv_surplus_step(
         if not have:
             return replace(state, cond_since=None, reason="no data")
         net = -(grid_w + battery_w)
-        if not (sun_up and soc >= SOC_START and net >= SURPLUS_MIN_W):
+        fills = battery_fills_today(soc, pv_remaining_kwh, battery_kwh)
+        full = soc >= SOC_START and net >= SURPLUS_MIN_W
+        early = fills and net >= STRONG_CHARGE_W
+        if not (sun_up and (full or early)):
             return replace(state, cond_since=None, reason="no surplus")
         since = state.cond_since or now
         if now - since >= DWELL_ON:
             return PvHeatState(active=True, since=now, reason="surplus")
         return replace(state, cond_since=since, reason="surplus (dwell)")
     # active
-    if not sun_up or (have and soc < SOC_STAY):
+    if not sun_up or (
+        have and soc < SOC_STAY
+        and not battery_fills_today(soc, pv_remaining_kwh, battery_kwh)
+    ):
         return PvHeatState(active=False, since=now, reason="ended")
     bad = (not have) or (grid_w + battery_w) >= DEFICIT_STOP_W
     if not bad:

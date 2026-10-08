@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 import math
 
@@ -62,6 +62,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONDOMINIO_BATTERY_CAPACITY,
     CONDOMINIO_BATTERY_POWER,
     DEFAULT_RETURN_DAYPART_HOURS,
     DEFAULT_WINTER_SETBACK_FLOOR,
@@ -243,6 +244,9 @@ _FAILSAFE_LOCK_TIMEOUT = 5.0
 # reconcile re-asserts next cycle). Kept above _FAILSAFE_LOCK_TIMEOUT so the
 # fail-safe still pre-empts a hang by releasing without the lock.
 LEVER_CALL_TIMEOUT = 10.0
+
+
+WINTER_AIRING_SETTLE = timedelta(minutes=60)
 
 
 def _opt(options, key: str, default: float) -> float:
@@ -817,6 +821,8 @@ def build_house_state(
         condo_soc=_num(hass, CONDOMINIO_BATTERY_SOC),
         condo_grid_w=_num(hass, CONDOMINIO_GRID_POWER),
         condo_battery_w=_num(hass, CONDOMINIO_BATTERY_POWER),
+        condo_pv_remaining_kwh=_num(hass, CONDOMINIO_PV_REMAINING),
+        condo_battery_kwh=_num(hass, CONDOMINIO_BATTERY_CAPACITY),
         blocco=blocco_state.state if blocco_state is not None else None,
         split_enabled=split_ac_enabled(hass, entry),
         split_cantina_setpoint=cfg.split_cantina_setpoint,
@@ -904,6 +910,7 @@ class SupervisorEngine:
         self._winter_store = winter_store
         self.winter_view: dict[str, dict] = {}
         self.winter_advice: WinterAdvice | None = None
+        self._winter_aired: dict[str, datetime] = {}   # zone -> last paused cycle
         self._model_saved_ts = None
         self._lever_states: dict[str, LeverState] = {}
         # B2: last reconcile decision per lever this cycle (diagnostic only, surfaced
@@ -1450,9 +1457,18 @@ class SupervisorEngine:
         for z in state.zones.values():
             if z.zone_id not in HEAT_VALVES:
                 continue
+            # v0.82.0: an aired room is not the radiant envelope — while a window
+            # pause is on and for WINTER_AIRING_SETTLE after it the room air is
+            # recovering from the window, not from the floor (a 5-min "lag" was
+            # learned from exactly that). A None temp breaks the window.
+            if z.paused:
+                self._winter_aired[z.zone_id] = state.now
+            aired = self._winter_aired.get(z.zone_id)
+            settling = aired is not None and state.now - aired < WINTER_AIRING_SETTLE
             self.winter.observe(
-                z.zone_id, now=state.now, temp=z.temp, outdoor=state.outdoor_temp,
-                valve=z.heat_demand, solar=state.solar,
+                z.zone_id, now=state.now,
+                temp=None if (z.paused or settling) else z.temp,
+                outdoor=state.outdoor_temp, valve=z.heat_demand, solar=state.solar,
             )
             p = self.winter.get(z.zone_id)
             target = (

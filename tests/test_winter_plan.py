@@ -287,3 +287,36 @@ def test_winter_precond_holds_past_the_eta_until_presence(monkeypatch):
     _patch_return(monkeypatch, armed=False)                 # disarm -> released
     assert ctrl.apply(_via(advice.eta + timedelta(hours=3)), None, None,
                       commit=True, winter_advice=None).house_mode == "Via"
+
+
+# --- v0.82.0 early PV start (owner 2026-10-08) -------------------------------------
+
+def test_battery_fills_today():
+    from custom_components.villa_hvac.supervisor.winter_plan import battery_fills_today
+    assert battery_fills_today(50, 30.0, 41.4)        # need 20.7 × 1.3 = 26.9
+    assert not battery_fills_today(32, 10.7, 41.4)    # live 8/10 14:30: no
+    assert not battery_fills_today(50, None, 41.4)
+
+
+def _pv2(state, t, *, soc, net_charge, pv_left, sun=True):
+    return pv_surplus_step(state, now=t, soc=soc, grid_w=0.0, battery_w=-net_charge,
+                           sun_up=sun, pv_remaining_kwh=pv_left, battery_kwh=41.4)
+
+
+def test_early_start_when_strong_charge_and_the_battery_fills_anyway():
+    s = _pv2(PvHeatState(), NOW, soc=45, net_charge=3000, pv_left=40)
+    s = _pv2(s, NOW + DWELL_ON, soc=46, net_charge=3000, pv_left=40)
+    assert s.active
+    # stays below 85 % while the battery still fills today
+    s = _pv2(s, NOW + DWELL_ON + timedelta(minutes=5), soc=50, net_charge=800, pv_left=38)
+    assert s.active
+    # ...but stops at once when it no longer would
+    s = _pv2(s, NOW + DWELL_ON + timedelta(minutes=10), soc=50, net_charge=800, pv_left=5)
+    assert not s.active
+
+
+def test_no_early_start_on_the_live_8_october_case_or_a_weak_charge():
+    s = _pv2(PvHeatState(), NOW, soc=32, net_charge=6000, pv_left=10.7)
+    assert not _pv2(s, NOW + DWELL_ON, soc=33, net_charge=6000, pv_left=10.7).active
+    s = _pv2(PvHeatState(), NOW, soc=50, net_charge=800, pv_left=60)
+    assert not _pv2(s, NOW + DWELL_ON, soc=50, net_charge=800, pv_left=60).active

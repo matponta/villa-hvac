@@ -1,5 +1,22 @@
 # Next session — kickstart prompts
 
+## v0.82.0 — winter tuning from the first live day (2026-10-08)
+Live check 8/10 13:50: Condominio battery WORKS (0 % at dawn → 32 % at 14:30,
+charging ≤ 6.8 kW, grid ~0) but with 41.4 kWh starting empty SoC 90 % comes late
+or never → PV heating idle all day. Only one radiant valve opened (bagno P1
+07:30–07:49, consenso caldo followed 07:31–07:49); house at 21–22 °C, outdoor
+15–19, house in Via from 07:51 (comfort/19, P1 18). Winter model: loss a learned
+in 15/16 rooms after one night = 0.005–0.021/h (well under the 0.03 prior; several
+pinned at the old 0.005 floor); bagno_giochi learned a bogus 5-min lag (vasistas
+pause ended 07:30 → air recovery). KNX went unavailable ~1 min 5× overnight.
+Fixes (owner "facciamo tutti e 3"): (1) no winter learning while #4-paused and
+60 min after; sub-15-min lags discarded on load; (2) BOUNDS_A floor 0.001, lag
+floor 15 min; (3) PV early start: net charge ≥ 1.5 kW AND PV left today ≥ 1.3 ×
+energy to fill the battery (`battery_fills_today`; capacity
+`sensor.battery_capacity_2` = kWh despite the "kW" unit); stay below 85 % while
+it still fills. Live 8/10 14:30 (32 %, 10.7 kWh left) correctly = no start.
+
+
 ## v0.81.0 — WINTER BRAIN W2–W4 (2026-10-07) — LIVE (owner restart ~20:40)
 Live check 7/10 evening: all 16 `*_inverno` sensors populated (rooms 21.2–22.8 °C,
 all at/over target → 0 min), plan=idle, `switch.pv_heating` turned ON by Claude

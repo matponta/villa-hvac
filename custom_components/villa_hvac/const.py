@@ -1100,6 +1100,8 @@ WINDOW_CLOSED_STATES = ("closed", "off")
 # these FusionSolar-named entities — verified live 2026-07-01).
 PDC_LOAD_POWER = "sensor.shellypro3em63_e08cfe9573ac_power"  # W: PdC + pumps (local clamp)
 CONDOMINIO_BATTERY_SOC = "sensor.battery_percentage_2"       # %
+# v0.82.0: battery CAPACITY in kWh (the entity is mislabelled "kW"; ~41.4).
+CONDOMINIO_BATTERY_CAPACITY = "sensor.battery_capacity_2"
 CONDOMINIO_BATTERY_POWER = (
     "sensor.energy_battery_battery_consumption_power_2_battery_injection_power_2_net_power"
 )  # W, NEGATIVE = charging, POSITIVE = discharging

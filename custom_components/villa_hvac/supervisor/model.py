@@ -189,6 +189,8 @@ class HouseState:
     condo_soc: float | None = None        # %
     condo_grid_w: float | None = None     # + import / − export
     condo_battery_w: float | None = None  # − charging / + discharging
+    condo_pv_remaining_kwh: float | None = None  # PV still to come today
+    condo_battery_kwh: float | None = None       # battery capacity
     blocco: str | None = None          # central BLOCCO switch state
     # C3: the parsed-once options snapshot (SupervisorConfig). The clean config half
     # the planner reads; None in bare-constructed test states. Runtime-pure (the

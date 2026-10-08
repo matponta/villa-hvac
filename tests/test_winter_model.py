@@ -138,3 +138,41 @@ def test_lag_not_learned_from_a_segment_without_an_observed_opening():
     _drive(m, "z", start=T0, minutes=120, valve=True,
            temp_fn=lambda i: 19.0 + 0.4 * i / 60)
     assert m.get("z").n_lag == 0
+
+
+def test_v082_bounds_and_bad_lag_discarded_on_load():
+    from custom_components.villa_hvac.supervisor.winter_model import BOUNDS_A, PRIOR_LAG_MIN
+    assert BOUNDS_A[0] <= 0.002          # well-insulated rooms are not floored
+    m = WinterModel()
+    m.load({"bagno_giochi": {"a": 0.005, "k_h": 0.6, "lag_min": 5.0,
+                             "n_a": 2, "n_k": 0, "n_lag": 1}})
+    p = m.get("bagno_giochi")
+    assert p.lag_min == PRIOR_LAG_MIN and p.n_lag == 0 and p.n_a == 2
+
+
+async def test_no_winter_learning_while_aired_and_for_an_hour_after(hass):
+    from dataclasses import replace as _r
+
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat", {"preset_mode": "comfort"})
+    hass.states.async_set("sensor.gw3000a_outdoor_temperature", "5")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN, data={})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    engine = entry.runtime_data.engine
+    seen = []
+    engine.winter.observe = lambda zone, **kw: seen.append((zone, kw["temp"]))
+    base = build_house_state(hass, entry, entry.runtime_data)
+    z = _r(base.zones["bagno_giochi"], temp=21.0)
+
+    def run(paused, minutes):
+        st = _r(base, now=base.now + timedelta(minutes=minutes),
+                zones={**base.zones, "bagno_giochi": _r(z, paused=paused)})
+        seen.clear()
+        engine._observe_winter(st)
+        return dict(seen)["bagno_giochi"]
+
+    assert run(False, 0) == 21.0
+    assert run(True, 1) is None           # window open
+    assert run(False, 30) is None         # settling after the window closed
+    assert run(False, 62) == 21.0         # back to learning

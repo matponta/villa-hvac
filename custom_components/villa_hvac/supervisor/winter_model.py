@@ -22,9 +22,9 @@ import math
 PRIOR_A = 0.03          # 1/h  — free cooling 0.3 °C/h at ΔT 10 °C
 PRIOR_K = 0.6           # °C/h — radiant heating rate, valve held open
 PRIOR_LAG_MIN = 45.0    # min  — valve open → room starts rising
-BOUNDS_A = (0.005, 0.2)
+BOUNDS_A = (0.001, 0.2)      # v0.82.0: live villa ~0.005–0.02/h (was floored at 0.005)
 BOUNDS_K = (0.05, 3.0)
-BOUNDS_LAG = (5.0, 240.0)
+BOUNDS_LAG = (15.0, 240.0)   # v0.82.0: a slab never responds in 5 min (that was air after a window)
 N0 = 5                  # samples for 50 % confidence
 
 SAMPLE_EVERY = timedelta(minutes=5)
@@ -134,12 +134,18 @@ class WinterModel:
             return
         for z, d in data.items():
             try:
+                lag = float(d["lag_min"])
+                n_lag = int(d.get("n_lag", 0))
+                if lag < BOUNDS_LAG[0]:
+                    # v0.82.0: a sub-15-min "dead time" was learned from air
+                    # warming after a window closed — discard it, keep the prior.
+                    lag, n_lag = PRIOR_LAG_MIN, 0
                 self.params[str(z)] = WinterParams(
                     a=_clamp(float(d["a"]), BOUNDS_A),
                     k_h=_clamp(float(d["k_h"]), BOUNDS_K),
-                    lag_min=_clamp(float(d["lag_min"]), BOUNDS_LAG),
+                    lag_min=_clamp(lag, BOUNDS_LAG),
                     n_a=int(d.get("n_a", 0)), n_k=int(d.get("n_k", 0)),
-                    n_lag=int(d.get("n_lag", 0)),
+                    n_lag=n_lag,
                 )
             except (KeyError, TypeError, ValueError):
                 continue
