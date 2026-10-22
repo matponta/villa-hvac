@@ -21,6 +21,7 @@ from .const import (
     COOL_VALVES,
     FANCOILS,
     TEMP_STALE_AFTER,
+    ZONE_TWINS,
     ZONES,
 )
 from .temperature import TempSource, fuse_temperature
@@ -58,6 +59,19 @@ def runtime_step(
         cycles += 1
     return runtime_s, cycles
 
+
+
+def _bind_twin_temps(zone_temps: dict) -> None:
+    """v0.84.0 twin zones: one room, two thermostats → both read the mean of
+    the fresh values (either one alone when the other is missing)."""
+    for follower, leader in ZONE_TWINS.items():
+        pair = (zone_temps.get(leader), zone_temps.get(follower))
+        vals = [t["value"] for t in pair if t and t.get("value") is not None]
+        if not vals:
+            continue
+        mean = round(sum(vals) / len(vals), 1)
+        for zid, t in ((leader, pair[0]), (follower, pair[1])):
+            zone_temps[zid] = {**(t or {}), "value": mean, "source": "twin_mean"}
 
 class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Polls HA state for the HVAC call signals and fancoil demand."""
@@ -199,6 +213,7 @@ class VillaHvacCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         speeds = {eid: self._fan_pct(eid) for eid in FANCOILS}
         cooling_zones = [eid for eid, pct in speeds.items() if pct and pct > 0]
         zone_temps = {zid: self._zone_temperature(z) for zid, z in ZONES.items()}
+        _bind_twin_temps(zone_temps)
         # The REAL per-room demand is the EV FAN valve (ETS-verified), not the
         # fan % (which runs in AUTO regardless). Unavailable valves are skipped.
         valves_open = [

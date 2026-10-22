@@ -5,7 +5,7 @@ W2 "quanto posso abbassare": for a return ETA, the DEEPEST uniform setback
 coasting down with the valve closed and then recovering on the radiant floor,
 is back at its target by the ETA — plus WHEN the pre-heat must start.
 W3 executes it (hold the depth, switch to Casa at `start`).
-v0.84.0: only the KEY rooms (switch.<zone>_return_key) whose plan is credible
+v0.83.0: only the KEY rooms (switch.<zone>_return_key) whose plan is credible
 drive the house start, never more than `max_lead` before the ETA — one
 mis-modelled bathroom put the whole villa in Casa 57 h early (2026-10-22).
 
@@ -22,7 +22,7 @@ from datetime import datetime, timedelta
 from .winter_model import WinterParams, coast_temp, recovery_minutes
 
 BISECT_ITERS = 40
-DEPTH_ITERS = 12       # v0.84.0: depth bisection (6 °C / 2^12 ≈ 0.002 °C)
+DEPTH_ITERS = 12       # v0.83.0: depth bisection (6 °C / 2^12 ≈ 0.002 °C)
 
 
 @dataclass(frozen=True)
@@ -32,7 +32,7 @@ class WinterRoom:
     temp: float
     target: float           # the room's Casa target (house winter + room trim)
     params: WinterParams
-    key: bool = True        # v0.84.0: a room that must be warm at the ETA
+    key: bool = True        # v0.83.0: a room that must be warm at the ETA
 
 
 @dataclass(frozen=True)
@@ -140,7 +140,7 @@ def winter_setback_advice(
     (implausible fit) is not plannable and never drives the start; with no key
     room plannable the plannable others drive it.
 
-    v0.84.0 the quadra: the pre-heat never starts more than `max_lead` before
+    v0.83.0 the quadra: the pre-heat never starts more than `max_lead` before
     the ETA. When the deepest setback would need longer, the depth is made
     shallower (down to the native Via) until the key rooms recover within
     `max_lead`; only if even that is not enough is the start clamped

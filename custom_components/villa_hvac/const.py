@@ -131,12 +131,12 @@ OPT_WINTER_SETBACK_FLOOR = "winter_setback_floor"
 DEFAULT_WINTER_SETBACK_FLOOR = 16.0
 OPT_WINTER_SETBACK_MAX = "winter_setback_max"
 DEFAULT_WINTER_SETBACK_MAX = 6.0
-# v0.84.0 winter return: only the KEY rooms (switch.<zone>_return_key) drive the
+# v0.83.0 winter return: only the KEY rooms (switch.<zone>_return_key) drive the
 # pre-heat start, never earlier than this before the ETA.
 OPT_WINTER_RETURN_MAX_LEAD = "winter_return_max_lead_hours"
 DEFAULT_WINTER_RETURN_MAX_LEAD = 12.0
 RETURN_KEY_DEFAULT_ZONES: frozenset[str] = frozenset({
-    "main_bedroom", "bagno_padronale_01", "bagno_padronale_02", "living_room",
+    "main_bedroom", "bagno_padronale_01", "living_room",
 })
 # v0.81.0 W4 PV heating: rooms that go to their Casa target on a real
 # Condominio PV surplus even in Via/Notte/Vacanza (owner 2026-10-07). Each room
@@ -461,7 +461,8 @@ ZONES: dict[str, dict] = {
         "emitter": "radiant",
     },
     "bagno_padronale_01": {
-        "name": "Bagno Padronale 1",
+        # v0.84.0: the whole room (leader of the _02 twin thermostat).
+        "name": "Bagno Padronale",
         "floor": "secondo",
         "climate": "climate.bagno_padronale_01_termostato_2",
         "temp_sensor": "sensor.clima_bagno_padronale_01",
@@ -475,6 +476,9 @@ ZONES: dict[str, dict] = {
         "floor": "secondo",
         "climate": "climate.bagno_padronale_02_termostato_2",
         "temp_sensor": "sensor.clima_bagno_padronale_02",
+        # v0.84.0: the SAME room as _01 (two thermostats installed there by
+        # mistake, one shared radiant valve) — see ZONE_TWINS.
+        "twin_of": "bagno_padronale_01",
         "ep_temp": "sensor.everything_presence_one_626788_temperature",  # shared, LOW
         "ep_occ": "binary_sensor.everything_presence_one_626788_occupancy",
         "emitter": "radiant",
@@ -530,6 +534,22 @@ ZONES: dict[str, dict] = {
         "emitter": "split_ac",
     },
 }
+
+# v0.84.0 twin zones (owner 2026-10-22): one physical room with TWO thermostats.
+# The follower keeps its own climate (both thermostats are still written, with
+# the same values) but has no settings, models or diagnostics of its own: its
+# temperature is the mean of both, its trim / Economy / PV / return-key come
+# from the leader, the winter model is the leader's, the return advisor counts
+# the room once. Summer and winter alike.
+ZONE_TWINS: dict[str, str] = {
+    zid: z["twin_of"] for zid, z in ZONES.items() if z.get("twin_of")
+}
+
+
+def settings_zone(zone_id: str) -> str:
+    """The zone whose per-room settings and models `zone_id` uses."""
+    return ZONE_TWINS.get(zone_id, zone_id)
+
 
 # 3-stage fancoil speeds observed (KNX): low/med/high
 FAN_STAGES = (33, 67, 100)

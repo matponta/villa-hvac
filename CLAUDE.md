@@ -677,6 +677,12 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
 - **3 split ACs** (Cantina Vini, Palestra, Garage) share ONE compressor → must run
   in the same mode; treat as a synchronized group.
 - Bagni Gabri/Ingresso/Palestra + Lavanderia have no EP → fused temp = thermostat only.
+- **Bagno Padronale 01/02 = ONE room (v0.84.0)**: two thermostats installed in
+  the same bathroom, one radiant head command (ETS 4/0/27). `ZONE_TWINS` binds
+  `_02` (follower) to `_01` (leader): mean temperature, leader's settings and
+  winter model, counted once by the return advisor; both thermostats still get
+  identical writes. Any new per-zone entity/setting must skip `ZONE_TWINS` and
+  read `settings_zone(zone_id)`.
 
 ## Open questions to resolve
 

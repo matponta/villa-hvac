@@ -23,6 +23,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import VillaHvacConfigEntry
 from .const import (
+    ZONE_TWINS,
     HEAT_VALVES,
     NIGHT_SILENCE_SWITCHES,
     PRESET_CONTROLLABLE_EMITTERS,
@@ -85,16 +86,17 @@ async def async_setup_entry(
         ZoneEconomySwitch(entry, zone_id, zone["name"])
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
+        and zone_id not in ZONE_TWINS   # v0.84.0: the twin uses the leader's
     ]
     # v0.81.0 W4: per-room PV heating (owner rooms default ON).
     entities += [
         ZonePvHeatSwitch(entry, zone_id, ZONES[zone_id]["name"])
-        for zone_id in HEAT_VALVES
+        for zone_id in HEAT_VALVES if zone_id not in ZONE_TWINS
     ]
-    # v0.84.0: the key rooms that drive the winter return pre-heat.
+    # v0.83.0: the key rooms that drive the winter return pre-heat.
     entities += [
         ZoneReturnKeySwitch(entry, zone_id, ZONES[zone_id]["name"])
-        for zone_id in HEAT_VALVES
+        for zone_id in HEAT_VALVES if zone_id not in ZONE_TWINS
     ]
     entities += [
         ShadeBlockSwitch(entry, zone, name)
@@ -877,7 +879,7 @@ class ZonePvHeatSwitch(ZoneEconomySwitch):
 
 
 class ZoneReturnKeySwitch(ZoneEconomySwitch):
-    """v0.84.0: this room must be warm at the return ETA, so it drives the
+    """v0.83.0: this room must be warm at the return ETA, so it drives the
     winter pre-heat start; the others follow the house. Owner rooms default ON;
     restored."""
 

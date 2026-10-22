@@ -402,7 +402,7 @@ def zone_pv_heat(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
 
 
 def zone_return_key(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
-    """v0.84.0 per-room switch: this room drives the winter return pre-heat."""
+    """v0.83.0 per-room switch: this room drives the winter return pre-heat."""
     return _switch_state(hass, entry, f"{zone}_return_key") == STATE_ON
 
 

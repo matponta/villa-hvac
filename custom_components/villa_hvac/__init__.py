@@ -6,7 +6,7 @@ from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 
 from .away import AwayController
-from .const import PLATFORMS
+from .const import PLATFORMS, ZONE_TWINS
 from .controller import (
     apply_house_mode,
     async_load_season_memory,
@@ -114,6 +114,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     engine.thermal.load(model_data)
     engine.house_model.load(await house_store.async_load())
     engine.winter.load(await winter_store.async_load())
+    for follower, leader in ZONE_TWINS.items():   # v0.84.0: one room, one model
+        engine.winter.merge_twin(follower, leader)
     coordinator.engine = engine
     engine.start()
     entry.async_on_unload(engine.stop)

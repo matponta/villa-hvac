@@ -150,6 +150,28 @@ class WinterModel:
             except (KeyError, TypeError, ValueError):
                 continue
 
+    def merge_twin(self, follower: str, leader: str) -> None:
+        """v0.84.0: fold a twin follower's learnt params into its leader (one
+        room, two thermostats). Each parameter is averaged by its own sample
+        count, counts add up; the follower's entry is dropped."""
+        f = self.params.pop(follower, None)
+        if f is None:
+            return
+        lead = self.params.get(leader)
+        if lead is None:
+            self.params[leader] = f
+            return
+
+        def avg(x: float, nx: int, y: float, ny: int) -> float:
+            return (x * nx + y * ny) / (nx + ny) if nx + ny else (x + y) / 2
+
+        self.params[leader] = WinterParams(
+            a=avg(lead.a, lead.n_a, f.a, f.n_a),
+            k_h=avg(lead.k_h, lead.n_k, f.k_h, f.n_k),
+            lag_min=avg(lead.lag_min, lead.n_lag, f.lag_min, f.n_lag),
+            n_a=lead.n_a + f.n_a, n_k=lead.n_k + f.n_k, n_lag=lead.n_lag + f.n_lag,
+        )
+
     # -- learning --------------------------------------------------------------
     def observe(
         self, zone: str, *, now: datetime, temp: float | None,

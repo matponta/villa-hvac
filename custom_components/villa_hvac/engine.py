@@ -120,6 +120,8 @@ from .const import (
     WINDOWS_FREE_COOL_DWELL,
     ZONES,
     DEAD_FANCOILS,
+    ZONE_TWINS,
+    settings_zone,
 )
 from .controller import (
     auto_setback_enabled,
@@ -662,8 +664,10 @@ def build_house_state(
             paused=zone_id in paused,
             bedroom=bool(zone.get("bedroom")),
             fan_min=fan_min(hass, entry, zone_id) if emitter == "fancoil" else 0,
+            # v0.84.0 twin zones: the follower uses the leader's trim/Economy.
             setpoint_offset=_zone_setpoint_offset(
-                hass, entry, zone_id, zone, season, eco_offset
+                hass, entry, settings_zone(zone_id), ZONES[settings_zone(zone_id)],
+                season, eco_offset,
             ),
             fancoil=fancoil,
             manuale=manuale,
@@ -819,7 +823,7 @@ def build_house_state(
         consenso_caldo=data.get("consenso_caldo"),
         pv_heat_enabled=pv_heat_enabled(hass, entry),
         pv_heat_zones=frozenset(
-            z for z in HEAT_VALVES if zone_pv_heat(hass, entry, z)
+            z for z in HEAT_VALVES if zone_pv_heat(hass, entry, settings_zone(z))
         ),
         condo_soc=_num(hass, CONDOMINIO_BATTERY_SOC),
         condo_grid_w=_num(hass, CONDOMINIO_GRID_POWER),
@@ -1438,7 +1442,7 @@ class SupervisorEngine:
             )
             for z in state.zones.values()
             if z.zone_id in HEAT_VALVES and z.enabled and not z.paused
-            and z.temp is not None
+            and z.temp is not None and z.zone_id not in ZONE_TWINS
         ]
         opts = self.entry.options
         floor = _opt(opts, OPT_WINTER_SETBACK_FLOOR, DEFAULT_WINTER_SETBACK_FLOOR)
@@ -1461,7 +1465,8 @@ class SupervisorEngine:
             return
         views: dict[str, dict] = {}
         for z in state.zones.values():
-            if z.zone_id not in HEAT_VALVES:
+            # v0.84.0: a twin follower is the leader's room — learnt once.
+            if z.zone_id not in HEAT_VALVES or z.zone_id in ZONE_TWINS:
                 continue
             # v0.82.0: an aired room is not the radiant envelope — while a window
             # pause is on and for WINTER_AIRING_SETTLE after it the room air is

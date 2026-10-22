@@ -115,7 +115,9 @@ async def test_entities_created_for_every_thermostat_zone(hass):
     assert _eid(hass, entry, "number", "house_setpoint_winter")
     offsets = [z for z in ZONES if _eid(hass, entry, "number", f"setpoint_offset_{z}")]
     economy = [z for z in ZONES if _eid(hass, entry, "switch", f"{z}_economy")]
-    assert len(offsets) == len(economy) == N_THERMOSTATS
+    # v0.84.0: a twin follower thermostat has no settings of its own.
+    assert len(offsets) == len(economy) == N_THERMOSTATS - 1
+    assert "bagno_padronale_02" not in economy
     assert RADIANT in offsets and RADIANT in economy
     assert "cantina_vini" not in economy and "kitchen" not in economy
 

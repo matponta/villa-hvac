@@ -19,6 +19,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import VillaHvacConfigEntry
 from .const import (
+    ZONE_TWINS,
     DEFAULT_FAN_MIN,
     DEFAULT_HOUSE_SETPOINT,
     DEFAULT_SETPOINT_OFFSET,
@@ -67,6 +68,7 @@ async def async_setup_entry(
         ZoneOffsetNumber(entry, zone_id, zone["name"])
         for zone_id, zone in ZONES.items()
         if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
+        and zone_id not in ZONE_TWINS   # v0.84.0: the twin uses the leader's
     ]
     async_add_entities(entities)
 

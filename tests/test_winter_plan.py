@@ -37,7 +37,7 @@ def _room(zone="r", temp=21.0, target=21.0, params=P):
 def _advice(rooms, hours, outdoor=5.0, floor=16.0, max_depth=6.0,
             max_lead=timedelta(hours=48)):
     # The prior recovers 16 → 21 °C at 5 °C outdoor in ~28 h: a 48 h lead keeps
-    # the depth tests independent of the v0.84.0 lead cap.
+    # the depth tests independent of the v0.83.0 lead cap.
     return winter_setback_advice(
         rooms, now=NOW, eta=NOW + timedelta(hours=hours), outdoor=outdoor,
         floor=floor, max_depth=max_depth, max_lead=max_lead,
@@ -67,7 +67,7 @@ def test_short_absence_barely_drops_and_still_recovers_in_time():
 
 def test_the_slowest_room_starts_first_and_drives_the_house_start():
     # SLOW can only reach 21 °C above ~13 °C outdoor (5 + 0.25/0.03 = 13.3):
-    # below that it is unrecoverable and, since v0.84.0, never drives the start.
+    # below that it is unrecoverable and, since v0.83.0, never drives the start.
     a = _advice([_room("fast"), _room("slow", params=SLOW)], hours=24, outdoor=15.0)
     assert a.limiting_room == "slow"
     fast_plan = next(p for p in a.rooms if p.zone == "fast")
@@ -259,7 +259,7 @@ async def test_engine_advice_from_the_return_entities(hass):
     assert "office" not in state.pv_heat_zones
     assert eid("switch", "main_bedroom_return_key")
     advice = engine._winter_advice(state)
-    # v0.84.0: the prior needs ~28 h from 16 °C at 5 °C outdoor, over the
+    # v0.83.0: the prior needs ~28 h from 16 °C at 5 °C outdoor, over the
     # default 12 h lead → the depth is made shallower instead (21 − 16 = 5 max).
     assert advice is not None and 0 < advice.depth < 5.0
     assert [p.zone for p in advice.rooms] == ["main_bedroom"]
@@ -331,7 +331,7 @@ def test_no_early_start_on_the_live_8_october_case_or_a_weak_charge():
     assert not _pv2(s, NOW + DWELL_ON, soc=50, net_charge=800, pv_left=60).active
 
 
-# --- v0.84.0: key rooms drive the winter return start -----------------------------
+# --- v0.83.0: key rooms drive the winter return start -----------------------------
 
 BROKEN = WinterParams(a=0.2, k_h=0.05, lag_min=45)   # can never reach the target
 

@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
 from .const import (
+    ZONE_TWINS,
     HEAT_VALVES,
     CONDOMINIO_BATTERY_POWER,
     CONDOMINIO_BATTERY_SOC,
@@ -90,7 +91,7 @@ async def async_setup_entry(
     ]
     entities += [
         ZoneTemperatureSensor(coordinator, entry, zone_id, zone)
-        for zone_id, zone in ZONES.items()
+        for zone_id, zone in ZONES.items() if zone_id not in ZONE_TWINS
     ]
     # F2: one learned-thermal-model diagnostic per cooling fancoil leader zone.
     entities += [
@@ -120,7 +121,7 @@ async def async_setup_entry(
     entities.append(PvHeatSensor(coordinator, entry))
     entities += [
         WinterRoomSensor(coordinator, entry, zone_id, ZONES[zone_id])
-        for zone_id in HEAT_VALVES
+        for zone_id in HEAT_VALVES if zone_id not in ZONE_TWINS
     ]
     async_add_entities(entities)
 

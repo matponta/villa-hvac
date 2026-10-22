@@ -93,7 +93,7 @@ actuation; every actuating feature opt-in and summer-inert.
   battery with a 1.3 margin → heat now instead of exporting later; STAY below the
   85 % threshold while that still holds.
 
-## v0.84.0 (2026-10-22) — return pre-heat driven by the key rooms
+## v0.83.0 (2026-10-22) — return pre-heat driven by the key rooms
 - Live bug: ETA Sat 24/10 19:00, pre-heat started Thu 22/10 16:50 (57 h early).
   The house start was the earliest start over ALL 15 radiant rooms, and Bagno
   Ingresso (k_h 0.088, ~23 h to gain 0.7 °C) "solved" at start = now.
@@ -105,3 +105,13 @@ actuation; every actuating feature opt-in and summer-inert.
   need a longer lead, the depth is bisected shallower (down to the native Via)
   until the key rooms recover in time; only below that is the start clamped
   (`preheat_start_capped`). Replay on the live models: start Sat 07:00, depth 3.2.
+
+## v0.84.0 (2026-10-22) — Bagno Padronale 01/02 bound as one room
+- ETS: two thermostats (7/x/15, 7/x/16) but ONE radiant head command (4/0/27
+  "Bagno Padronale (Testina)"); the two learnt models differed only by sensor
+  noise (2 heating samples each). `ZONE_TWINS` (const) binds `_02` to `_01`
+  everywhere, summer and winter: both read the mean temperature; the follower
+  has no trim / Economy / PV / return-key / zone-temp / winter sensor of its own
+  (the leader's apply — both thermostats are still written, identically); one
+  winter model (stored params merged by sample count at load); the return
+  advisor counts the room once. The leader is renamed "Bagno Padronale".
