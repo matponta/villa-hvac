@@ -131,6 +131,13 @@ OPT_WINTER_SETBACK_FLOOR = "winter_setback_floor"
 DEFAULT_WINTER_SETBACK_FLOOR = 16.0
 OPT_WINTER_SETBACK_MAX = "winter_setback_max"
 DEFAULT_WINTER_SETBACK_MAX = 6.0
+# v0.84.0 winter return: only the KEY rooms (switch.<zone>_return_key) drive the
+# pre-heat start, never earlier than this before the ETA.
+OPT_WINTER_RETURN_MAX_LEAD = "winter_return_max_lead_hours"
+DEFAULT_WINTER_RETURN_MAX_LEAD = 12.0
+RETURN_KEY_DEFAULT_ZONES: frozenset[str] = frozenset({
+    "main_bedroom", "bagno_padronale_01", "bagno_padronale_02", "living_room",
+})
 # v0.81.0 W4 PV heating: rooms that go to their Casa target on a real
 # Condominio PV surplus even in Via/Notte/Vacanza (owner 2026-10-07). Each room
 # has its own switch.<zone>_pv_heat (these default ON); master switch.pv_heat.
@@ -236,6 +243,7 @@ BLOCCO_RELEASED = "off"  # state that lets the villa cool (fail-safe target)
 OUTDOOR_TEMP = "sensor.gw3000a_outdoor_temperature"
 OUTDOOR_TEMP_FALLBACK = "sensor.s5a_temperatura_esterna"
 SOLAR_RADIATION = "sensor.gw3000a_solar_radiation"
+RAIN_RATE = "sensor.gw3000a_rain_rate"  # mm/h
 
 # The fancoil fan entities (Phase-0 diagnostic speeds). NB: fan % is NOT the
 # demand signal — true per-zone cooling demand is the EV valve state
@@ -817,7 +825,12 @@ SHADE_POSITION_STEP = 5
 OPT_WINTER_SUN_SOLAR = "winter_sun_solar"
 DEFAULT_WINTER_SUN_SOLAR = 150.0     # W/m² (gw3000a) — "there is real sun"
 WINTER_SUN_TAKEOVER_GRACE_MIN = 5    # min after our open before a move = owner
-WINTER_SUN_CLOSE_RETRIES = 10        # failed sunset put-backs retried per cover
+WINTER_SUN_CLOSE_RETRIES = 10        # failed put-backs retried per cover
+# v0.83.0 (owner 2026-10-20): lost sun -> put back what we opened before sunset;
+# a cover may be re-opened when the sun returns, up to N times a day.
+WINTER_SUN_DIM_CLOSE_MIN = 30        # min under the threshold before the put-back
+WINTER_SUN_MAX_OPENS = 3             # opens per cover per local day
+WINTER_SUN_RAIN_RATE = 0.1           # mm/h (gw3000a) at/above = raining: put back, no open
 SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't land exact)
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")

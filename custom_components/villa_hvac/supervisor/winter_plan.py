@@ -5,6 +5,9 @@ W2 "quanto posso abbassare": for a return ETA, the DEEPEST uniform setback
 coasting down with the valve closed and then recovering on the radiant floor,
 is back at its target by the ETA — plus WHEN the pre-heat must start.
 W3 executes it (hold the depth, switch to Casa at `start`).
+v0.84.0: only the KEY rooms (switch.<zone>_return_key) whose plan is credible
+drive the house start, never more than `max_lead` before the ETA — one
+mis-modelled bathroom put the whole villa in Casa 57 h early (2026-10-22).
 
 W4 PV surplus: a latch over the Condominio net flows (they include every
 apartment, so another unit running the shared PdC removes the surplus by
@@ -19,6 +22,7 @@ from datetime import datetime, timedelta
 from .winter_model import WinterParams, coast_temp, recovery_minutes
 
 BISECT_ITERS = 40
+DEPTH_ITERS = 12       # v0.84.0: depth bisection (6 °C / 2^12 ≈ 0.002 °C)
 
 
 @dataclass(frozen=True)
@@ -28,6 +32,7 @@ class WinterRoom:
     temp: float
     target: float           # the room's Casa target (house winter + room trim)
     params: WinterParams
+    key: bool = True        # v0.84.0: a room that must be warm at the ETA
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,8 @@ class RoomPlan:
     start: datetime          # when this room must start recovering
     temp_at_start: float     # the lowest it actually gets (coast until start)
     saved_dh: float          # degree-hours below target (proxy for the saving)
+    key: bool = True
+    plannable: bool = True   # the model can recover it from the setback
 
 
 @dataclass(frozen=True)
@@ -52,6 +59,7 @@ class WinterAdvice:
     rooms: tuple[RoomPlan, ...] = ()
     limiting_room: str | None = None
     saved_dh: float = 0.0
+    capped: bool = False     # the start was held back to ETA − max_lead
 
 
 def outdoor_estimate(forecast, now: datetime, until: datetime, current: float | None):
@@ -98,13 +106,46 @@ def _saved_dh(room: WinterRoom, setback: float, start_h: float, outdoor: float) 
     return round(total, 1)
 
 
+def _plan_rooms(rooms, depth: float, hours: float, outdoor: float, now: datetime):
+    plans = []
+    for r in rooms:
+        setback = r.target - depth
+        start_h, t_pre = _solve_start(r, setback, hours, outdoor)
+        # Credible = the model can bring the room back from the setback at
+        # all. Judged from the setback, not T(start): an unrecoverable fit
+        # "solves" by never letting the room coast (start = now, the bug).
+        plannable = recovery_minutes(
+            min(r.temp, setback), r.target, outdoor, r.params) is not None
+        plans.append(RoomPlan(
+            zone=r.zone, name=r.name, target=r.target, setback=round(setback, 1),
+            start=now + timedelta(hours=start_h), temp_at_start=round(t_pre, 1),
+            saved_dh=_saved_dh(r, setback, start_h, outdoor),
+            key=r.key, plannable=plannable,
+        ))
+    drivers = ([p for p in plans if p.key and p.plannable]
+               or [p for p in plans if p.plannable])
+    first = min(drivers, key=lambda p: p.start) if drivers else None
+    return plans, first
+
+
 def winter_setback_advice(
     rooms, *, now: datetime, eta: datetime | None, outdoor: float | None,
     floor: float, max_depth: float, min_depth: float = 0.0,
+    max_lead: timedelta = timedelta(hours=12),
 ) -> WinterAdvice | None:
     """Hold the deepest allowed setback (≥ floor, ≤ max_depth below Casa) and
-    start the house pre-heat at the earliest room start, so every room is back
-    at its Casa target by the ETA. `drop` = how low the house actually gets."""
+    start the house pre-heat at the earliest start of the KEY rooms, so they are
+    back at their Casa target by the ETA; the other rooms follow the house
+    (best effort). A room whose model cannot recover it from the setback at all
+    (implausible fit) is not plannable and never drives the start; with no key
+    room plannable the plannable others drive it.
+
+    v0.84.0 the quadra: the pre-heat never starts more than `max_lead` before
+    the ETA. When the deepest setback would need longer, the depth is made
+    shallower (down to the native Via) until the key rooms recover within
+    `max_lead`; only if even that is not enough is the start clamped
+    (`capped`, the key rooms arrive a little short). `drop` = how low the house
+    actually gets."""
     if eta is None or outdoor is None or eta <= now:
         return None
     rooms = [r for r in rooms if r.temp is not None and r.target is not None]
@@ -117,23 +158,34 @@ def winter_setback_advice(
     # native Via (`min_depth`): arming the return must not warm an away house.
     room_room = [r.target - floor for r in rooms if r.target - floor > 0]
     depth = min(max_depth, min(room_room)) if room_room else 0.0
-    depth = max(depth, min_depth, 0.0)
-    plans = []
-    for r in rooms:
-        setback = r.target - depth
-        start_h, t_pre = _solve_start(r, setback, hours, outdoor)
-        plans.append(RoomPlan(
-            zone=r.zone, name=r.name, target=r.target, setback=round(setback, 1),
-            start=now + timedelta(hours=start_h), temp_at_start=round(t_pre, 1),
-            saved_dh=_saved_dh(r, setback, start_h, outdoor),
-        ))
-    first = min(plans, key=lambda p: p.start)
+    min_depth = max(min_depth, 0.0)
+    depth = max(depth, min_depth)
+    earliest = max(now, eta - max_lead)
+    plans, first = _plan_rooms(rooms, depth, hours, outdoor, now)
+    if first is not None and first.start < earliest and depth > min_depth:
+        # Shallower setback → the room coasts less → later start (monotone).
+        lo, hi = min_depth, depth
+        best = _plan_rooms(rooms, lo, hours, outdoor, now)
+        if best[1] is None or best[1].start >= earliest:
+            for _ in range(DEPTH_ITERS):
+                mid = (lo + hi) / 2
+                cand = _plan_rooms(rooms, mid, hours, outdoor, now)
+                if cand[1] is None or cand[1].start >= earliest:
+                    lo, best = mid, cand
+                else:
+                    hi = mid
+            depth = lo
+        else:
+            depth = min_depth
+        plans, first = best
+    start = max(first.start, earliest) if first is not None else earliest
     drop = max(0.0, max(p.target - p.temp_at_start for p in plans))
     return WinterAdvice(
         eta=eta, hours=round(hours, 1), outdoor=round(outdoor, 1),
-        depth=round(depth, 1), drop=round(drop, 1), start=first.start,
-        rooms=tuple(plans), limiting_room=first.name,
+        depth=round(depth, 1), drop=round(drop, 1), start=start,
+        rooms=tuple(plans), limiting_room=first.name if first else None,
         saved_dh=round(sum(p.saved_dh for p in plans), 1),
+        capped=first is None or first.start < earliest,
     )
 
 

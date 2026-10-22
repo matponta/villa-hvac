@@ -66,8 +66,10 @@ from .const import (
     CONDOMINIO_BATTERY_POWER,
     DEFAULT_RETURN_DAYPART_HOURS,
     DEFAULT_WINTER_SETBACK_FLOOR,
+    DEFAULT_WINTER_RETURN_MAX_LEAD,
     DEFAULT_WINTER_SETBACK_MAX,
     OPT_WINTER_SETBACK_FLOOR,
+    OPT_WINTER_RETURN_MAX_LEAD,
     OPT_WINTER_SETBACK_MAX,
     CONDOMINIO_BATTERY_SOC,
     CONDOMINIO_GRID_POWER,
@@ -143,6 +145,7 @@ from .controller import (
     return_daypart,
     pv_heat_enabled,
     zone_pv_heat,
+    zone_return_key,
     zone_economy,
     shade_blocked,
     shade_position,
@@ -1431,6 +1434,7 @@ class SupervisorEngine:
                 zone=z.zone_id, name=z.name, temp=z.temp,
                 target=round(state.house_setpoint + z.setpoint_offset, 1),
                 params=self.winter.get(z.zone_id),
+                key=zone_return_key(self.hass, self.entry, z.zone_id),
             )
             for z in state.zones.values()
             if z.zone_id in HEAT_VALVES and z.enabled and not z.paused
@@ -1445,6 +1449,8 @@ class SupervisorEngine:
             rooms, now=state.now, eta=eta, outdoor=outdoor,
             floor=floor, max_depth=max_depth,
             min_depth=-via if via is not None and via < 0 else 0.0,
+            max_lead=timedelta(hours=_opt(
+                opts, OPT_WINTER_RETURN_MAX_LEAD, DEFAULT_WINTER_RETURN_MAX_LEAD)),
         )
 
     def _observe_winter(self, state: HouseState) -> None:

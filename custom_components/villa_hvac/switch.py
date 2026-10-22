@@ -27,6 +27,7 @@ from .const import (
     NIGHT_SILENCE_SWITCHES,
     PRESET_CONTROLLABLE_EMITTERS,
     PV_HEAT_DEFAULT_ZONES,
+    RETURN_KEY_DEFAULT_ZONES,
     ZONES,
 )
 from .controller import apply_house_mode, current_house_mode
@@ -88,6 +89,11 @@ async def async_setup_entry(
     # v0.81.0 W4: per-room PV heating (owner rooms default ON).
     entities += [
         ZonePvHeatSwitch(entry, zone_id, ZONES[zone_id]["name"])
+        for zone_id in HEAT_VALVES
+    ]
+    # v0.84.0: the key rooms that drive the winter return pre-heat.
+    entities += [
+        ZoneReturnKeySwitch(entry, zone_id, ZONES[zone_id]["name"])
         for zone_id in HEAT_VALVES
     ]
     entities += [
@@ -868,3 +874,17 @@ class ZonePvHeatSwitch(ZoneEconomySwitch):
         self._attr_name = f"{name} PV heating"
         self._attr_unique_id = f"{entry.entry_id}_{zone_id}_pv_heat"
         self._attr_is_on = zone_id in PV_HEAT_DEFAULT_ZONES
+
+
+class ZoneReturnKeySwitch(ZoneEconomySwitch):
+    """v0.84.0: this room must be warm at the return ETA, so it drives the
+    winter pre-heat start; the others follow the house. Owner rooms default ON;
+    restored."""
+
+    _attr_icon = "mdi:home-thermometer"
+
+    def __init__(self, entry: VillaHvacConfigEntry, zone_id: str, name: str) -> None:
+        super().__init__(entry, zone_id, name)
+        self._attr_name = f"{name} return key room"
+        self._attr_unique_id = f"{entry.entry_id}_{zone_id}_return_key"
+        self._attr_is_on = zone_id in RETURN_KEY_DEFAULT_ZONES

@@ -249,13 +249,16 @@ class WinterSetbackAdviceSensor(CoordinatorEntity[VillaHvacCoordinator], SensorE
             "outdoor_used": a.outdoor,
             "preheat_start": dt_util.as_local(a.start).isoformat(),
             "limiting_room": a.limiting_room,
+            "preheat_start_capped": a.capped,
+            "key_rooms": [p.name for p in a.rooms if p.key],
             "saved_degree_hours": a.saved_dh,
             "executing": getattr(ar, "decision", None),
             "rooms": [
                 {"room": p.name, "target": p.target, "setback": p.setback,
                  "start": dt_util.as_local(p.start).isoformat(),
                  "temp_at_start": p.temp_at_start,
-                 "saved_dh": p.saved_dh}
+                 "saved_dh": p.saved_dh, "key": p.key,
+                 "plannable": p.plannable}
                 for p in a.rooms
             ],
         }

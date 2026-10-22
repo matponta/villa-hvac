@@ -401,6 +401,11 @@ def zone_pv_heat(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
     return _switch_state(hass, entry, f"{zone}_pv_heat") == STATE_ON
 
 
+def zone_return_key(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
+    """v0.84.0 per-room switch: this room drives the winter return pre-heat."""
+    return _switch_state(hass, entry, f"{zone}_return_key") == STATE_ON
+
+
 def winter_sun_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """v0.78.0 winter solar gain switch — default ON (only OFF disables)."""
     return _switch_state(hass, entry, "winter_sun") != STATE_OFF

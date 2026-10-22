@@ -92,3 +92,16 @@ actuation; every actuating feature opt-in and summer-inert.
 - PV early start: strong net charge (≥ 1.5 kW) AND the PV left today fills the
   battery with a 1.3 margin → heat now instead of exporting later; STAY below the
   85 % threshold while that still holds.
+
+## v0.84.0 (2026-10-22) — return pre-heat driven by the key rooms
+- Live bug: ETA Sat 24/10 19:00, pre-heat started Thu 22/10 16:50 (57 h early).
+  The house start was the earliest start over ALL 15 radiant rooms, and Bagno
+  Ingresso (k_h 0.088, ~23 h to gain 0.7 °C) "solved" at start = now.
+- Only KEY rooms (`switch.<zone>_return_key`, default ON for main_bedroom,
+  bagno_padronale_01/02, living_room) drive the start; the others follow the
+  house. A room the model cannot bring back from the setback at all never drives
+  it; with no key room plannable the plannable others do.
+- `winter_return_max_lead_hours` (default 12): when the deepest setback would
+  need a longer lead, the depth is bisected shallower (down to the native Via)
+  until the key rooms recover in time; only below that is the start clamped
+  (`preheat_start_capped`). Replay on the live models: start Sat 07:00, depth 3.2.

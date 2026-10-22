@@ -34,10 +34,13 @@ def _room(zone="r", temp=21.0, target=21.0, params=P):
     return WinterRoom(zone=zone, name=zone, temp=temp, target=target, params=params)
 
 
-def _advice(rooms, hours, outdoor=5.0, floor=16.0, max_depth=6.0):
+def _advice(rooms, hours, outdoor=5.0, floor=16.0, max_depth=6.0,
+            max_lead=timedelta(hours=48)):
+    # The prior recovers 16 → 21 °C at 5 °C outdoor in ~28 h: a 48 h lead keeps
+    # the depth tests independent of the v0.84.0 lead cap.
     return winter_setback_advice(
         rooms, now=NOW, eta=NOW + timedelta(hours=hours), outdoor=outdoor,
-        floor=floor, max_depth=max_depth,
+        floor=floor, max_depth=max_depth, max_lead=max_lead,
     )
 
 
@@ -63,7 +66,9 @@ def test_short_absence_barely_drops_and_still_recovers_in_time():
 
 
 def test_the_slowest_room_starts_first_and_drives_the_house_start():
-    a = _advice([_room("fast"), _room("slow", params=SLOW)], hours=24)
+    # SLOW can only reach 21 °C above ~13 °C outdoor (5 + 0.25/0.03 = 13.3):
+    # below that it is unrecoverable and, since v0.84.0, never drives the start.
+    a = _advice([_room("fast"), _room("slow", params=SLOW)], hours=24, outdoor=15.0)
     assert a.limiting_room == "slow"
     fast_plan = next(p for p in a.rooms if p.zone == "fast")
     slow_plan = next(p for p in a.rooms if p.zone == "slow")
@@ -252,10 +257,14 @@ async def test_engine_advice_from_the_return_entities(hass):
     state = build_house_state(hass, entry, entry.runtime_data)
     assert state.pv_heat_zones >= {"main_bedroom", "living_room"}
     assert "office" not in state.pv_heat_zones
+    assert eid("switch", "main_bedroom_return_key")
     advice = engine._winter_advice(state)
-    assert advice is not None and advice.depth == 5.0       # 21 − floor 16
+    # v0.84.0: the prior needs ~28 h from 16 °C at 5 °C outdoor, over the
+    # default 12 h lead → the depth is made shallower instead (21 − 16 = 5 max).
+    assert advice is not None and 0 < advice.depth < 5.0
     assert [p.zone for p in advice.rooms] == ["main_bedroom"]
-    assert advice.start < advice.eta
+    assert advice.rooms[0].key and advice.limiting_room == "Camera Padronale"
+    assert advice.eta - timedelta(hours=12) <= advice.start < advice.eta
 
 
 def test_economy_room_under_the_floor_does_not_cancel_the_house_setback():
@@ -320,3 +329,64 @@ def test_no_early_start_on_the_live_8_october_case_or_a_weak_charge():
     assert not _pv2(s, NOW + DWELL_ON, soc=33, net_charge=6000, pv_left=10.7).active
     s = _pv2(PvHeatState(), NOW, soc=50, net_charge=800, pv_left=60)
     assert not _pv2(s, NOW + DWELL_ON, soc=50, net_charge=800, pv_left=60).active
+
+
+# --- v0.84.0: key rooms drive the winter return start -----------------------------
+
+BROKEN = WinterParams(a=0.2, k_h=0.05, lag_min=45)   # can never reach the target
+
+
+def test_only_key_rooms_drive_the_house_start():
+    a = winter_setback_advice(
+        [_room("key"), WinterRoom("slow", "slow", 21.0, 21.0, SLOW, key=False)],
+        now=NOW, eta=NOW + timedelta(hours=24), outdoor=15.0, floor=16.0,
+        max_depth=6.0,
+    )
+    key_plan = next(p for p in a.rooms if p.zone == "key")
+    slow_plan = next(p for p in a.rooms if p.zone == "slow")
+    assert slow_plan.start < key_plan.start             # would have driven it before
+    assert a.start == key_plan.start and a.limiting_room == "key"
+
+
+def test_unplannable_room_never_starts_the_house_now():
+    """2026-10-22: Bagno Ingresso's model could not recover → start = now,
+    57 h before the ETA, and the whole villa went to Casa."""
+    rooms = [_room("bed"), _room("bagno", temp=19.9, params=BROKEN)]
+    a = _advice(rooms, hours=57, max_lead=timedelta(hours=24))
+    bagno = next(p for p in a.rooms if p.zone == "bagno")
+    assert not bagno.plannable
+    assert a.start == next(p for p in a.rooms if p.zone == "bed").start
+    assert a.eta - a.start <= timedelta(hours=24)
+
+
+def test_start_never_earlier_than_max_lead():
+    a = winter_setback_advice(
+        [_room(params=SLOW)], now=NOW, eta=NOW + timedelta(hours=72), outdoor=5.0,
+        floor=16.0, max_depth=6.0, max_lead=timedelta(hours=6),
+    )
+    assert a.eta - a.start == timedelta(hours=6) and a.capped
+
+
+def test_no_key_room_plannable_falls_back_to_the_others_then_the_cap():
+    rooms = [_room("key", params=BROKEN),
+             WinterRoom("other", "other", 21.0, 21.0, P, key=False)]
+    a = _advice(rooms, hours=48)
+    assert a.limiting_room == "other"
+    only_broken = _advice([_room("key", params=BROKEN)], hours=48,
+                          max_lead=timedelta(hours=24))
+    assert only_broken.limiting_room is None and only_broken.capped
+    assert only_broken.eta - only_broken.start == timedelta(hours=24)
+
+
+def test_over_long_lead_makes_the_setback_shallower_not_the_rooms_cold():
+    deep = _advice([_room()], hours=72)                    # 48 h lead: depth 5
+    capped = _advice([_room()], hours=72, max_lead=timedelta(hours=12))
+    assert deep.depth == 5.0 and capped.depth < deep.depth and not capped.capped
+    assert capped.eta - capped.start <= timedelta(hours=12, minutes=1)
+    # never shallower than the native Via: then the start is clamped instead
+    via = winter_setback_advice(
+        [_room()], now=NOW, eta=NOW + timedelta(hours=72), outdoor=5.0,
+        floor=16.0, max_depth=6.0, min_depth=4.0, max_lead=timedelta(hours=2),
+    )
+    assert via.depth == 4.0 and via.capped
+    assert via.eta - via.start == timedelta(hours=2)

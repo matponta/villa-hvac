@@ -1,8 +1,9 @@
 """Winter solar gain (v0.78.0): open the sunny covers while the house is empty.
 
 In winter, with the house in Via or Vacanza and real sun on a facade, the
-covers on that facade are opened (once per day each) to let the free heat in;
-at sunset the covers WE opened go back to where they were. Pure decision in
+covers on that facade are opened (up to 3 times per day each, v0.83.0) to let
+the free heat in; at sunset — or when the sun is lost (30 min under the
+threshold, or rain; v0.83.0) — the covers WE opened go back to where they were. Pure decision in
 `supervisor/sungain.py`; this wrapper reads HA state, writes the covers and
 persists the small bookkeeping (so a restart mid-afternoon still closes them).
 
@@ -29,12 +30,16 @@ from .const import (
     HOUSE_MODE_AWAY,
     HOUSE_MODE_VACATION,
     OPT_WINTER_SUN_SOLAR,
+    RAIN_RATE,
     SEASON_WINTER,
     SHADE_POSITION_TOLERANCE,
     SHADING_AZIMUTH_BANDS,
     SHADING_MIN_ELEVATION,
     SOLAR_RADIATION,
     WINTER_SUN_CLOSE_RETRIES,
+    WINTER_SUN_DIM_CLOSE_MIN,
+    WINTER_SUN_MAX_OPENS,
+    WINTER_SUN_RAIN_RATE,
     WINTER_SUN_TAKEOVER_GRACE_MIN,
 )
 from .controller import (
@@ -163,6 +168,10 @@ class WinterSunController:
             )
             solar_state = self.hass.states.get(SOLAR_RADIATION)
             solar = _float(solar_state.state) if solar_state is not None else None
+            # Missing/unavailable rain gauge = "not raining": the 30-min dim
+            # put-back still covers an overcast afternoon.
+            rain_state = self.hass.states.get(RAIN_RATE)
+            rain = _float(rain_state.state) if rain_state is not None else None
             before = self.state
             self.state, commands = winter_sun_step(
                 active=active,
@@ -177,8 +186,10 @@ class WinterSunController:
                 min_elevation=SHADING_MIN_ELEVATION,
                 tolerance=SHADE_POSITION_TOLERANCE,
                 grace=timedelta(minutes=WINTER_SUN_TAKEOVER_GRACE_MIN),
+                raining=rain is not None and rain >= WINTER_SUN_RAIN_RATE,
+                dim_hold=timedelta(minutes=WINTER_SUN_DIM_CLOSE_MIN),
+                max_opens=WINTER_SUN_MAX_OPENS,
             )
-            sunset = elevation is not None and elevation <= 0
             for entity_id, position in commands.items():
                 if self._stopped:
                     return
@@ -188,11 +199,12 @@ class WinterSunController:
                 )
                 if ok:
                     self._close_failures.pop(entity_id, None)
-                elif not sunset:
-                    # A failed open must not be "closed back" at sunset.
+                elif entity_id not in before.opened:
+                    # A failed open must not be "put back" later.
                     self.state.opened.pop(entity_id, None)
                 else:
-                    # A failed put-back is retried next tick (KNX hiccup), a
+                    # A failed put-back (sunset or lost sun) is retried next
+                    # tick (KNX hiccup), a
                     # bounded number of times — never a cover up all night
                     # because of one lost telegram, never an endless retry.
                     n = self._close_failures.get(entity_id, 0) + 1
@@ -233,6 +245,8 @@ def _encode(state: WinterSunState) -> dict:
     return {
         "day": state.day,
         "done": sorted(state.done),
+        "opens": dict(state.opens),
+        "dim_since": state.dim_since.isoformat() if state.dim_since else None,
         "opened": {
             eid: [prior, at.isoformat()] for eid, (prior, at) in state.opened.items()
         },
@@ -251,8 +265,29 @@ def _decode(data) -> WinterSunState:
                 opened[str(eid)] = (int(prior), when)
         except (TypeError, ValueError):
             continue
+    done = {str(e) for e in data.get("done") or ()}
+    opens: dict[str, int] = {}
+    if "opens" in data:
+        for eid, n in (data.get("opens") or {}).items():
+            try:
+                opens[str(eid)] = max(0, int(n))
+            except (TypeError, ValueError):
+                continue
+    else:
+        # Pre-v0.83.0 store: `done` also held the covers we opened today.
+        # Those count as one open each and are no longer "hands off".
+        for eid in opened:
+            if eid in done:
+                done.discard(eid)
+                opens[eid] = 1
+    dim_since = None
+    raw = data.get("dim_since")
+    if isinstance(raw, str):
+        dim_since = dt_util.parse_datetime(raw)
     return WinterSunState(
         day=data.get("day"),
-        done=frozenset(str(e) for e in data.get("done") or ()),
+        done=frozenset(done),
         opened=opened,
+        opens=opens,
+        dim_since=dim_since,
     )
