@@ -119,7 +119,7 @@
           "winter_sun_solar": "With switch.winter_sun on: in winter, while Via/Vacanza, open the covers on the sunny facade when irradiance is at least this (up to 3 times a day); they go back down after 30 min below it, when it rains, or at sunset.",
           "winter_setback_floor": "Away (W2/W3 advice) never below this absolute temperature.",
           "winter_setback_max": "Away advice never goes deeper than this below Casa.",
-          "winter_return_max_lead_hours": "The return pre-heat never starts earlier than this before the ETA; only the key rooms (switch.<room>_return_key) set the start."
+          "winter_return_max_lead_hours": "The return pre-heat never starts earlier than this before the ETA; only the key rooms (the “return key room” switches) set the start."
         }
       }
     }

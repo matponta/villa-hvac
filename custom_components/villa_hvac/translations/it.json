@@ -119,7 +119,7 @@
           "winter_sun_solar": "Con switch.winter_sun attivo: d'inverno, in Via/Vacanza, apre le tapparelle della facciata al sole quando l'irraggiamento è almeno questo (fino a 3 volte al giorno); le riporta giù dopo 30 min sotto soglia, se piove o al tramonto.",
           "winter_setback_floor": "In assenza (consiglio W2/W3) mai sotto questa temperatura.",
           "winter_setback_max": "Il consiglio in assenza non scende mai più di così sotto Casa.",
-          "winter_return_max_lead_hours": "Il pre-riscaldamento per il rientro non parte mai prima di così rispetto all'arrivo; l'avvio lo decidono solo le stanze chiave (switch.<stanza>_return_key)."
+          "winter_return_max_lead_hours": "Il pre-riscaldamento per il rientro non parte mai prima di così rispetto all'arrivo; l'avvio lo decidono solo le stanze chiave (gli interruttori “stanza chiave”)."
         }
       }
     }
