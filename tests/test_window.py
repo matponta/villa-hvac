@@ -10,7 +10,11 @@ from pytest_homeassistant_custom_component.common import (
 )
 from homeassistant.util import dt as dt_util
 
-from custom_components.villa_hvac.const import DOMAIN, WINDOW_OPEN_DELAY
+from custom_components.villa_hvac.const import (
+    DOMAIN,
+    SEASON_REFERENCE_CLIMATE,
+    WINDOW_OPEN_DELAY,
+)
 from custom_components.villa_hvac.window import window_zones
 
 from .helpers import enable_supervisor, seed_thermostats
@@ -35,6 +39,12 @@ def test_window_zones_maps_vasistas_and_contacts():
         "ingresso": "binary_sensor.entrance_porta_vetri_ingresso_window",
         "living_room": "binary_sensor.shelly_blu_door_window_b50c_window",
     }
+
+
+def _summer(hass):
+    """Airing is a SUMMER concept (v0.76.0): pin the season instead of letting
+    it fall back to the calendar, which made these tests fail from October."""
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "cool", {"preset_mode": "comfort"})
 
 
 async def _setup(hass):
@@ -219,6 +229,7 @@ async def test_deliberate_airing_suppresses_then_rearms(hass):
     episode is RE-ARMED, not consumed: when the airing ends and the window is
     STILL open (the forgotten-window case rule 3 exists for), the next interval
     pages."""
+    _summer(hass)
     await _setup(hass)
     mattia, ehi = _alert_mocks(hass)
     await hass.services.async_call(
@@ -242,6 +253,7 @@ async def test_deliberate_airing_suppresses_then_rearms(hass):
 
 async def test_windows_free_cool_airing_suppresses_the_page(hass):
     """windows-free-cool armed + enough contacts open = deliberate airing."""
+    _summer(hass)
     await _setup(hass)
     mattia, ehi = _alert_mocks(hass)
     await hass.services.async_call(
@@ -313,6 +325,7 @@ async def test_forgotten_last_window_pages_after_airing_ends(hass):
     """The rule-3 core case: 3 windows open while windows-free-cool is armed
     (suppressed as deliberate airing), 2 get closed, ONE is forgotten — the
     re-armed timer pages for it once the count drops below the threshold."""
+    _summer(hass)
     await _setup(hass)
     mattia, ehi = _alert_mocks(hass)
     await hass.services.async_call(
@@ -429,3 +442,19 @@ async def test_close_restores_current_mode_preset(hass):
     assert calls
     assert all(c.data["entity_id"] == CLIMATE for c in calls)
     assert all(c.data["preset_mode"] == "comfort" for c in calls)  # Casa preset
+
+
+async def test_free_air_left_on_in_winter_still_pages(hass):
+    """v0.76.0: free_air is a summer airing signal — left on into the heating
+    season it must not silence a window forgotten open."""
+    hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat", {"preset_mode": "comfort"})
+    await _setup(hass)
+    mattia, ehi = _alert_mocks(hass)
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.free_air"}, blocking=True
+    )
+    hass.states.async_set(ALERT_CONTACT, "on")
+    await hass.async_block_till_done()
+    async_fire_time_changed(hass, dt_util.utcnow() + ALERT_DELAY)
+    await hass.async_block_till_done()
+    assert len(mattia) == 1 and len(ehi) == 1
