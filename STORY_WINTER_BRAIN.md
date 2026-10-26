@@ -115,3 +115,15 @@ actuation; every actuating feature opt-in and summer-inert.
   (the leader's apply — both thermostats are still written, identically); one
   winter model (stored params merged by sample count at load); the return
   advisor counts the room once. The leader is renamed "Bagno Padronale".
+
+## v0.85.0 (2026-10-26) — no setpoint flapping while waiting for the return
+- Live 23/10: 24 setpoint changes on each thermostat, incl. 16↔18.1 flips. Two
+  causes: (1) the bisected `depth` jumps 3↔5 at the max-lead boundary (once the
+  rooms can't coast to the floor in time anyway, any depth is "feasible") while
+  the real drop stayed a continuous ~3.2; (2) the limiting room alternating
+  between Camera and Bagno Padronale moved the depth 2.5↔2.9.
+- W3 now writes `setpoint_depth` = max(native Via, min(depth, predicted drop)),
+  held by the pure `hold_depth`: quantised to 0.5 °C, changed only when the raw
+  value stays > 0.5 °C away for 30 min. Replay of 23/10 05:25–11:00: 1 write
+  instead of ~20. Sensor: `setback_depth_applied` = what is written,
+  `setback_depth_max` = the plan's deepest allowed.

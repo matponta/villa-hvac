@@ -60,6 +60,10 @@ class WinterAdvice:
     limiting_room: str | None = None
     saved_dh: float = 0.0
     capped: bool = False     # the start was held back to ETA − max_lead
+    # v0.85.0: what W3 writes — the predicted drop (never deeper than the house
+    # actually gets), not below the native Via. `depth` jumps 3↔5 at the cap
+    # boundary while the drop is continuous (live 23/10: setpoints 16↔18.1).
+    setpoint_depth: float = 0.0
 
 
 def outdoor_estimate(forecast, now: datetime, until: datetime, current: float | None):
@@ -186,7 +190,40 @@ def winter_setback_advice(
         rooms=tuple(plans), limiting_room=first.name if first else None,
         saved_dh=round(sum(p.saved_dh for p in plans), 1),
         capped=first is None or first.start < earliest,
+        setpoint_depth=round(max(min_depth, min(depth, drop)), 1),
     )
+
+
+# --- v0.85.0: hold the written depth (no setpoint flapping) -------------------
+
+DEPTH_STEP = 0.5                     # °C — the written depth is quantised
+DEPTH_DEADBAND = 0.5                 # °C — a change must exceed this...
+DEPTH_SETTLE = timedelta(minutes=30) # ...continuously for this long
+
+
+@dataclass(frozen=True)
+class DepthHold:
+    depth: float | None = None       # what W3 writes now
+    since: datetime | None = None    # raw has been outside the deadband since
+
+
+def hold_depth(h: DepthHold, raw: float, now: datetime, *,
+               step: float = DEPTH_STEP, deadband: float = DEPTH_DEADBAND,
+               settle: timedelta = DEPTH_SETTLE) -> DepthHold:
+    """The first value is adopted at once (quantised to `step`). After that
+    the written depth moves only when `raw` has stayed more than `deadband`
+    away from it for `settle`, and then to the quantised latest value. Noise
+    around a boundary (the limiting room alternating, the outdoor estimate
+    wobbling, the cap boundary) never reaches the thermostats."""
+    q = round(round(raw / step) * step, 1)
+    if h.depth is None:
+        return DepthHold(depth=q)
+    if abs(raw - h.depth) <= deadband:
+        return DepthHold(depth=h.depth)
+    since = h.since or now
+    if now - since >= settle:
+        return DepthHold(depth=q)
+    return DepthHold(depth=h.depth, since=since)
 
 
 # --- W4: PV surplus latch -----------------------------------------------------------

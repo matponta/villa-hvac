@@ -245,7 +245,13 @@ class WinterSetbackAdviceSensor(CoordinatorEntity[VillaHvacCoordinator], SensorE
         ar = getattr(engine, "away_return", None)
         return {
             "eta": a.eta.isoformat(),
-            "setback_depth_applied": a.depth,
+            # v0.85.0: what the thermostats get (held, quantised) vs the
+            # deepest the plan would allow.
+            "setback_depth_applied": (
+                ar.written_depth if getattr(ar, "written_depth", None) is not None
+                else a.setpoint_depth
+            ),
+            "setback_depth_max": a.depth,
             "hours_away": a.hours,
             "outdoor_used": a.outdoor,
             "preheat_start": dt_util.as_local(a.start).isoformat(),

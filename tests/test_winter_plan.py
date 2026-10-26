@@ -390,3 +390,62 @@ def test_over_long_lead_makes_the_setback_shallower_not_the_rooms_cold():
     )
     assert via.depth == 4.0 and via.capped
     assert via.eta - via.start == timedelta(hours=2)
+
+
+# --- v0.85.0: no setpoint flapping while waiting ------------------------------------
+
+from custom_components.villa_hvac.supervisor.winter_plan import (  # noqa: E402
+    DEPTH_SETTLE,
+    DepthHold,
+    hold_depth,
+)
+
+
+def test_setpoint_depth_is_the_predicted_drop_not_the_jumping_max():
+    """Live 23/10: depth jumped 3↔5 at the cap boundary while the house only
+    ever dropped ~3.2 — the thermostats got 16↔18.1 every few minutes."""
+    a = _advice([_room()], hours=10, outdoor=12.0)
+    assert a.depth == 5.0 and a.drop < a.depth
+    assert a.setpoint_depth == a.drop
+    via = winter_setback_advice(
+        [_room()], now=NOW, eta=NOW + timedelta(hours=3), outdoor=12.0,
+        floor=16.0, max_depth=6.0, min_depth=2.0,
+    )
+    assert via.drop < 2.0 and via.setpoint_depth == 2.0   # never above native Via
+
+
+def test_hold_depth_quantises_and_needs_a_settled_change():
+    h = hold_depth(DepthHold(), 2.9, NOW)
+    assert h.depth == 3.0
+    t = NOW
+    for raw in (2.5, 2.9, 2.6, 2.9, 2.5, 2.8):          # the 23/10 wobble
+        t += timedelta(minutes=20)
+        h = hold_depth(h, raw, t)
+    assert h.depth == 3.0
+    for raw in (5.0, 3.1, 5.0, 3.0):                       # the 16↔18 flips
+        t += timedelta(minutes=3)
+        h = hold_depth(h, raw, t)
+    assert h.depth == 3.0
+    h = hold_depth(h, 3.7, t)                              # a real change...
+    assert h.depth == 3.0 and h.since == t
+    h = hold_depth(h, 3.8, t + DEPTH_SETTLE - timedelta(minutes=1))
+    assert h.depth == 3.0
+    h = hold_depth(h, 3.9, t + DEPTH_SETTLE)               # ...after it settles
+    assert h.depth == 4.0
+
+
+def test_winter_return_writes_the_held_depth(monkeypatch):
+    _patch_return(monkeypatch)
+    ctrl = rh.AwayReturnController()
+    a1 = _advice([_room()], hours=48)
+    first = ctrl.apply(_via(NOW), None, None, commit=True, winter_advice=a1)
+    held = first.mode_offset
+    assert held == -hold_depth(DepthHold(), a1.setpoint_depth, NOW).depth
+    from dataclasses import replace as _r
+    jumpy = _r(a1, setpoint_depth=a1.setpoint_depth + 2.0)
+    t = NOW + timedelta(minutes=1)
+    assert ctrl.apply(_via(t), None, None, commit=True,
+                      winter_advice=jumpy).mode_offset == held
+    assert ctrl.apply(_via(t), None, None, commit=True,
+                      winter_advice=a1).mode_offset == held
+    assert ctrl.written_depth == -held

@@ -62,6 +62,7 @@ from .supervisor import (
     return_eta,
     return_lead_time,
 )
+from .supervisor.winter_plan import DepthHold, hold_depth
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -78,10 +79,17 @@ class AwayReturnController:
 
     def __init__(self) -> None:
         self._latched = False
+        # v0.85.0: the winter WAITING depth actually written (held, quantised).
+        self._depth_hold = DepthHold()
         # Last computed view, for the diagnostic sensor (read-only).
         self.decision: str | None = None
         self.eta = None
         self.lead: timedelta | None = None
+
+    @property
+    def written_depth(self) -> float | None:
+        """v0.85.0: the winter setback depth W3 is writing now (None = none)."""
+        return self._depth_hold.depth
 
     def _rooms(self, state, target: float) -> list[ReturnRoom]:
         rooms: list[ReturnRoom] = []
@@ -181,7 +189,14 @@ class AwayReturnController:
             self._latched = new_latched
         self.decision, self.eta, self.lead = decision, eta, lead
         if decision == RETURN_WAITING:
-            return replace(state, mode_offset=-float(advice.depth))
+            # v0.85.0: write the predicted drop, quantised and held (it used to
+            # write the raw depth every cycle: 24 setpoint changes on 23/10).
+            hold = hold_depth(self._depth_hold, advice.setpoint_depth, state.now)
+            if commit:
+                self._depth_hold = hold
+            return replace(state, mode_offset=-float(hold.depth))
+        if commit:
+            self._depth_hold = DepthHold()
         if decision == RETURN_PRECOND:
             return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
         return state
