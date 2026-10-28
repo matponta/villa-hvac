@@ -173,6 +173,19 @@ do local bang-bang regulation.
   owed rest. `on_now` is what WE commanded, so a manual boost is neither timed nor
   cut short. State is in-memory like the #9 duty stint → a restart/reload re-arms
   the cap; the 03:00 backup blip is enough to do that. Cap fire/re-arm log at INFO.
+  **Year-round speed + humidity (v0.86.0, `STORY_VMC.md`)** — both units now on
+  Salda Smarty (`fan.*` 33/66/100, own outdoor/supply/extract temps, filter
+  timestamp, alarm). Pure core `supervisor/ventilation.py` (absolute humidity).
+  VMC 1 (ground, earth-sheltered rooms) DRIES: room ≥ RH ceiling + outside AH
+  ≥1 g/m³ drier → 66 % (100 % ≥75 %, capped 66 by a cantina below the wine
+  floor); summer flush VETOED when the outside air is wetter. VMC 2: the
+  occupied-Notte veto now flushes at 66 % instead of nothing. Winter: a boost we
+  didn't command is cut after 60 min. Speed is raised only, snapshot→restore,
+  hand change/OFF conceded, ownership persisted (`villa_hvac_vmc`) so a restart
+  can't orphan it; HA stop releases too. Sensors `… stato`/`… recupero calore`/
+  air temps (MEASUREMENT). `switch.vmc_alerts` (default ON, master-independent):
+  filter/alarm/offline/OFF/damp-room pages. GOTCHA: VMC 1's "outdoor" probe is
+  NOT outdoor air (17 °C at 03:00 vs 5 °C) — always decide on gw3000a.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool), bounded by a first-class

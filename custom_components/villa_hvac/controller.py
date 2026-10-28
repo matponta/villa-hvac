@@ -373,6 +373,14 @@ def vmc_boost_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return _switch_state(hass, entry, "vmc_auto") == STATE_ON
 
 
+def vmc_alerts_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """True when the VMC alerts switch is on (v0.86.0, default ON).
+
+    Independent of the master and of `vmc_auto`: a clogged filter, an alarm or
+    an offline unit is worth a page even while nothing is automated."""
+    return _switch_state(hass, entry, "vmc_alerts") == STATE_ON
+
+
 def free_cool_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """True when the #5 free-cooling switch is on (opt-in, on top of the master).
 

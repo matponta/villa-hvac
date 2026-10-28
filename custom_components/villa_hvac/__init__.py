@@ -128,7 +128,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # unsubscribes AND hands back any boost it set.
     vmc = VmcController(hass, entry)
     coordinator.vmc = vmc
-    vmc.start()
+    await vmc.async_start()
     entry.async_on_unload(vmc.async_stop)
 
     # v0.78.0 winter solar gain: edge-triggered cover opener off the same tick
@@ -144,6 +144,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     #    orphaned across the outage with no supervisor alive to release it.
     async def _on_stop(_event: Event) -> None:
         await engine.async_fail_safe()
+        await vmc.async_release()  # v0.86.0: a raised VMC speed/boost too
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)

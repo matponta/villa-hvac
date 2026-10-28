@@ -775,21 +775,57 @@ WINDOW_ALERT_NAMES: dict[str, str] = {
 # during Notte WHILE the house is occupied (don't run a loud fan over sleepers).
 # When the house is empty it boosts freely at night. VMC 1 (ground floor, no
 # bedrooms) is never gated.
+# v0.86.0 (STORY_VMC.md): both units are now on the Salda Smarty integration —
+# speed 33/66/100 % on `fan`, the unit's own outdoor/supply/extract air temps,
+# filter timer, alarm/warning. `dehumidify`: the ground unit serves rooms with
+# 1-2 walls against soil (owner 2026-10-28: "combattiamo l'umido"), so its speed
+# also dries them and its night flush is vetoed when the outside air is wetter.
+# `humidity_rooms`: zone -> (RH sensor, RH ceiling, RH floor|None). Only rooms
+# with a working RH sensor are listed (bagno ingresso/palestra have none).
+# `outdoor_trusted`: VMC 1's "outdoor" probe read 17.3 °C at 03:00 on 28/10 with
+# the gw3000a at ~5 °C — it is not outdoor air; decisions always use gw3000a.
 VMC_GROUPS: dict[str, dict] = {
     "ground": {  # VMC 1 — ground floor (humidity-prone), Salda Smarty integration
+        "name": "VMC Bagno Cantine",
         "boost_switch": "switch.10_5_150_27_boost",
+        "fan": "fan.10_5_150_27",
+        "outdoor_air": "sensor.10_5_150_27_outdoor_air_temperature",
+        "supply_air": "sensor.10_5_150_27_supply_air_temperature",
+        "extract_air": "sensor.10_5_150_27_extract_air_temperature",
+        "filter": "sensor.10_5_150_27_filter_days_left",
+        "alarm": "binary_sensor.10_5_150_27_alarm",
+        "warning": "binary_sensor.10_5_150_27_warning",
         "zones": ("cantina_vini", "bagno_ingresso", "bagno_palestra", "palestra"),
         "night_quiet": False,
+        "dehumidify": True,
+        "outdoor_trusted": False,
+        "humidity_rooms": {
+            "palestra": ("sensor.everything_presence_one_3febdc_humidity", 65.0, None),
+            # the wine band is the split's (OPT_SPLIT_RH_*): read live in vmc.py
+            "cantina_vini": ("sensor.everything_presence_one_a8c934_humidity", None, None),
+        },
     },
-    "living": {  # VMC 2 — living spaces (incl. the master suite); KNX boost switch
-        "boost_switch": "switch.vmc_boost",
+    "living": {  # VMC 2 — kitchen, master suite + bath, office, studio V
+        "name": "VMC Cucina e Casa",
+        "boost_switch": "switch.vmc_boost",   # KNX: the owner's bathroom boost too
+        "fan": "fan.vmc_cucina_e_casa",
+        "outdoor_air": "sensor.vmc_cucina_e_casa_outdoor_air_temperature",
+        "supply_air": "sensor.vmc_cucina_e_casa_supply_air_temperature",
+        "extract_air": "sensor.vmc_cucina_e_casa_extract_air_temperature",
+        "filter": "sensor.vmc_cucina_e_casa_filter_days_left",
+        "alarm": "binary_sensor.vmc_cucina_e_casa_alarm",
+        "warning": "binary_sensor.vmc_cucina_e_casa_warning",
         "zones": (
             "kitchen", "office", "studio_v", "main_bedroom",
             "bagno_padronale_01", "bagno_padronale_02",
         ),
         "night_quiet": True,
+        "dehumidify": False,
+        "outdoor_trusted": True,
+        "humidity_rooms": {},
     },
 }
+OUTDOOR_RH = "sensor.gw3000a_humidity"  # outdoor RH (gw3000a_indoor_humidity is indoor)
 VMC_BOOST_OUTDOOR_MAX = 24.0   # °C: above this the outside air isn't cool enough
 VMC_BOOST_MARGIN = 2.0         # °C: outside must be >= this much cooler than inside
 VMC_BOOST_HYSTERESIS = 0.5     # °C: widen the keep-on band to stop flapping
@@ -809,6 +845,29 @@ VMC_BOOST_OUTDOOR_HYSTERESIS = 0.5  # °C: keep boosting until outdoor >= cap + 
 VMC_BOOST_MAX_ON = timedelta(hours=4)
 VMC_BOOST_COOLDOWN = timedelta(hours=1)
 VMC_BOOST_MIN_ON = timedelta(minutes=15)
+# v0.86.0 speed lever + humidity (STORY_VMC.md). Absolute-humidity margins in
+# g/m³: start drying only when the outside air is clearly drier than the room.
+VMC_DEHUM_AH_MARGIN = 1.0
+VMC_DEHUM_AH_HYSTERESIS = 0.5
+VMC_DEHUM_RELEASE_DELTA = 5.0      # %RH below the ceiling before handing back
+VMC_DEHUM_RH_VERY_HIGH = 75.0      # %RH: full speed (capped to mid by a dry cellar)
+VMC_QUIET_FLUSH_PCT = 66           # bedroom unit, occupied Notte: flush at mid
+VMC_SPEED_MIN_HOLD = timedelta(minutes=20)  # anti-flap on our own speed raises
+VMC_HOLD_MAX_AGE = timedelta(minutes=10)    # Smarty blips: keep the last reading
+VMC_MANUAL_CONFIRM_CYCLES = 2      # live speed != ours this many reads -> concede
+# Winter: a boost blows heated air outside. One WE did not command is cut after
+# this long (the bathroom button runs 15 min, the script 30) unless the ground
+# unit is drying. 0 disables.
+VMC_WINTER_BOOST_MAX = timedelta(minutes=60)
+VMC_RECOVERY_MIN_SPREAD = 4.0      # °C extract-outdoor before efficiency means anything
+# Alerts (switch.vmc_alerts, default ON): same recipients as the window alert.
+VMC_ALERT_TAG = "villa_hvac_vmc"
+VMC_ALERT_ALARM_FOR = timedelta(minutes=10)
+VMC_ALERT_OFFLINE_FOR = timedelta(minutes=30)
+VMC_ALERT_FAN_OFF_FOR = timedelta(minutes=60)
+VMC_ALERT_DAMP_RH = 75.0           # %RH a ground room can't be dried from (damp outside)
+VMC_ALERT_DAMP_FOR = timedelta(hours=2)
+VMC_ALERT_DAMP_RESET_RH = 70.0
 
 # --- #6 Solar shading --------------------------------------------------------
 # Summer: close a sun-facing shutter when the sun is on its facade and it's

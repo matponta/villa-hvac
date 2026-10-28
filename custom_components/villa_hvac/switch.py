@@ -60,6 +60,7 @@ async def async_setup_entry(
         SplitAcSwitch(entry),
         FreeAirSwitch(entry),
         VmcAutoSwitch(entry),
+        VmcAlertsSwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
@@ -481,8 +482,9 @@ class VmcAutoSwitch(SwitchEntity, RestoreEntity):
 
     When on (and the master is on), the VMC controller boosts each ventilation
     machine to flush its rooms with cool outdoor air when summer + outside is
-    meaningfully cooler than inside (a free night-flush). Edge-triggered, respects
-    a manual boost. The actuator is the separate KNX switch.vmc_boost.
+    meaningfully cooler than inside (a free night-flush), and (v0.86.0) raises
+    the unit speed to dry the ground-floor rooms / for a quiet night flush, and
+    cuts a forgotten winter boost. Edge-triggered, respects manual changes.
     """
 
     _attr_has_entity_name = True
@@ -513,6 +515,38 @@ class VmcAutoSwitch(SwitchEntity, RestoreEntity):
         vmc = getattr(self._entry.runtime_data, "vmc", None)
         if vmc is not None:
             await vmc.async_release()  # stop managing -> hand the boost back
+
+
+class VmcAlertsSwitch(SwitchEntity, RestoreEntity):
+    """VMC alerts (v0.86.0, default ON).
+
+    Pages the window-alert recipients once per episode: filter due, unit alarm,
+    unit offline 30 min, unit switched off 1 h, a ground-floor room above 75 %
+    RH for 2 h with the outside air too wet to dry it. Independent of the master.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "VMC alerts"
+    _attr_icon = "mdi:air-filter"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_vmc_alerts"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class ReturnPrecondSwitch(SwitchEntity, RestoreEntity):

@@ -28,6 +28,7 @@ from .const import (
     PDC_LOAD_POWER,
     SOLAR_RADIATION,
     UNIT_FANS,
+    VMC_GROUPS,
     ZONES,
 )
 from .controller import (
@@ -123,7 +124,113 @@ async def async_setup_entry(
         WinterRoomSensor(coordinator, entry, zone_id, ZONES[zone_id])
         for zone_id in HEAT_VALVES if zone_id not in ZONE_TWINS
     ]
+    # v0.86.0 STORY_VMC: per ventilation unit — status/why, heat-recovery
+    # efficiency, and the unit's own air temperatures as MEASUREMENT (the Smarty
+    # entities have no state_class, so HA kept no long-term statistics).
+    for group in VMC_GROUPS:
+        entities.append(VmcStatusSensor(coordinator, entry, group))
+        entities.append(VmcRecoverySensor(coordinator, entry, group))
+        entities += [
+            VmcAirTempSensor(coordinator, entry, group, kind, label)
+            for kind, label in (
+                ("outdoor_air", "aria esterna"),
+                ("supply_air", "aria mandata"),
+                ("extract_air", "aria ripresa"),
+            )
+        ]
     async_add_entities(entities)
+
+
+def _vmc_view(coordinator, group: str) -> dict:
+    vmc = getattr(coordinator, "vmc", None)
+    return (getattr(vmc, "view", None) or {}).get(group) or {}
+
+
+class _VmcSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """Base for the per-ventilation-unit sensors (v0.86.0)."""
+
+    _attr_has_entity_name = True
+    _kind = ""
+    _label = ""
+
+    def __init__(self, coordinator, entry, group: str) -> None:
+        super().__init__(coordinator)
+        self._group = group
+        self._attr_name = f"{VMC_GROUPS[group]['name']} {self._label}"
+        self._attr_unique_id = f"{entry.entry_id}_vmc_{group}_{self._kind}"
+
+    @property
+    def _v(self) -> dict:
+        return _vmc_view(self.coordinator, self._group)
+
+
+class VmcStatusSensor(_VmcSensor):
+    """Why the unit runs as it does: base / deumidifica / lavaggio_silenzioso /
+    umido_fuori / ... plus the full humidity + recovery picture."""
+
+    _attr_icon = "mdi:hvac"
+    _kind = "status"
+    _label = "stato"
+    # the readings already have their own MEASUREMENT sensors: don't write a
+    # recorder row every time a temperature ticks
+    _unrecorded_attributes = frozenset({
+        "outdoor_air", "supply_air", "extract_air", "recovery_efficiency",
+        "fan_pct", "room_ah", "outdoor_ah", "rooms_rh",
+    })
+
+    @property
+    def native_value(self) -> str | None:
+        return self._v.get("reason")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._v)
+        v.pop("reason", None)
+        eff = v.get("recovery_efficiency")
+        if eff is not None:
+            v["recovery_efficiency"] = round(eff, 2)
+        return v
+
+
+class VmcRecoverySensor(_VmcSensor):
+    """Heat-recovery temperature efficiency (supply-out)/(extract-out), %."""
+
+    _attr_icon = "mdi:heat-wave"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    _kind = "recovery"
+    _label = "recupero calore"
+
+    @property
+    def native_value(self) -> int | None:
+        eff = self._v.get("recovery_efficiency")
+        return round(eff * 100.0) if eff is not None else None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {
+            "bypass": self._v.get("bypass"),
+            "outdoor_probe_trusted": self._v.get("outdoor_probe_trusted"),
+        }
+
+
+class VmcAirTempSensor(_VmcSensor):
+    """The unit's own air temperature, held across Smarty blips (MEASUREMENT)."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry, group: str, kind: str, label: str) -> None:
+        self._kind = kind
+        self._label = label
+        super().__init__(coordinator, entry, group)
+
+    @property
+    def native_value(self) -> float | None:
+        return self._v.get(self._kind)
 
 
 def _winter_view(coordinator) -> dict:
