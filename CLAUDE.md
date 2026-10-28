@@ -186,6 +186,17 @@ do local bang-bang regulation.
   air temps (MEASUREMENT). `switch.vmc_alerts` (default ON, master-independent):
   filter/alarm/offline/OFF/damp-room pages. GOTCHA: VMC 1's "outdoor" probe is
   NOT outdoor air (17 °C at 03:00 vs 5 °C) — always decide on gw3000a.
+- **Wine cellar (v0.87.0, `STORY_CELLAR.md`)** — `SplitGroupController._cellar`
+  owns the cantina head + the circulation fan (`power:` lever, plain on/off,
+  `CELLAR_FAN`). VERIFIED live 2026-10-27: with the fan OFF the EP sits in a warm
+  stagnant pocket (23.5 °C/42 %) vs the real 19.5 °C/50 % with it ON — so only a
+  reading after `CELLAR_MIX_MIN` (8 min) of fan counts (pure `supervisor/cellar.py`,
+  held 90 min; VMC 1 uses it too). Fan 20 min/h + always while drying. Season
+  windows: setpoint 18 both (unit floor; winter only trims), dry >70 % until 67,
+  relax +1.5/+1.0 below 55 % (never above t_high). Nothing heats. Sensors
+  `sensor.cantina_vini_*`, `switch.cellar_alerts` (default ON). Deploy gate: retire
+  the legacy `circolazione_aria_cantina_vini` / `master_circolazione_aria_cantina`
+  / `solo_ventilatore_cantina` automations.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool), bounded by a first-class

@@ -138,7 +138,85 @@ async def async_setup_entry(
                 ("extract_air", "aria ripresa"),
             )
         ]
+    # v0.87.0 STORY_CELLAR: the wine cellar on the fan-MIXED reading.
+    entities.append(CellarStatusSensor(coordinator, entry))
+    entities.append(CellarTempSensor(coordinator, entry))
+    entities.append(CellarHumiditySensor(coordinator, entry))
     async_add_entities(entities)
+
+
+def _cellar_view(coordinator) -> dict:
+    split = getattr(coordinator, "split", None)
+    return getattr(split, "cellar_view", None) or {}
+
+
+class _CellarSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """Base for the wine-cellar sensors (v0.87.0)."""
+
+    _attr_has_entity_name = True
+    _kind = ""
+    _label = ""
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_name = f"Cantina vini {self._label}"
+        self._attr_unique_id = f"{entry.entry_id}_cellar_{self._kind}"
+
+    @property
+    def _v(self) -> dict:
+        return _cellar_view(self.coordinator)
+
+
+class CellarStatusSensor(_CellarSensor):
+    """ok / calda / fredda / umida / secca / sconosciuta + the season window,
+    what the split is told and why."""
+
+    _attr_icon = "mdi:glass-wine"
+    _kind = "status"
+    _label = "stato"
+    _unrecorded_attributes = frozenset({
+        "temp", "humidity", "raw_temp", "raw_humidity", "sample_at",
+    })
+
+    @property
+    def native_value(self) -> str | None:
+        return self._v.get("status")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._v)
+        v.pop("status", None)
+        return v
+
+
+class CellarTempSensor(_CellarSensor):
+    """Cellar temperature on mixed air (fan running) — MEASUREMENT."""
+
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _kind = "temp"
+    _label = "temperatura"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._v.get("temp")
+
+
+class CellarHumiditySensor(_CellarSensor):
+    """Cellar relative humidity on mixed air — MEASUREMENT."""
+
+    _attr_device_class = SensorDeviceClass.HUMIDITY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    _kind = "humidity"
+    _label = "umidità"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._v.get("humidity")
 
 
 def _vmc_view(coordinator, group: str) -> dict:

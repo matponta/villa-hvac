@@ -63,6 +63,7 @@ from .const import (
     DEFAULT_SPLIT_PALESTRA_SETPOINT,
     DEFAULT_SPLIT_RH_CEILING,
     DEFAULT_SPLIT_RH_FLOOR,
+    DEFAULT_CELLAR_WINTER_SETPOINT,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
     OPT_DUTY_COMFORT_MAX,
@@ -108,6 +109,7 @@ from .const import (
     OPT_SPLIT_PALESTRA_SETPOINT,
     OPT_SPLIT_RH_CEILING,
     OPT_SPLIT_RH_FLOOR,
+    OPT_CELLAR_WINTER_SETPOINT,
     OPT_WEATHER_ENTITY,
     WEATHER_ENTITY_DEFAULT,
 )
@@ -188,6 +190,7 @@ class SupervisorConfig:
     split_min_off: timedelta
     split_rh_ceiling: float
     split_rh_floor: float
+    cellar_winter_setpoint: float     # v0.87.0 (summer = split_cantina_setpoint)
     # weather
     weather_entity: str
 
@@ -325,6 +328,9 @@ class SupervisorConfig:
             ),
             split_rh_floor=_f(
                 options, OPT_SPLIT_RH_FLOOR, DEFAULT_SPLIT_RH_FLOOR, 30, 80
+            ),
+            cellar_winter_setpoint=_f(
+                options, OPT_CELLAR_WINTER_SETPOINT, DEFAULT_CELLAR_WINTER_SETPOINT, 18, 22
             ),
             weather_entity=str(options.get(OPT_WEATHER_ENTITY) or WEATHER_ENTITY_DEFAULT),
         )

@@ -26,6 +26,7 @@ from .rack import P1GuardController, RackGuardController
 from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
 from .sungain import WinterSunController
+from .cellar import CellarAlerts
 from .vmc import VmcController
 from .winter import PvHeatController, WinterFancoilController
 from .window import WindowController
@@ -82,6 +83,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     coordinator.p1_guard = p1_guard
     governor = SteadyGovernorController(hass, entry)
     coordinator.governor = governor
+    split = SplitGroupController()
+    coordinator.split = split  # v0.87.0: cellar view + mixed sample (sensor, VMC, alerts)
     engine = SupervisorEngine(
         hass, entry, coordinator,
         policies=POLICIES,
@@ -98,7 +101,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
         # setpoint for the rooms it is resting.
         controllers=(
             rack, p1_guard, governor, CoolingController(), night,
-            DemandShedController(), SplitGroupController(),
+            DemandShedController(), split,
             # v0.79.0: winter = radiant only -> every fancoil fan held OFF
             # (own fan_power: lever, disjoint from every other owner).
             WinterFancoilController(),
@@ -130,6 +133,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     coordinator.vmc = vmc
     await vmc.async_start()
     entry.async_on_unload(vmc.async_stop)
+    # v0.87.0: wine-cellar alerts (read-only, own switch).
+    cellar_alerts = CellarAlerts(hass, entry)
+    cellar_alerts.start()
+    entry.async_on_unload(cellar_alerts.stop)
 
     # v0.78.0 winter solar gain: edge-triggered cover opener off the same tick
     # (default ON switch.winter_sun + master; winter + Via/Vacanza only).

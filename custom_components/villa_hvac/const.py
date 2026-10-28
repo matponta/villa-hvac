@@ -1153,7 +1153,7 @@ OPT_SPLIT_ENABLED = "split_ac_enabled"            # mirrored by switch.split_ac
 OPT_SPLIT_CANTINA_SETPOINT = "split_cantina_setpoint"
 OPT_SPLIT_PALESTRA_SETPOINT = "split_palestra_setpoint"
 DEFAULT_SPLIT_ENABLED = False                     # strict deploy-dark
-DEFAULT_SPLIT_CANTINA_SETPOINT = 19.0             # °C, owner-set wine storage target
+DEFAULT_SPLIT_CANTINA_SETPOINT = 18.0             # °C, SUMMER wine target = the unit floor (v0.87.0; was 19)
 DEFAULT_SPLIT_PALESTRA_SETPOINT = 24.0            # °C, gym comfort target (its own, not the house slider)
 # Group compressor protection (industry-standard defaults, minutes): we are the
 # only gate on this heat pump. Setpoint hysteresis is preferred over on/off, so
@@ -1170,8 +1170,30 @@ DEFAULT_SPLIT_MODE_LOCKOUT = 10
 # moisture. RH ceiling/floor in %.
 OPT_SPLIT_RH_CEILING = "split_rh_ceiling"
 OPT_SPLIT_RH_FLOOR = "split_rh_floor"
-DEFAULT_SPLIT_RH_CEILING = 65.0
+DEFAULT_SPLIT_RH_CEILING = 70.0   # v0.87.0 (was 65): wine 60-70 %, dry above
 DEFAULT_SPLIT_RH_FLOOR = 55.0
+
+# --- Wine cellar (v0.87.0, STORY_CELLAR.md) -----------------------------------
+# The circulation fan mixes the cellar air: without it the EP sensor sits in a
+# warm stagnant pocket (23.5 °C / 42 % vs the real 19.5 °C / 50 %, measured
+# 2026-10-27). Only readings taken with the fan running CELLAR_MIX_MIN count.
+CELLAR_ZONE = "cantina_vini"
+CELLAR_FAN = "fan.wine_cellar_shelly_plug_cantina"   # switch_as_x on a Shelly plug
+OPT_CELLAR_WINTER_SETPOINT = "cellar_winter_setpoint"
+DEFAULT_CELLAR_WINTER_SETPOINT = 18.0    # °C: trim only; the cellar cools itself
+CELLAR_FAN_RUN_MINUTES = 20              # circulate the first 20 min of each hour
+CELLAR_MIX_MIN = timedelta(minutes=8)    # fan on this long -> the reading is mixed air
+CELLAR_SAMPLE_MAX_AGE = timedelta(minutes=90)
+CELLAR_RH_HYSTERESIS = 3.0               # % around the RH floor/ceiling
+# Alerts (switch.cellar_alerts, default ON): once per episode.
+CELLAR_ALERT_TAG = "villa_hvac_cantina"
+CELLAR_ALERT_WARM_FOR = timedelta(hours=3)
+CELLAR_ALERT_COLD_FOR = timedelta(hours=6)
+CELLAR_ALERT_DAMP_RH = 75.0
+CELLAR_ALERT_DAMP_FOR = timedelta(hours=6)
+CELLAR_ALERT_DRY_RH = 50.0
+CELLAR_ALERT_DRY_FOR = timedelta(hours=24)
+CELLAR_ALERT_BLIND_FOR = timedelta(hours=3)  # no mixed reading (fan/sensor dead)
 
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)

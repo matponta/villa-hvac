@@ -48,6 +48,8 @@ from homeassistant.util import dt as dt_util
 
 from .away import aggregate_presence
 from .const import (
+    CELLAR_SAMPLE_MAX_AGE,
+    CELLAR_ZONE,
     DEFAULT_SPLIT_RH_CEILING,
     DEFAULT_SPLIT_RH_FLOOR,
     HOUSE_MODE_NIGHT,
@@ -95,6 +97,7 @@ from .controller import (
     vmc_boost_enabled,
 )
 from .supervisor import VmcBoostState, vmc_boost_decision, vmc_boost_step
+from .supervisor.cellar import sample_fresh
 from .supervisor.ventilation import (
     REASON_BASE,
     REASON_QUIET_FLUSH,
@@ -279,9 +282,17 @@ class VmcController:
                 ceiling = self._opt_float(OPT_SPLIT_RH_CEILING, DEFAULT_SPLIT_RH_CEILING)
                 floor = self._opt_float(OPT_SPLIT_RH_FLOOR, DEFAULT_SPLIT_RH_FLOOR)
             t = temps.get(zone) or {}
+            temp, rh = t.get("value"), self._held_num(sensor, now)
+            if zone == CELLAR_ZONE:
+                # v0.87.0: only the fan-mixed reading is the cellar; the raw EP
+                # value is a warm stagnant pocket whenever the fan is off.
+                split = getattr(self.entry.runtime_data, "split", None)
+                sample = sample_fresh(
+                    getattr(split, "cellar_sample", None), now, CELLAR_SAMPLE_MAX_AGE,
+                )
+                temp, rh = (sample.temp, sample.rh) if sample else (None, None)
             rooms.append(RoomAir(
-                zone=zone, temp=t.get("value"),
-                rh=self._held_num(sensor, now),
+                zone=zone, temp=temp, rh=rh,
                 rh_ceiling=ceiling, rh_floor=floor,
             ))
         return rooms

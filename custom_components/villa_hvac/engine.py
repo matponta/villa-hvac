@@ -62,6 +62,8 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CELLAR_FAN,
+    CELLAR_ZONE,
     CONDOMINIO_BATTERY_CAPACITY,
     CONDOMINIO_BATTERY_POWER,
     DEFAULT_RETURN_DAYPART_HOURS,
@@ -698,6 +700,7 @@ def build_house_state(
         eng.last_s_eff_active = last_s_eff_active
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
+    cellar_fan = hass.states.get(CELLAR_FAN)
     # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
     # Computed here (not from a NightController.active flag) so it's consistent
     # with what NightSilenceController computes THIS cycle (no transition lag) and
@@ -838,6 +841,14 @@ def build_house_state(
         split_min_off=cfg.split_min_off,
         split_rh_ceiling=cfg.split_rh_ceiling,
         split_rh_floor=cfg.split_rh_floor,
+        cellar_winter_setpoint=cfg.cellar_winter_setpoint,
+        cellar_fan_on=(
+            cellar_fan.state == STATE_ON
+            if cellar_fan is not None and cellar_fan.state in (STATE_ON, STATE_OFF)
+            else None
+        ),
+        cellar_fan_since=cellar_fan.last_changed if cellar_fan is not None else None,
+        cellar_temp=_num(hass, ZONES[CELLAR_ZONE].get("ep_temp")),
     )
 
 
@@ -1242,6 +1253,11 @@ class SupervisorEngine:
                 if not self._stopped and epoch == self._epoch:
                     await self._stranded_fan_watchdog(state)
             else:
+                # v0.87.0: read-only observers (the wine cellar's mixed-air
+                # reading) stay live while deploy-dark.
+                for c in self.controllers:
+                    if (observe := getattr(c, "observe_dark", None)) is not None:
+                        observe(state)
                 # No actuating pass -> no episode continuity either (master-off /
                 # deploy-dark gaps would otherwise freeze a stale count).
                 self._fan_off.clear()
@@ -2119,7 +2135,7 @@ class SupervisorEngine:
             if s.state == STATE_ON:
                 return s.attributes.get(ATTR_PERCENTAGE)
             return None
-        if kind == "fan_power":
+        if kind in ("fan_power", "power"):
             # v0.79.0: the fan's ON/OFF switch object alone (on / off).
             return s.state if s.state in (STATE_ON, STATE_OFF) else None
         if kind == "cover":
@@ -2165,6 +2181,13 @@ class SupervisorEngine:
             await self._call(
                 CLIMATE_DOMAIN, SERVICE_SET_FAN_MODE,
                 {ATTR_ENTITY_ID: entity, ATTR_FAN_MODE: value},
+            )
+        elif kind == "power":
+            # v0.87.0 plain on/off device (cellar plug fan): no percentage.
+            await self._call(
+                entity.partition(".")[0],
+                SERVICE_TURN_ON if str(value) == STATE_ON else SERVICE_TURN_OFF,
+                {ATTR_ENTITY_ID: entity},
             )
         elif kind == "fan_power":
             # v0.79.0 winter fancoils-off. OFF: the winter owner now HOLDS this

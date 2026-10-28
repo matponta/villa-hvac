@@ -61,6 +61,7 @@ async def async_setup_entry(
         FreeAirSwitch(entry),
         VmcAutoSwitch(entry),
         VmcAlertsSwitch(entry),
+        CellarAlertsSwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
@@ -533,6 +534,39 @@ class VmcAlertsSwitch(SwitchEntity, RestoreEntity):
     def __init__(self, entry: VillaHvacConfigEntry) -> None:
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_vmc_alerts"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+
+
+class CellarAlertsSwitch(SwitchEntity, RestoreEntity):
+    """Wine-cellar alerts (v0.87.0, default ON).
+
+    Pages the window-alert recipients once per episode when the fan-mixed
+    cellar reading leaves the season window: too warm 3 h, too cold 6 h, RH
+    above 75 % for 6 h or below 50 % for a day, no reading for 3 h while we
+    drive the fan. Independent of the master.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Cellar alerts"
+    _attr_icon = "mdi:glass-wine"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_cellar_alerts"
         self._attr_is_on = True
 
     async def async_added_to_hass(self) -> None:

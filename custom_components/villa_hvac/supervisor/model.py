@@ -212,6 +212,12 @@ class HouseState:
     split_min_off: timedelta = timedelta(minutes=3)
     split_rh_ceiling: float = 65.0    # run `dry` above this; wine humidity ceiling
     split_rh_floor: float = 55.0      # relax the cantina setpoint below this (avoid over-drying)
+    # v0.87.0 wine cellar: the circulation fan's live state (a reading only
+    # counts once it has mixed the air) + the EP's raw temperature.
+    cellar_winter_setpoint: float = 18.0
+    cellar_fan_on: bool | None = None
+    cellar_fan_since: datetime | None = None
+    cellar_temp: float | None = None
 
 
 

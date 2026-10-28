@@ -230,7 +230,8 @@ def test_split_dwell_debounces_transitions():
 # --- P1: SplitGroupController ------------------------------------------------
 
 def _split_house(*, enabled=True, summer=True, mode=HOUSE_MODE_HOME, palestra_occupied=True,
-                 cantina_temp=None, cantina_rh=60.0, palestra_sp=24.0, house_sp=24.0):
+                 cantina_temp=None, cantina_rh=60.0, palestra_sp=24.0, house_sp=24.0,
+                 fan_on=True):
     now = dt.datetime(2026, 7, 9, 12, 0)
     zones = {
         "cantina_vini": ZoneSnapshot(
@@ -254,6 +255,9 @@ def _split_house(*, enabled=True, summer=True, mode=HOUSE_MODE_HOME, palestra_oc
         house_mode=mode, house_setpoint=house_sp, split_cantina_setpoint=19.0,
         split_palestra_setpoint=palestra_sp,
         split_min_on=dt.timedelta(minutes=5), split_min_off=dt.timedelta(minutes=3),
+        # v0.87.0: the cellar reading counts only on fan-mixed air
+        cellar_fan_on=fan_on, cellar_fan_since=now - dt.timedelta(minutes=10),
+        cellar_temp=cantina_temp,
     )
 
 
@@ -336,7 +340,7 @@ async def test_split_fail_safe_hands_back_managed_only(hass):
     assert by_entity[CANTINA] == "cool"        # wine = self-regulating dead-man
     assert by_entity[PALESTRA_SPLIT] == "off"  # comfort head off
     # cantina left at its storage setpoint.
-    assert any(c.data["entity_id"] == CANTINA and c.data["temperature"] == 19.0
+    assert any(c.data["entity_id"] == CANTINA and c.data["temperature"] == 18.0
                for c in temp_calls)
     # lever state cleared so a queued cycle can't re-assert.
     assert hvac_mode_lever(CANTINA) not in engine._lever_states

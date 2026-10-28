@@ -223,6 +223,13 @@ def fan_power_lever(fan_entity: str) -> str:
     return f"fan_power:{fan_entity}"
 
 
+def power_lever(entity: str) -> str:
+    """v0.87.0: a plain on/off device ("on"/"off") — e.g. the cellar's plug fan,
+    which takes no percentage (unlike `fan_power:`, which turns a KNX fancoil on
+    at a set speed)."""
+    return f"power:{entity}"
+
+
 def cover_lever(cover_entity: str) -> str:
     return f"cover:{cover_entity}"
 

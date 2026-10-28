@@ -44,6 +44,13 @@ import logging
 import math
 
 from .const import (
+    CELLAR_FAN,
+    CELLAR_FAN_RUN_MINUTES,
+    CELLAR_MIX_MIN,
+    CELLAR_RH_HYSTERESIS,
+    CELLAR_SAMPLE_MAX_AGE,
+    CELLAR_ZONE,
+    DEFAULT_SPLIT_CANTINA_SETPOINT,
     DEAD_FANCOILS,
     COOL_CAPACITY,
     COOL_GAIN_BASE,
@@ -102,6 +109,15 @@ from .const import (
     WINTER_SETPOINT_MIN,
     ZONES,
 )
+from .supervisor.cellar import (
+    CellarSample,
+    cellar_fan_wanted,
+    cellar_head,
+    cellar_sample,
+    cellar_status,
+    cellar_window,
+    sample_fresh,
+)
 from .supervisor.thermal import (
     ModelValidity,
     Plausibility,
@@ -139,6 +155,7 @@ from .supervisor import (
     fan_mode_lever,
     hvac_mode_lever,
     k_confidence,
+    power_lever,
     planner_eligible,
     peak_latch,
     preset_lever,
@@ -150,6 +167,7 @@ from .supervisor import (
     switch_lever,
     temperature_lever,
     SPLIT_FAN_DEFAULT,
+    SPLIT_ROLE_STORAGE,
     split_dwell,
     split_head_target,
     split_members,
@@ -1364,19 +1382,88 @@ class SplitGroupController:
     def __init__(self) -> None:
         # per-head committed (on, since) for the dwell guard.
         self._dwell: dict[str, tuple[bool, object]] = {}
+        # v0.87.0 wine cellar: last mixed-air reading + the head's hysteresis.
+        self._sample: CellarSample | None = None
+        self._drying = False
+        self._relaxed = False
+        self.cellar_view: dict | None = None
+
+    @property
+    def cellar_sample(self) -> CellarSample | None:
+        """The last mixed-air cellar reading (None if none yet). VMC 1 reads it:
+        the raw EP value is a stagnant pocket whenever the fan is off."""
+        return self._sample
+
+    def observe_dark(self, state: HouseState) -> None:
+        """Deploy-dark tick (master off): keep the cellar reading + view live."""
+        self._cellar(state, state.zones.get(CELLAR_ZONE), actuate=False)
+
+    def _cellar(
+        self, state: HouseState, z: ZoneSnapshot | None, *, actuate: bool = True,
+    ) -> Desired:
+        """Wine head + circulation fan (v0.87.0). Sampling and the view run even
+        while the opt-in is off (read-only); levers only when it is on."""
+        summer = state.season == SEASON_SUMMER
+        window = cellar_window(
+            summer,
+            summer_setpoint=state.split_cantina_setpoint or DEFAULT_SPLIT_CANTINA_SETPOINT,
+            winter_setpoint=state.cellar_winter_setpoint,
+            rh_floor=state.split_rh_floor, rh_ceiling=state.split_rh_ceiling,
+        )
+        self._sample = cellar_sample(
+            self._sample, fan_on=state.cellar_fan_on, fan_since=state.cellar_fan_since,
+            now=state.now, temp=state.cellar_temp,
+            rh=z.humidity if z is not None else None, mix_min=CELLAR_MIX_MIN,
+        )
+        fresh = sample_fresh(self._sample, state.now, CELLAR_SAMPLE_MAX_AGE)
+        decision = cellar_head(
+            window, fresh, drying=self._drying, relaxed=self._relaxed,
+            hysteresis=CELLAR_RH_HYSTERESIS,
+        )
+        fan_on = cellar_fan_wanted(
+            state.now, run_minutes=CELLAR_FAN_RUN_MINUTES, drying=decision.drying,
+        )
+        self.cellar_view = {
+            "season": "estate" if summer else "inverno",
+            "status": cellar_status(window, fresh),
+            "temp": fresh.temp if fresh else None,
+            "humidity": fresh.rh if fresh else None,
+            "sample_at": self._sample.at.isoformat() if self._sample else None,
+            "window": {
+                "setpoint": window.setpoint, "t_low": window.t_low,
+                "t_high": window.t_high, "rh_floor": window.rh_floor,
+                "rh_ceiling": window.rh_ceiling,
+            },
+            "mode": decision.mode, "setpoint": decision.setpoint,
+            "reason": decision.reason, "fan_wanted": fan_on,
+            "fan_on": state.cellar_fan_on,
+            "raw_temp": state.cellar_temp,
+            "raw_humidity": z.humidity if z is not None else None,
+            "enabled": state.split_enabled and actuate,
+        }
+        if not (actuate and state.split_enabled) or z is None or z.split_climate is None:
+            self._drying = self._relaxed = False
+            return {}
+        self._drying, self._relaxed = decision.drying, decision.relaxed
+        out: Desired = {hvac_mode_lever(z.split_climate): decision.mode}
+        if decision.setpoint is not None:
+            out[temperature_lever(z.split_climate)] = float(decision.setpoint)
+        out[fan_mode_lever(z.split_climate)] = SPLIT_FAN_DEFAULT
+        out[power_lever(CELLAR_FAN)] = "on" if fan_on else "off"
+        return out
 
     def __call__(self, state: HouseState) -> Desired:
+        out: Desired = self._cellar(state, state.zones.get(CELLAR_ZONE))
         if not state.split_enabled:
             self._dwell.clear()
             return {}
         summer = state.season == SEASON_SUMMER
         home = state.house_mode not in (HOUSE_MODE_AWAY, HOUSE_MODE_VACATION)
-        cantina_sp = state.split_cantina_setpoint or 19.0
+        cantina_sp = state.split_cantina_setpoint or DEFAULT_SPLIT_CANTINA_SETPOINT
         comfort_sp = state.split_palestra_setpoint or state.house_setpoint or cantina_sp
-        out: Desired = {}
         for z in split_members(state):
-            if z.split_climate is None:
-                continue
+            if z.split_climate is None or z.split_role == SPLIT_ROLE_STORAGE:
+                continue               # the wine head is _cellar's (always on, cool-side)
             tgt = split_head_target(
                 z.split_role, summer=summer, home=home,
                 occupied=bool(z.occupied),
