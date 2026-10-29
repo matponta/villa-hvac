@@ -200,6 +200,14 @@ do local bang-bang regulation.
   `sensor.cantina_vini_*`, `switch.cellar_alerts` (default ON). Deploy gate: retire
   the legacy `circolazione_aria_cantina_vini` / `master_circolazione_aria_cantina`
   / `solo_ventilatore_cantina` automations.
+- **Palestra damp (v0.90.0, `STORY_GYM_DAMP.md`)** — `GymDampController` (before
+  `SplitGroupController`) drives the bagno-palestra dehumidifier plug
+  (`switch.shellyplugsg3_9070694d542c`, Shelly-native ONLY — the same plug is also
+  in Matter/Apple Home) on `max(sensor.umidita_palestra, sensor.umidita_bagno_palestra)`
+  62/55 %, year-round; summer = palestra split `dry` first (read by the split
+  controller, the head's single writer), dehumidifier after 120 min / when the split
+  yields. NEVER control on EP1 3febdc RH (reads 15–25 points low). Opt-in
+  `switch.gym_damp`; plug restored to its found state on hand-back. VMC untouched.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST
   ONE feature (PV bank/coast XOR #9 pre-cool), bounded by a first-class

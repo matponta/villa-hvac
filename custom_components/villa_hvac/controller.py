@@ -27,6 +27,7 @@ from .const import (
     OPT_CELLAR_WINTER_SETPOINT,
     OPT_SPLIT_CANTINA_SETPOINT,
     CELLAR_NUMBERS,
+    GYM_NUMBERS,
     COMFORT_FLOOR_MAX,
     COMFORT_FLOOR_MIN,
     COMFORT_FLOOR_OFFSET,
@@ -215,6 +216,21 @@ def cellar_settings(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, float]
                 value = float(entry.options[options[suffix]])
             except (KeyError, TypeError, ValueError):
                 value = None
+        out[suffix] = min(max(value if value is not None else default, lo), hi)
+    return out
+
+
+def gym_damp_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.90.0: palestra damp control opt-in (default OFF, on top of the master)."""
+    return _switch_state(hass, entry, "gym_damp") == STATE_ON
+
+
+def gym_settings(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, float]:
+    """v0.90.0: the palestra damp knobs — number entity, else the default.
+    Keys = `GYM_NUMBERS` suffixes; values clamped to each knob's range."""
+    out: dict[str, float] = {}
+    for suffix, (_name, lo, hi, _step, default, _unit, _icon) in GYM_NUMBERS.items():
+        value = _number_value(hass, entry, suffix)
         out[suffix] = min(max(value if value is not None else default, lo), hi)
     return out
 

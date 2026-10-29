@@ -64,6 +64,14 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CELLAR_FAN,
     CELLAR_ZONE,
+    GYM_DEHUM_POWER,
+    GYM_DEHUM_SWITCH,
+    GYM_RH_BAGNO,
+    GYM_RH_FALLBACK,
+    GYM_RH_PALESTRA,
+    GYM_RH_STALE_MIN,
+    GYM_TEMP,
+    OUTDOOR_DEWPOINT,
     CONDOMINIO_BATTERY_CAPACITY,
     CONDOMINIO_BATTERY_POWER,
     DEFAULT_RETURN_DAYPART_HOURS,
@@ -155,6 +163,8 @@ from .controller import (
     shade_position,
     split_ac_enabled,
     cellar_settings,
+    gym_damp_enabled,
+    gym_settings,
     supervisor_enabled,
     unified_planner_enabled,
     windows_free_cool_enabled,
@@ -212,6 +222,7 @@ from .supervisor import (
     SPLIT_ROLE_STORAGE,
     fan_mode_lever,
     hvac_mode_lever,
+    power_lever,
     split_members,
     split_mode_conflict,
     temperature_lever,
@@ -703,6 +714,8 @@ def build_house_state(
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     cellar_fan = hass.states.get(CELLAR_FAN)
     cellar = cellar_settings(hass, entry)
+    gym = gym_settings(hass, entry)
+    gym_plug = hass.states.get(GYM_DEHUM_SWITCH)
     # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
     # Computed here (not from a NightController.active flag) so it's consistent
     # with what NightSilenceController computes THIS cycle (no transition lag) and
@@ -852,6 +865,24 @@ def build_house_state(
         ),
         cellar_fan_since=cellar_fan.last_changed if cellar_fan is not None else None,
         cellar_temp=_num(hass, ZONES[CELLAR_ZONE].get("ep_temp")),
+        gym_enabled=gym_damp_enabled(hass, entry),
+        gym_rh_palestra=_fresh_num(hass, GYM_RH_PALESTRA, GYM_RH_STALE_MIN.total_seconds()),
+        gym_rh_bagno=_fresh_num(hass, GYM_RH_BAGNO, GYM_RH_STALE_MIN.total_seconds()),
+        gym_rh_fallback=_fresh_num(hass, GYM_RH_FALLBACK, GYM_RH_STALE_MIN.total_seconds()),
+        gym_temp=_num(hass, GYM_TEMP),
+        gym_dewpoint_outdoor=_num(hass, OUTDOOR_DEWPOINT),
+        gym_dehum_on=(
+            gym_plug.state == STATE_ON
+            if gym_plug is not None and gym_plug.state in (STATE_ON, STATE_OFF)
+            else None
+        ),
+        gym_dehum_power=_num(hass, GYM_DEHUM_POWER),
+        gym_rh_ceiling=gym["gym_rh_ceiling"],
+        # a release at/above the ceiling would never stop: keep it 1 % below
+        gym_rh_release=min(gym["gym_rh_release"], gym["gym_rh_ceiling"] - 1.0),
+        gym_dehum_min_on=timedelta(minutes=gym["gym_dehum_min_on"]),
+        gym_dehum_min_off=timedelta(minutes=gym["gym_dehum_min_off"]),
+        gym_stage2_delay=timedelta(minutes=gym["gym_stage2_delay"]),
     )
 
 
@@ -2424,6 +2455,31 @@ class SupervisorEngine:
             ):
                 self._lever_states.pop(lev, None)
 
+    async def _gym_fail_safe(self) -> None:
+        """Hand the bathroom dehumidifier back (v0.90.0): restore the plug state
+        snapshotted at our first write. Never taken (deploy-dark) -> untouched.
+        The lever state is dropped so a queued cycle can't re-assert it."""
+        gym = getattr(self.coordinator, "gym", None)
+        if gym is None:
+            return
+        for entity, value in gym.failsafe_power().items():
+            try:
+                await self._call(
+                    entity.partition(".")[0],
+                    SERVICE_TURN_ON if value == STATE_ON else SERVICE_TURN_OFF,
+                    {ATTR_ENTITY_ID: entity},
+                )
+            except Exception:  # noqa: BLE001 - fail-safe must not raise
+                _LOGGER.exception("Fail-safe: could not hand back %s", entity)
+            self._lever_states.pop(power_lever(entity), None)
+        gym.handed_back()
+
+    async def async_release_gym(self) -> None:
+        """`switch.gym_damp` turned off: hand the dehumidifier back now,
+        serialized against cycles (the controller emits nothing afterwards)."""
+        async with self._lock:
+            await self._gym_fail_safe()
+
     async def async_release_blocco(self) -> None:
         """Boot / external safe baseline: release the block, SERIALIZED against
         cycles (so an in-flight cycle can't re-block after us). Skips only when
@@ -2613,6 +2669,8 @@ class SupervisorEngine:
             # split. Cantina stays a self-regulating dead-man (cool @ setpoint); the
             # comfort head (palestra) goes off. Garage is never ours -> never touched.
             await self._split_fail_safe()
+            # v0.90.0 gym damp: put the dehumidifier plug back as we found it.
+            await self._gym_fail_safe()
         finally:
             if locked:
                 self._lock.release()

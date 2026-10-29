@@ -1,5 +1,24 @@
 # Next session — kickstart prompts
 
+## v0.90.0 — palestra + bagno damp control (2026-10-29) — NOT DEPLOYED
+Built from `STORY_GYM_DAMP.md` (see its "As built"). Deploy-dark: nothing moves
+until `switch.gym_damp` (default OFF) is on with the master.
+DEPLOY (owner confirms each step):
+1. P0 physical checks: dehumidifier's own humidistat on continuous/lowest; does
+   it restart by itself after a 1-min power cut?; note running/idle W and set
+   `GYM_DEHUM_RUN_W` (provisional 50 W).
+2. Deploy, then check `sensor.hvac_palestra_umidita` (`disattivo`,
+   `wanted_reason` sane, `source: knx`, `rh_ctrl` = max of the KNX pair).
+3. Owner flips `switch.gym_damp` ON (P1, winter path: plug only; split stays off).
+4. Delete `automation.30_min_deumidificatore_palestra` (owner OK).
+5. Optional: remove the plug from Apple Home / Matter (otherwise its changes
+   show up as manual overrides).
+After 2 weeks: tune the 62/55 band on `sensor.palestra_umidita_di_controllo` +
+`sensor.palestra_punto_di_rugiada` statistics.
+OPEN (not this story, G1): `VMC_GROUPS["ground"]["humidity_rooms"]["palestra"]`
+uses the EP1 3febdc humidity, which reads 15–25 points low → that VMC drying
+trigger will never fire for the palestra. Switch it to the KNX pair in a VMC session.
+
 ## v0.82.0 — winter tuning from the first live day (2026-10-08)
 Live check 8/10 13:50: Condominio battery WORKS (0 % at dawn → 32 % at 14:30,
 charging ≤ 6.8 kW, grid ~0) but with 41.4 kWh starting empty SoC 90 % comes late

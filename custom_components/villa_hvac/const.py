@@ -493,6 +493,9 @@ ZONES: dict[str, dict] = {
         "temp_sensor": "sensor.clima_bagno_palestra",
         "ep_temp": None,
         "ep_occ": None,
+        # v0.90.0: KNX 8/0/3 — a WORKING hygrometer (~0.1 % steps), shown on the
+        # split view; the damp control reads it with its own freshness check.
+        "humidity_sensor": "sensor.umidita_bagno_palestra",
         "emitter": "radiant",
     },
     # --- Split-AC trio (share ONE compressor -> must run in the same mode) -----
@@ -508,6 +511,8 @@ ZONES: dict[str, dict] = {
         "ep_temp": "sensor.everything_presence_one_3febdc_temperature",
         "ep_occ": "binary_sensor.everything_presence_one_3febdc_occupancy",
         "split_role": "comfort",   # #6: summer occupancy cool, off in winter/away
+        # v0.90.0: KNX 8/0/2 (never the EP1, which reads 15-25 points low).
+        "humidity_sensor": "sensor.umidita_palestra",
         "emitter": "radiant",
     },
     "cantina_vini": {
@@ -1212,6 +1217,42 @@ CELLAR_ALERT_DAMP_FOR = timedelta(hours=6)
 CELLAR_ALERT_DRY_RH = 50.0
 CELLAR_ALERT_DRY_FOR = timedelta(hours=24)
 CELLAR_ALERT_BLIND_FOR = timedelta(hours=3)  # no mixed reading (fan/sensor dead)
+
+# --- Palestra + bagno palestra damp (v0.90.0, STORY_GYM_DAMP.md) -------------
+# One air volume (door habitually open), soil walls + a shower. The bathroom
+# dehumidifier (Shelly plug, continuous drain) dries both rooms; in summer the
+# palestra split's `dry` goes first. Control on the KNX hygrometers ONLY — the
+# EP1 3febdc self-heats and reads 15-25 points low (never an input here).
+GYM_DEHUM_SWITCH = "switch.shellyplugsg3_9070694d542c"   # Shelly-native: the ONLY lever
+GYM_DEHUM_POWER = "sensor.shellyplugsg3_9070694d542c_power"
+GYM_RH_PALESTRA = "sensor.umidita_palestra"              # KNX 8/0/2
+GYM_RH_BAGNO = "sensor.umidita_bagno_palestra"           # KNX 8/0/3
+GYM_RH_FALLBACK = "sensor.up_sense_humidity"             # UniFi UP Sense, stairs door
+GYM_TEMP = "sensor.palestra_temperature"                 # for the dew point
+OUTDOOR_DEWPOINT = "sensor.gw3000a_dewpoint"
+GYM_RH_STALE_MIN = timedelta(minutes=30)
+GYM_BLIND_HOLD = timedelta(hours=2)      # every sensor out: hold, then dehumidifier OFF
+GYM_DEHUM_RUN_W = 50.0                   # W: above = compressor running (measure in P0)
+# Knobs (number entities). Unique-id suffix -> (name, min, max, step, default,
+# unit, icon). The 62/55 band is a starting guess: tune after 2 weeks of data.
+GYM_NUMBERS = {
+    "gym_rh_ceiling": ("Palestra umidità massima", 50.0, 80.0, 1.0, 62.0,
+                       "%", "mdi:water-percent-alert"),
+    "gym_rh_release": ("Palestra umidità di rilascio", 40.0, 75.0, 1.0, 55.0,
+                       "%", "mdi:water-percent"),
+    "gym_dehum_min_on": ("Deumidificatore palestra minimo acceso", 5.0, 120.0, 5.0,
+                         30.0, "min", "mdi:timer-outline"),
+    "gym_dehum_min_off": ("Deumidificatore palestra minimo spento", 5.0, 120.0, 5.0,
+                          15.0, "min", "mdi:timer-off-outline"),
+    "gym_stage2_delay": ("Palestra attesa deumidificatore in estate", 15.0, 480.0, 15.0,
+                         120.0, "min", "mdi:timer-sand"),
+}
+# Alerts (switch.gym_damp_alerts, default ON): once per episode.
+GYM_ALERT_TAG = "villa_hvac_palestra_umidita"
+GYM_ALERT_DAMP_RH = 75.0
+GYM_ALERT_DAMP_FOR = timedelta(hours=6)
+GYM_ALERT_IDLE_FOR = timedelta(minutes=30)   # commanded ON, drawing < GYM_DEHUM_RUN_W
+GYM_ALERT_BLIND_FOR = GYM_BLIND_HOLD
 
 # --- Window pause (#4) -------------------------------------------------------
 # An open window/vasistas in a zone pauses that zone's cooling (building_protection)

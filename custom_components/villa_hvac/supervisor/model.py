@@ -219,6 +219,22 @@ class HouseState:
     cellar_fan_on: bool | None = None
     cellar_fan_since: datetime | None = None
     cellar_temp: float | None = None
+    # v0.90.0 palestra + bagno damp (STORY_GYM_DAMP): opt-in + the KNX pair and the
+    # UP Sense fallback, already freshness-filtered (None = stale/unavailable),
+    # the dehumidifier plug's live state/power, and the knobs.
+    gym_enabled: bool = False
+    gym_rh_palestra: float | None = None
+    gym_rh_bagno: float | None = None
+    gym_rh_fallback: float | None = None
+    gym_temp: float | None = None
+    gym_dewpoint_outdoor: float | None = None
+    gym_dehum_on: bool | None = None
+    gym_dehum_power: float | None = None
+    gym_rh_ceiling: float = 62.0
+    gym_rh_release: float = 55.0
+    gym_dehum_min_on: timedelta = timedelta(minutes=30)
+    gym_dehum_min_off: timedelta = timedelta(minutes=15)
+    gym_stage2_delay: timedelta = timedelta(minutes=120)
 
 
 

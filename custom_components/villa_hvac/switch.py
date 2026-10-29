@@ -62,6 +62,8 @@ async def async_setup_entry(
         VmcAutoSwitch(entry),
         VmcAlertsSwitch(entry),
         CellarAlertsSwitch(entry),
+        GymDampSwitch(entry),
+        GymDampAlertsSwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
@@ -736,6 +738,73 @@ class UnifiedPlannerSwitch(SwitchEntity, RestoreEntity):
         engine = getattr(self._entry.runtime_data, "engine", None)
         if engine is not None:
             await engine.request_run()
+
+
+class GymDampSwitch(SwitchEntity, RestoreEntity):
+    """v0.90.0 palestra + bagno damp control (default OFF, deploy-dark).
+
+    When on (and the master is on), the bathroom dehumidifier's plug follows
+    the KNX hygrometers (62/55 % by default) year-round and, in summer, the
+    palestra split dries first (needs `switch.split_ac` too). Off -> the plug
+    is handed back as it was found.
+    """
+
+    _attr_has_entity_name = True
+    _attr_name = "Gym damp"
+    _attr_icon = "mdi:water-percent"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_gym_damp"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.async_release_gym()
+
+
+class GymDampAlertsSwitch(SwitchEntity, RestoreEntity):
+    """v0.90.0 palestra damp alerts (default ON, independent of the master):
+    too damp 6 h, dehumidifier ON but idle 30 min, every hygrometer out 2 h."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Gym damp alerts"
+    _attr_icon = "mdi:water-alert"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_gym_damp_alerts"
+        self._attr_is_on = True
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class SplitAcSwitch(SwitchEntity, RestoreEntity):

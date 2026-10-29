@@ -515,6 +515,7 @@ def split_head_target(
     comfort_setpoint: float,
     rh_ceiling: float,
     rh_floor: float,
+    humidity_mode: str | None = None,
 ) -> tuple[str, float | None] | None:
     """Raw desired (hvac_mode, setpoint) for a managed split head — cool-side only.
 
@@ -532,7 +533,10 @@ def split_head_target(
         temp-only cool at the setpoint.
 
     `comfort` (palestra) cools only in summer while someone is home and the room is
-    occupied, else it is turned off. Humidity is not managed there (comfort room).
+    occupied, else it is turned off. v0.90.0 (STORY_GYM_DAMP): `humidity_mode="dry"`
+    from the gym damp law makes it dry the room in summer whoever is home — `cool`
+    if the room is occupied and warm (cooling dries too), else `dry`. Winter is
+    always `off` (dry would fight the radiant; the dehumidifier carries it).
     """
     if role == SPLIT_ROLE_STORAGE:
         if rh is not None and rh > rh_ceiling:
@@ -544,7 +548,13 @@ def split_head_target(
             setpoint = cantina_setpoint + SPLIT_DRY_SETPOINT_RELAX  # dry cellar -> run less
         return ("cool", setpoint)
     if role == SPLIT_ROLE_COMFORT:
-        if summer and home and occupied:
+        if not summer:
+            return ("off", None)
+        if humidity_mode == "dry":
+            if home and occupied and temp is not None and temp > comfort_setpoint:
+                return ("cool", comfort_setpoint)
+            return ("dry", None)
+        if home and occupied:
             return ("cool", comfort_setpoint)
         return ("off", None)
     return None

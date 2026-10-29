@@ -17,6 +17,7 @@ from homeassistant.util import dt as dt_util
 
 from . import VillaHvacConfigEntry
 from .const import (
+    GYM_DEHUM_SWITCH,
     ZONE_TWINS,
     HEAT_VALVES,
     CONDOMINIO_BATTERY_POWER,
@@ -38,7 +39,7 @@ from .controller import (
     return_precond_enabled,
 )
 from .coordinator import VillaHvacCoordinator
-from .supervisor import PlanView, cooling_load
+from .supervisor import PlanView, cooling_load, power_lever
 
 
 def _s_eff_attributes(engine, zone_id: str) -> dict:
@@ -142,7 +143,99 @@ async def async_setup_entry(
     entities.append(CellarStatusSensor(coordinator, entry))
     entities.append(CellarTempSensor(coordinator, entry))
     entities.append(CellarHumiditySensor(coordinator, entry))
+    # v0.90.0 STORY_GYM_DAMP: palestra + bagno palestra damp control.
+    entities.append(GymDampSensor(coordinator, entry))
+    entities.append(GymDampRhSensor(coordinator, entry))
+    entities.append(GymDewPointSensor(coordinator, entry))
     async_add_entities(entities)
+
+
+def _gym_view(coordinator) -> dict:
+    gym = getattr(coordinator, "gym", None)
+    return getattr(gym, "view", None) or {}
+
+
+class _GymSensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """Base for the palestra damp sensors (v0.90.0)."""
+
+    _attr_has_entity_name = True
+    _kind = ""
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_gym_damp_{self._kind}"
+
+    @property
+    def _v(self) -> dict:
+        return _gym_view(self.coordinator)
+
+
+class GymDampSensor(_GymSensor):
+    """State = why the dehumidifier / split do what they do (Italian reason):
+    asciutto / deumidifica / split_dry / split_dry+deumidificatore /
+    split_occupato / sensore_ripiego / sensori_ko / manuale / disattivo."""
+
+    # "HVAC palestra umidità" -> sensor.hvac_palestra_umidita
+    _attr_name = "HVAC palestra umidità"
+    _attr_icon = "mdi:water-percent"
+    _kind = "status"
+    _unrecorded_attributes = frozenset({
+        "rh_palestra", "rh_bagno", "rh_fallback", "rh_ctrl", "dewpoint_palestra",
+        "dewpoint_bagno", "dewpoint_outdoor", "dehum_power", "stage2_since",
+        "blind_since",
+    })
+
+    def _conceded(self) -> bool:
+        engine = getattr(self.coordinator, "engine", None)
+        decisions = getattr(engine, "lever_decisions", None) or {}
+        return (decisions.get(power_lever(GYM_DEHUM_SWITCH)) or {}).get("note") == "override"
+
+    @property
+    def native_value(self) -> str | None:
+        v = self._v
+        if v.get("enabled") and self._conceded():
+            return "manuale"
+        return v.get("reason")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._v)
+        v.pop("reason", None)
+        split = getattr(self.coordinator, "engine", None)
+        heads = (getattr(split, "split_view", None) or {}).get("heads") or {}
+        v["split_mode"] = (heads.get("palestra") or {}).get("mode")
+        return v
+
+
+class GymDampRhSensor(_GymSensor):
+    """The controlling RH (max of the KNX pair, else the UP Sense) — MEASUREMENT."""
+
+    _attr_name = "Palestra umidità di controllo"
+    _attr_device_class = SensorDeviceClass.HUMIDITY
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    _kind = "rh_ctrl"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._v.get("rh_ctrl")
+
+
+class GymDewPointSensor(_GymSensor):
+    """Palestra dew point (KNX RH + KNX temperature) — MEASUREMENT, so the
+    statistics survive the 7-day recorder: RH alone is temperature-confounded."""
+
+    _attr_name = "Palestra punto di rugiada"
+    _attr_device_class = SensorDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 1
+    _kind = "dewpoint"
+
+    @property
+    def native_value(self) -> float | None:
+        return self._v.get("dewpoint_palestra")
 
 
 def _cellar_view(coordinator) -> dict:

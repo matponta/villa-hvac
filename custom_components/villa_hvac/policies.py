@@ -49,6 +49,8 @@ from .const import (
     CELLAR_RH_HYSTERESIS,
     CELLAR_SAMPLE_MAX_AGE,
     CELLAR_ZONE,
+    GYM_BLIND_HOLD,
+    GYM_DEHUM_SWITCH,
     DEFAULT_SPLIT_CANTINA_SETPOINT,
     DEAD_FANCOILS,
     COOL_CAPACITY,
@@ -107,6 +109,12 @@ from .const import (
     WINTER_SETPOINT_MAX,
     WINTER_SETPOINT_MIN,
     ZONES,
+)
+from .supervisor.gym_damp import (
+    REASON_DISABLED,
+    GymDampDecision,
+    dew_point,
+    gym_damp_decision,
 )
 from .supervisor.cellar import (
     REASON_HOLD,
@@ -169,6 +177,7 @@ from .supervisor import (
     switch_lever,
     temperature_lever,
     SPLIT_FAN_DEFAULT,
+    SPLIT_ROLE_COMFORT,
     SPLIT_ROLE_STORAGE,
     split_dwell,
     split_head_target,
@@ -1362,6 +1371,127 @@ class CoolingController:
         return self.duty_pass(state)
 
 
+class GymDampController:
+    """v0.90.0 palestra + bagno palestra damp (opt-in `switch.gym_damp`).
+
+    Owns ONE lever: the bathroom dehumidifier's Shelly plug (`power:`). The
+    palestra split's part (`dry` in summer) is only DECIDED here and read by
+    `SplitGroupController`, the split head's single writer — so this controller
+    must run before it in the controller tuple.
+
+    Keeps the view + the hysteresis/stage-2 timers live while dark, so the
+    sensor shows what it would do before the switch is flipped. A plug change we
+    didn't command (HA UI, Shelly app, Matter/Apple Home) is a manual override
+    the arbiter concedes (2 h backoff). The plug state found at our first write
+    is snapshotted and restored by the fail-safe.
+    """
+
+    def __init__(self) -> None:
+        self.decision: GymDampDecision | None = None   # read by SplitGroupController
+        self.view: dict | None = None
+        self._active = False
+        self._stage2_since = None
+        self._blind_since = None
+        self._dwell: tuple[bool, object] | None = None
+        self._snapshot: bool | None = None
+
+    def failsafe_power(self) -> dict[str, str]:
+        """Plug state to restore on hand-back ({} if we never took it)."""
+        if self._snapshot is None:
+            return {}
+        return {GYM_DEHUM_SWITCH: "on" if self._snapshot else "off"}
+
+    def handed_back(self) -> None:
+        self._snapshot = None
+        self._dwell = None
+
+    def observe_dark(self, state: HouseState) -> None:
+        self._decide(state, actuate=False)
+
+    @staticmethod
+    def _split_status(state: HouseState) -> tuple[bool, bool]:
+        """(available, yielding) of the palestra split for the damp law."""
+        z = next(
+            (m for m in split_members(state) if m.split_role == SPLIT_ROLE_COMFORT),
+            None,
+        )
+        available = (
+            state.split_enabled and z is not None and z.split_climate is not None
+            and (z.split_mode or "unavailable") not in ("unavailable", "unknown")
+        )
+        summer = state.season == SEASON_SUMMER
+        return available, SplitGroupController._heat_call(state, summer)
+
+    def _decide(self, state: HouseState, *, actuate: bool) -> GymDampDecision:
+        now = state.now
+        summer = state.season == SEASON_SUMMER
+        available, yielding = self._split_status(state)
+        knx_or_up = (state.gym_rh_palestra, state.gym_rh_bagno, state.gym_rh_fallback)
+        if all(v is None for v in knx_or_up):
+            self._blind_since = self._blind_since or now
+        else:
+            self._blind_since = None
+        stage2 = now - self._stage2_since if self._stage2_since is not None else None
+        decision = gym_damp_decision(
+            *knx_or_up, summer=summer, active=self._active,
+            split_available=available, split_yielding=yielding,
+            stage2_elapsed=stage2, stage2_delay=state.gym_stage2_delay,
+            blind_for=now - self._blind_since if self._blind_since else None,
+            blind_hold=GYM_BLIND_HOLD,
+            ceiling=state.gym_rh_ceiling, release=state.gym_rh_release,
+        )
+        self._active = decision.active
+        # stage 2 clock: the split drying alone while still at/above the ceiling
+        above = decision.rh_ctrl is not None and decision.rh_ctrl >= state.gym_rh_ceiling
+        if decision.split_humidity == "dry" and above:
+            self._stage2_since = self._stage2_since or now
+        elif decision.rh_ctrl is not None:
+            self._stage2_since = None
+        enabled = actuate and state.gym_enabled
+        self.decision = decision if enabled else None
+        self.view = {
+            "rh_palestra": state.gym_rh_palestra,
+            "rh_bagno": state.gym_rh_bagno,
+            "rh_fallback": state.gym_rh_fallback,
+            "rh_ctrl": decision.rh_ctrl,
+            "source": decision.source,
+            "reason": decision.reason if enabled else REASON_DISABLED,
+            "wanted_reason": decision.reason,
+            "dehum_wanted": decision.dehum,
+            "split_wanted": decision.split_humidity,
+            "dewpoint_palestra": _round(dew_point(state.gym_temp, state.gym_rh_palestra)),
+            "dewpoint_bagno": _round(dew_point(state.gym_temp, state.gym_rh_bagno)),
+            "dewpoint_outdoor": state.gym_dewpoint_outdoor,
+            "ceiling": state.gym_rh_ceiling,
+            "release": state.gym_rh_release,
+            "dehum_on": state.gym_dehum_on,
+            "dehum_power": state.gym_dehum_power,
+            "stage2_since": self._stage2_since.isoformat() if self._stage2_since else None,
+            "blind_since": self._blind_since.isoformat() if self._blind_since else None,
+            "enabled": enabled,
+        }
+        return decision
+
+    def __call__(self, state: HouseState) -> Desired:
+        decision = self._decide(state, actuate=True)
+        if not state.gym_enabled:
+            self._dwell = None
+            return {}
+        on, since = split_dwell(
+            decision.dehum, self._dwell, state.now,
+            state.gym_dehum_min_on, state.gym_dehum_min_off,
+        )
+        self._dwell = (on, since)
+        if self._snapshot is None and state.gym_dehum_on is not None:
+            self._snapshot = state.gym_dehum_on    # what we found, for the hand-back
+        self.view["dehum_commanded"] = on
+        return {power_lever(GYM_DEHUM_SWITCH): "on" if on else "off"}
+
+
+def _round(value: float | None) -> float | None:
+    return round(value, 1) if value is not None else None
+
+
 class SplitGroupController:
     """#6 split-AC trio controller (opt-in `switch.split_ac`, on top of the master).
 
@@ -1381,7 +1511,9 @@ class SplitGroupController:
     their manual state — strict deploy-dark.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, gym: GymDampController | None = None) -> None:
+        # v0.90.0: the gym damp law's split part (decided there, written here).
+        self._gym = gym
         # per-head committed (on, since) for the dwell guard.
         self._dwell: dict[str, tuple[bool, object]] = {}
         # v0.87.0 wine cellar: last mixed-air reading + the head's hysteresis.
@@ -1471,6 +1603,13 @@ class SplitGroupController:
         out[power_lever(CELLAR_FAN)] = "on" if fan_on else "off"
         return out
 
+    def _humidity_mode(self, z: ZoneSnapshot) -> str | None:
+        """The gym damp law's ask for the palestra head (None = not asked)."""
+        if self._gym is None or z.split_role != SPLIT_ROLE_COMFORT:
+            return None
+        decision = self._gym.decision
+        return decision.split_humidity if decision is not None else None
+
     @staticmethod
     def _heat_call(state: HouseState, summer: bool) -> bool:
         """A head we never command (garage) asking for heat — `auto` counts in
@@ -1502,6 +1641,7 @@ class SplitGroupController:
                 rh=z.humidity,
                 cantina_setpoint=cantina_sp, comfort_setpoint=comfort_sp,
                 rh_ceiling=state.split_rh_ceiling, rh_floor=state.split_rh_floor,
+                humidity_mode=self._humidity_mode(z),
             )
             if tgt is None:            # 'manual' (garage) / unknown -> never commanded
                 self._dwell.pop(z.zone_id, None)

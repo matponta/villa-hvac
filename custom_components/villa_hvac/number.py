@@ -20,6 +20,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from . import VillaHvacConfigEntry
 from .const import (
     CELLAR_NUMBERS,
+    GYM_NUMBERS,
     ZONE_TWINS,
     DEFAULT_FAN_MIN,
     DEFAULT_HOUSE_SETPOINT,
@@ -73,6 +74,8 @@ async def async_setup_entry(
     ]
     # v0.88.0: the wine-cellar knobs (STORY_CELLAR.md).
     entities += [CellarNumber(entry, suffix) for suffix in CELLAR_NUMBERS]
+    # v0.90.0: the palestra damp knobs (STORY_GYM_DAMP.md).
+    entities += [CellarNumber(entry, suffix, GYM_NUMBERS) for suffix in GYM_NUMBERS]
     async_add_entities(entities)
 
 
@@ -250,6 +253,7 @@ class FanMinNumber(NumberEntity, RestoreEntity):
 
 class CellarNumber(NumberEntity, RestoreEntity):
     """v0.88.0: one wine-cellar knob (setpoints, RH band, fan minutes per hour).
+    v0.90.0: also the palestra damp knobs (`table=GYM_NUMBERS`).
 
     Read every cycle through `controller.cellar_settings`; setting it nudges a
     run so the split/fan follow at once."""
@@ -257,8 +261,10 @@ class CellarNumber(NumberEntity, RestoreEntity):
     _attr_has_entity_name = True
     _attr_mode = NumberMode.BOX
 
-    def __init__(self, entry: VillaHvacConfigEntry, suffix: str) -> None:
-        name, lo, hi, step, default, unit, icon = CELLAR_NUMBERS[suffix]
+    def __init__(
+        self, entry: VillaHvacConfigEntry, suffix: str, table: dict | None = None,
+    ) -> None:
+        name, lo, hi, step, default, unit, icon = (table or CELLAR_NUMBERS)[suffix]
         self._entry = entry
         self._attr_name = name
         self._attr_unique_id = f"{entry.entry_id}_{suffix}"

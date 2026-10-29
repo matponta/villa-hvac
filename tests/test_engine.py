@@ -1513,7 +1513,10 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     disjoint from the rest, so its position is immaterial. DemandShedController
     (v0.74.0) sits after every lever owner (guards, governor, Cooling, Night) so
     it can only outrank the pure house_mode setpoint of a room it rests.
-    WinterFancoilController (v0.79.0) owns only the disjoint `fan_power:` levers."""
+    WinterFancoilController (v0.79.0) owns only the disjoint `fan_power:` levers.
+    GymDampController (v0.90.0) owns only the dehumidifier plug but DECIDES the
+    palestra split's `dry`, which SplitGroupController reads — so it must precede
+    it."""
     from custom_components.villa_hvac.night import NightSilenceController
     from custom_components.villa_hvac.rack import (
         P1GuardController,
@@ -1523,6 +1526,7 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     from custom_components.villa_hvac.supervisor.mass import DemandShedController
     from custom_components.villa_hvac.policies import (
         CoolingController,
+        GymDampController,
         SplitGroupController,
     )
 
@@ -1536,8 +1540,8 @@ async def test_controllers_are_exactly_rack_cooling_then_night(hass):
     assert [type(c) for c in engine.controllers] == [
         RackGuardController, P1GuardController, SteadyGovernorController,
         CoolingController, NightSilenceController,
-        DemandShedController, SplitGroupController, WinterFancoilController,
-        PvHeatController,
+        DemandShedController, GymDampController, SplitGroupController,
+        WinterFancoilController, PvHeatController,
     ]
     assert engine._cooling is engine.controllers[3]
 
@@ -1560,7 +1564,10 @@ def test_failsafe_functions_byte_identical():
     p1_guard.failsafe_setpoints — a no-op unless the P1 guard displaced a setpoint
     this episode) and the v0.75.1 demand-shed restore (async_fail_safe writes
     back the base setpoint snapshotted when DemandShedController lifted a room,
-    via _shed.failsafe_setpoints — a no-op unless a room is currently lifted).
+    via _shed.failsafe_setpoints — a no-op unless a room is currently lifted)
+    and the v0.90.0 gym-damp hand-back (async_fail_safe calls `_gym_fail_safe`,
+    which restores the dehumidifier plug to the state snapshotted at our first
+    write — a no-op unless switch.gym_damp ever drove it).
     If this fails, either the change is unintended (revert it) or
     it is a NEW deliberate hardening: own commit, own pin, update the hash here
     in that same commit."""
@@ -1571,7 +1578,7 @@ def test_failsafe_functions_byte_identical():
 
     pins = {
             "async_fail_safe":
-                "1edc605e41be35994099459ecf96559c8ba26c8a01b68632ba683e780b0cbc31",
+                "c2fe738c18cb1f971668bbf884690192bb7724801010442bc67bc657e3e05c3d",
         "_restore_presets":
             "f5160debf4c7d1316d2f9728555fba8b86e672a3d6590b208ae961ea46fb2c16",
         "_release_blocco":
