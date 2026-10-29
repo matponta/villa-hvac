@@ -5,8 +5,7 @@ Built from `STORY_GYM_DAMP.md` (see its "As built"). Deploy-dark: nothing moves
 until `switch.gym_damp` (default OFF) is on with the master.
 DEPLOY (owner confirms each step):
 1. P0 physical checks: dehumidifier's own humidistat on continuous/lowest; does
-   it restart by itself after a 1-min power cut?; note running/idle W and set
-   `GYM_DEHUM_RUN_W` (provisional 50 W).
+   it restart by itself after a 1-min power cut?; running ~200 W (owner) → `GYM_DEHUM_RUN_W` = 100 W (v0.90.1).
 2. Deploy, then check `sensor.hvac_palestra_umidita` (`disattivo`,
    `wanted_reason` sane, `source: knx`, `rh_ctrl` = max of the KNX pair).
 3. Owner flips `switch.gym_damp` ON (P1, winter path: plug only; split stays off).

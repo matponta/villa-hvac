@@ -241,8 +241,8 @@ Observe-only tick while dark (keep the view/telemetry live, like `observe_dark`)
   `number.deumidificatore_palestra_minimo_acceso` / `…_spento`,
   `number.palestra_attesa_deumidificatore_in_estate` (no options-flow fields:
   knobs are numbers, like the cellar's).
-- **Alerts** (`damp.py`): ≥75 % for 6 h, plug ON but < `GYM_DEHUM_RUN_W` (50 W,
-  provisional until P0 measures it) for 30 min, every hygrometer out for 2 h.
+- **Alerts** (`damp.py`): ≥75 % for 6 h, plug ON but < `GYM_DEHUM_RUN_W` (100 W —
+  v0.90.1: the owner measured ~200 W running) for 30 min, every hygrometer out for 2 h.
 - **Known limits**: a manual override of the palestra split is not seen by the
   damp law (it escalates to the dehumidifier only after stage 2); the stale
   "bagno palestra has no RH sensor" comment the brief mentions was not found in

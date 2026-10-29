@@ -1232,7 +1232,7 @@ GYM_TEMP = "sensor.palestra_temperature"                 # for the dew point
 OUTDOOR_DEWPOINT = "sensor.gw3000a_dewpoint"
 GYM_RH_STALE_MIN = timedelta(minutes=30)
 GYM_BLIND_HOLD = timedelta(hours=2)      # every sensor out: hold, then dehumidifier OFF
-GYM_DEHUM_RUN_W = 50.0                   # W: above = compressor running (measure in P0)
+GYM_DEHUM_RUN_W = 100.0                  # W: above = running (measured ~200 W, owner 2026-10-29)
 # Knobs (number entities). Unique-id suffix -> (name, min, max, step, default,
 # unit, icon). The 62/55 band is a starting guess: tune after 2 weeks of data.
 GYM_NUMBERS = {
