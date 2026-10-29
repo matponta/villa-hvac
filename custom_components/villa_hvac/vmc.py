@@ -50,11 +50,7 @@ from .away import aggregate_presence
 from .const import (
     CELLAR_SAMPLE_MAX_AGE,
     CELLAR_ZONE,
-    DEFAULT_SPLIT_RH_CEILING,
-    DEFAULT_SPLIT_RH_FLOOR,
     HOUSE_MODE_NIGHT,
-    OPT_SPLIT_RH_CEILING,
-    OPT_SPLIT_RH_FLOOR,
     OPT_WINDOW_ALERT_TARGETS,
     OUTDOOR_RH,
     OUTDOOR_TEMP,
@@ -91,6 +87,7 @@ from .const import (
     ZONES,
 )
 from .controller import (
+    cellar_settings,
     current_house_mode,
     current_season,
     vmc_alerts_enabled,
@@ -278,9 +275,9 @@ class VmcController:
         rooms = []
         for zone, (sensor, ceiling, floor) in cfg.get("humidity_rooms", {}).items():
             if zone == "cantina_vini":
-                # the wine band is owned by the split trio's options (#6)
-                ceiling = self._opt_float(OPT_SPLIT_RH_CEILING, DEFAULT_SPLIT_RH_CEILING)
-                floor = self._opt_float(OPT_SPLIT_RH_FLOOR, DEFAULT_SPLIT_RH_FLOOR)
+                # the wine band: the cantina's own knobs (v0.88.0 numbers)
+                band = cellar_settings(self.hass, self.entry)
+                ceiling, floor = band["cellar_rh_ceiling"], band["cellar_rh_floor"]
             t = temps.get(zone) or {}
             temp, rh = t.get("value"), self._held_num(sensor, now)
             if zone == CELLAR_ZONE:

@@ -26,10 +26,10 @@ below 18 °C, so:
 
 | | Summer | Winter |
 |---|---|---|
-| split setpoint | 18 °C (`split_cantina_setpoint`) | 18 °C (`cellar_winter_setpoint`) — trims only |
-| temperature OK | 16–20 °C | 12–19 °C (the cellar cools by itself) |
+| split setpoint | 19 °C (v0.88.0: floor +1, less run time) | 19 °C — trims only |
+| temperature OK | 16–21 °C | 12–20 °C (the cellar cools by itself) |
 | humidity OK | 55–70 % | 55–70 % |
-| too dry (<55 %) | setpoint +1.5 (max 20) | setpoint +1.0 (max 19) |
+| too dry (<55 %) | setpoint +1.5 (max 21) | setpoint +1.0 (max 20) |
 | too damp (>70 %) | `dry` (or `cool` if warm) until 67 % | same |
 
 Nothing heats: a `heat` call would fight the shared outdoor unit. Below the
@@ -58,8 +58,19 @@ Actuation needs `switch.supervisor` + `switch.split_ac`.
 > ⚠️ **Deploy gate:** disable the three legacy automations above, or they keep
 > overriding the split and the fan (the arbiter would concede for 2 h each time).
 
+## v0.88.0 — editable, garage heat
+
+- **Knobs = number entities** (dashboard): `number.cantina_temperatura_estate`
+  / `_inverno` (18–24, default 19), `number.cantina_umidita_minima` (55) /
+  `_massima` (70), `number.cantina_ventilatore_minuti_per_ora` (20; 60 = always).
+  `controller.cellar_settings` reads number → option → default; the VMC's
+  cantina band reads the same.
+- **Garage heat wins the outdoor unit.** The garage head is owner-manual; when
+  it is in `heat` (or `auto` in winter) the wine head goes `off` (after its
+  5 min min-on), reason `cede_al_garage`; the fan keeps circulating. Palestra
+  yields too. Back to `cool` after the garage stops (3 min min-off). Without
+  this a cooling cantina head would have blocked the garage heating.
+
 ## Open
 
 - A cellar that stays below 55 % needs a humidifier: the split can only dry.
-- Thresholds are options without a UI yet (`split_cantina_setpoint`,
-  `cellar_winter_setpoint`, `split_rh_floor`, `split_rh_ceiling`).

@@ -1153,7 +1153,7 @@ OPT_SPLIT_ENABLED = "split_ac_enabled"            # mirrored by switch.split_ac
 OPT_SPLIT_CANTINA_SETPOINT = "split_cantina_setpoint"
 OPT_SPLIT_PALESTRA_SETPOINT = "split_palestra_setpoint"
 DEFAULT_SPLIT_ENABLED = False                     # strict deploy-dark
-DEFAULT_SPLIT_CANTINA_SETPOINT = 18.0             # °C, SUMMER wine target = the unit floor (v0.87.0; was 19)
+DEFAULT_SPLIT_CANTINA_SETPOINT = 19.0             # °C, SUMMER wine target (v0.88.0: floor+1, moderates the run time)
 DEFAULT_SPLIT_PALESTRA_SETPOINT = 24.0            # °C, gym comfort target (its own, not the house slider)
 # Group compressor protection (industry-standard defaults, minutes): we are the
 # only gate on this heat pump. Setpoint hysteresis is preferred over on/off, so
@@ -1180,8 +1180,23 @@ DEFAULT_SPLIT_RH_FLOOR = 55.0
 CELLAR_ZONE = "cantina_vini"
 CELLAR_FAN = "fan.wine_cellar_shelly_plug_cantina"   # switch_as_x on a Shelly plug
 OPT_CELLAR_WINTER_SETPOINT = "cellar_winter_setpoint"
-DEFAULT_CELLAR_WINTER_SETPOINT = 18.0    # °C: trim only; the cellar cools itself
+DEFAULT_CELLAR_WINTER_SETPOINT = 19.0    # °C: trim only; the cellar cools itself (v0.88.0: +1)
 CELLAR_FAN_RUN_MINUTES = 20              # circulate the first 20 min of each hour
+# v0.88.0: the cellar knobs are number entities (dashboard). Unique-id suffix ->
+# (name, min, max, step, default, unit, icon). Unset/unavailable -> the option
+# or the default above.
+CELLAR_NUMBERS = {
+    "cellar_setpoint_summer": ("Cantina temperatura estate", 18.0, 24.0, 0.5,
+                               DEFAULT_SPLIT_CANTINA_SETPOINT, "°C", "mdi:thermometer"),
+    "cellar_setpoint_winter": ("Cantina temperatura inverno", 18.0, 24.0, 0.5,
+                               DEFAULT_CELLAR_WINTER_SETPOINT, "°C", "mdi:thermometer"),
+    "cellar_rh_floor": ("Cantina umidità minima", 40.0, 70.0, 1.0,
+                        DEFAULT_SPLIT_RH_FLOOR, "%", "mdi:water-percent"),
+    "cellar_rh_ceiling": ("Cantina umidità massima", 55.0, 85.0, 1.0,
+                          DEFAULT_SPLIT_RH_CEILING, "%", "mdi:water-percent-alert"),
+    "cellar_fan_minutes": ("Cantina ventilatore minuti per ora", 10.0, 60.0, 5.0,
+                           float(CELLAR_FAN_RUN_MINUTES), "min", "mdi:fan-clock"),
+}
 CELLAR_MIX_MIN = timedelta(minutes=8)    # fan on this long -> the reading is mixed air
 CELLAR_SAMPLE_MAX_AGE = timedelta(minutes=90)
 CELLAR_RH_HYSTERESIS = 3.0               # % around the RH floor/ceiling

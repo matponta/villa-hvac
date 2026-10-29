@@ -281,3 +281,69 @@ async def test_cellar_sensors(hass):
     assert hass.states.get("sensor.cantina_vini_stato").state == CELLAR_OK
     assert float(hass.states.get("sensor.cantina_vini_temperatura").state) == 19.4
     assert float(hass.states.get("sensor.cantina_vini_umidita").state) == 58.0
+
+
+# --- v0.88.0: garage heat yield + editable knobs -------------------------------
+
+GARAGE = "climate.aircon_garage_2"
+
+
+def _with_garage(state, mode):
+    from dataclasses import replace
+    g = ZoneSnapshot(
+        zone_id="garage", name="Garage", climate=GARAGE, emitter="split_ac",
+        ac_group="split_trio", split_climate=GARAGE, split_role="manual",
+        split_mode=mode,
+    )
+    return replace(state, zones={**state.zones, "garage": g},
+                   split_min_on=dt.timedelta(minutes=5),
+                   split_min_off=dt.timedelta(minutes=3))
+
+
+def test_wine_head_yields_to_garage_heat_after_min_on():
+    ctrl = SplitGroupController()
+    out = ctrl(_with_garage(_house(summer=False), "off"))
+    assert out[hvac_mode_lever(CANTINA)] == "cool"
+    # garage heat 2 min later: min-on (5) not served -> keep cooling
+    out = ctrl(_with_garage(_house(now=T0 + dt.timedelta(minutes=2), summer=False), "heat"))
+    assert out[hvac_mode_lever(CANTINA)] == "cool"
+    out = ctrl(_with_garage(_house(now=T0 + dt.timedelta(minutes=6), summer=False), "heat"))
+    assert out[hvac_mode_lever(CANTINA)] == "off"
+    assert temperature_lever(CANTINA) not in out
+    assert power_lever(CELLAR_FAN) in out                 # circulation goes on
+    assert ctrl.cellar_view["reason"] == "cede_al_garage"
+    assert hvac_mode_lever(GARAGE) not in out             # garage never commanded
+    # garage done: back to cool once min-off (3) is served
+    out = ctrl(_with_garage(_house(now=T0 + dt.timedelta(minutes=8), summer=False), "off"))
+    assert out[hvac_mode_lever(CANTINA)] == "off"
+    out = ctrl(_with_garage(_house(now=T0 + dt.timedelta(minutes=10), summer=False), "off"))
+    assert out[hvac_mode_lever(CANTINA)] == "cool"
+
+
+def test_garage_auto_counts_as_heat_only_in_winter():
+    s = _with_garage(_house(summer=False), "auto")
+    assert SplitGroupController._heat_call(s, summer=False)
+    assert not SplitGroupController._heat_call(s, summer=True)
+    assert not SplitGroupController._heat_call(_with_garage(_house(), "cool"), True)
+
+
+async def test_cellar_numbers_drive_the_settings(hass):
+    from custom_components.villa_hvac.controller import cellar_settings
+    entry = await _setup(hass)
+    s = cellar_settings(hass, entry)
+    assert s["cellar_setpoint_summer"] == 19.0 and s["cellar_setpoint_winter"] == 19.0
+    assert (s["cellar_rh_floor"], s["cellar_rh_ceiling"]) == (55.0, 70.0)
+    assert s["cellar_fan_minutes"] == 20.0
+    await hass.services.async_call(
+        "number", "set_value",
+        {"entity_id": "number.cantina_temperatura_inverno", "value": 20.5},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        "number", "set_value",
+        {"entity_id": "number.cantina_ventilatore_minuti_per_ora", "value": 30},
+        blocking=True,
+    )
+    s = cellar_settings(hass, entry)
+    assert s["cellar_setpoint_winter"] == 20.5
+    assert s["cellar_fan_minutes"] == 30.0

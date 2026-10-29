@@ -340,7 +340,7 @@ async def test_split_fail_safe_hands_back_managed_only(hass):
     assert by_entity[CANTINA] == "cool"        # wine = self-regulating dead-man
     assert by_entity[PALESTRA_SPLIT] == "off"  # comfort head off
     # cantina left at its storage setpoint.
-    assert any(c.data["entity_id"] == CANTINA and c.data["temperature"] == 18.0
+    assert any(c.data["entity_id"] == CANTINA and c.data["temperature"] == 19.0
                for c in temp_calls)
     # lever state cleared so a queued cycle can't re-assert.
     assert hvac_mode_lever(CANTINA) not in engine._lever_states

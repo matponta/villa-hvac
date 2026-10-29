@@ -19,6 +19,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import VillaHvacConfigEntry
 from .const import (
+    CELLAR_NUMBERS,
     ZONE_TWINS,
     DEFAULT_FAN_MIN,
     DEFAULT_HOUSE_SETPOINT,
@@ -70,6 +71,8 @@ async def async_setup_entry(
         if zone.get("climate") and zone.get("emitter") in PRESET_CONTROLLABLE_EMITTERS
         and zone_id not in ZONE_TWINS   # v0.84.0: the twin uses the leader's
     ]
+    # v0.88.0: the wine-cellar knobs (STORY_CELLAR.md).
+    entities += [CellarNumber(entry, suffix) for suffix in CELLAR_NUMBERS]
     async_add_entities(entities)
 
 
@@ -227,6 +230,46 @@ class FanMinNumber(NumberEntity, RestoreEntity):
         self._attr_name = f"{name} fan min"
         self._attr_unique_id = f"{entry.entry_id}_fan_min_{zone}"
         self._attr_native_value = DEFAULT_FAN_MIN
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state not in (None, "unknown", "unavailable"):
+            try:
+                self._attr_native_value = float(last.state)
+            except (TypeError, ValueError):
+                pass
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._attr_native_value = value
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+
+class CellarNumber(NumberEntity, RestoreEntity):
+    """v0.88.0: one wine-cellar knob (setpoints, RH band, fan minutes per hour).
+
+    Read every cycle through `controller.cellar_settings`; setting it nudges a
+    run so the split/fan follow at once."""
+
+    _attr_has_entity_name = True
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, entry: VillaHvacConfigEntry, suffix: str) -> None:
+        name, lo, hi, step, default, unit, icon = CELLAR_NUMBERS[suffix]
+        self._entry = entry
+        self._attr_name = name
+        self._attr_unique_id = f"{entry.entry_id}_{suffix}"
+        self._attr_native_min_value = lo
+        self._attr_native_max_value = hi
+        self._attr_native_step = step
+        self._attr_native_unit_of_measurement = unit
+        self._attr_icon = icon
+        if unit == "°C":
+            self._attr_device_class = NumberDeviceClass.TEMPERATURE
+        self._attr_native_value = default
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

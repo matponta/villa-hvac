@@ -19,7 +19,8 @@ Season windows (`CELLAR_WINDOWS`): the wine wants 12–14 °C and 60–70 % RH; 
 unit cannot go below 18 °C. Summer = hold the floor (18), tolerate up to 20.
 Winter = the cellar cools by itself; the split only trims above 18 and nothing
 heats (a heat call would fight the shared outdoor unit) — below the low edge we
-only warn. Humidity is the same year-round: dry above 70 %, relax below 55 %.
+only warn. The other way round, when someone heats the GARAGE (owner-manual),
+the wine head switches OFF so the shared outdoor unit can heat (v0.88.0). Humidity is the same year-round: dry above 70 %, relax below 55 %.
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ REASON_HOLD = "mantieni"
 REASON_DRYING = "deumidifica"
 REASON_RELAXED = "aria_secca"
 REASON_NO_SAMPLE = "senza_misura"
+REASON_YIELD_HEAT = "cede_al_garage"   # v0.88.0: a manual heat call owns the outdoor unit
 
 
 @dataclass(frozen=True)
@@ -63,7 +65,7 @@ class CellarSample:
 
 @dataclass(frozen=True)
 class CellarDecision:
-    mode: str                # "cool" | "dry"
+    mode: str                # "cool" | "dry" | "off" (yielding to a heat call)
     setpoint: float | None   # None for dry
     drying: bool             # hysteresis state to carry
     relaxed: bool            # hysteresis state to carry

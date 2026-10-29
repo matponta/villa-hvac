@@ -193,7 +193,10 @@ do local bang-bang regulation.
   reading after `CELLAR_MIX_MIN` (8 min) of fan counts (pure `supervisor/cellar.py`,
   held 90 min; VMC 1 uses it too). Fan 20 min/h + always while drying. Season
   windows: setpoint 18 both (unit floor; winter only trims), dry >70 % until 67,
-  relax +1.5/+1.0 below 55 % (never above t_high). Nothing heats. Sensors
+  relax +1.5/+1.0 below 55 % (never above t_high). Nothing heats. v0.88.0: setpoints
+  19 both (+1, energy), knobs = `number.cantina_*` (`cellar_settings`), and a GARAGE
+  `heat` call (owner working there) switches the wine head + palestra OFF so the
+  shared outdoor unit can heat (`cede_al_garage`). Sensors
   `sensor.cantina_vini_*`, `switch.cellar_alerts` (default ON). Deploy gate: retire
   the legacy `circolazione_aria_cantina_vini` / `master_circolazione_aria_cantina`
   / `solo_ventilatore_cantina` automations.

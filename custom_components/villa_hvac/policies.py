@@ -45,7 +45,6 @@ import math
 
 from .const import (
     CELLAR_FAN,
-    CELLAR_FAN_RUN_MINUTES,
     CELLAR_MIX_MIN,
     CELLAR_RH_HYSTERESIS,
     CELLAR_SAMPLE_MAX_AGE,
@@ -110,6 +109,9 @@ from .const import (
     ZONES,
 )
 from .supervisor.cellar import (
+    REASON_HOLD,
+    REASON_YIELD_HEAT,
+    CellarDecision,
     CellarSample,
     cellar_fan_wanted,
     cellar_head,
@@ -1420,8 +1422,13 @@ class SplitGroupController:
             window, fresh, drying=self._drying, relaxed=self._relaxed,
             hysteresis=CELLAR_RH_HYSTERESIS,
         )
+        # v0.88.0: a manual heat call (garage, someone working there in winter)
+        # owns the shared outdoor unit — a cooling wine head would block it.
+        yielding = self._heat_call(state, summer)
+        if yielding:
+            decision = CellarDecision("off", None, False, False, REASON_YIELD_HEAT)
         fan_on = cellar_fan_wanted(
-            state.now, run_minutes=CELLAR_FAN_RUN_MINUTES, drying=decision.drying,
+            state.now, run_minutes=state.cellar_fan_minutes, drying=decision.drying,
         )
         self.cellar_view = {
             "season": "estate" if summer else "inverno",
@@ -1445,12 +1452,36 @@ class SplitGroupController:
             self._drying = self._relaxed = False
             return {}
         self._drying, self._relaxed = decision.drying, decision.relaxed
+        on, since = split_dwell(
+            decision.mode != "off", self._dwell.get(z.zone_id), state.now,
+            state.split_min_on, state.split_min_off,
+        )
+        self._dwell[z.zone_id] = (on, since)
+        if on and decision.mode == "off":     # min-on not served yet: keep cooling
+            decision = CellarDecision("cool", window.setpoint, False, False, REASON_HOLD)
+        if not on:
+            return {
+                hvac_mode_lever(z.split_climate): "off",
+                power_lever(CELLAR_FAN): "on" if fan_on else "off",
+            }
         out: Desired = {hvac_mode_lever(z.split_climate): decision.mode}
         if decision.setpoint is not None:
             out[temperature_lever(z.split_climate)] = float(decision.setpoint)
         out[fan_mode_lever(z.split_climate)] = SPLIT_FAN_DEFAULT
         out[power_lever(CELLAR_FAN)] = "on" if fan_on else "off"
         return out
+
+    @staticmethod
+    def _heat_call(state: HouseState, summer: bool) -> bool:
+        """A head we never command (garage) asking for heat — `auto` counts in
+        winter, where it heats."""
+        for z in split_members(state):
+            if z.split_role != "manual":
+                continue
+            mode = (z.split_mode or "").lower()
+            if mode == "heat" or (mode == "auto" and not summer):
+                return True
+        return False
 
     def __call__(self, state: HouseState) -> Desired:
         out: Desired = self._cellar(state, state.zones.get(CELLAR_ZONE))
@@ -1476,6 +1507,8 @@ class SplitGroupController:
                 self._dwell.pop(z.zone_id, None)
                 continue
             mode, setpoint = tgt
+            if self._heat_call(state, summer):
+                mode, setpoint = "off", None    # the garage's heat owns the outdoor unit
             desired_on = mode != "off"      # cool AND dry are "on" (cool-side)
             eff_on, since = split_dwell(
                 desired_on, self._dwell.get(z.zone_id), state.now,

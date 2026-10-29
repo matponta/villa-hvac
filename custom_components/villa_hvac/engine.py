@@ -154,6 +154,7 @@ from .controller import (
     shade_blocked,
     shade_position,
     split_ac_enabled,
+    cellar_settings,
     supervisor_enabled,
     unified_planner_enabled,
     windows_free_cool_enabled,
@@ -701,6 +702,7 @@ def build_house_state(
 
     blocco_state = hass.states.get(CONSENSO_BLOCCO)
     cellar_fan = hass.states.get(CELLAR_FAN)
+    cellar = cellar_settings(hass, entry)
     # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
     # Computed here (not from a NightController.active flag) so it's consistent
     # with what NightSilenceController computes THIS cycle (no transition lag) and
@@ -835,13 +837,14 @@ def build_house_state(
         condo_battery_kwh=_num(hass, CONDOMINIO_BATTERY_CAPACITY),
         blocco=blocco_state.state if blocco_state is not None else None,
         split_enabled=split_ac_enabled(hass, entry),
-        split_cantina_setpoint=cfg.split_cantina_setpoint,
+        split_cantina_setpoint=cellar["cellar_setpoint_summer"],
         split_palestra_setpoint=cfg.split_palestra_setpoint,
         split_min_on=cfg.split_min_on,
         split_min_off=cfg.split_min_off,
-        split_rh_ceiling=cfg.split_rh_ceiling,
-        split_rh_floor=cfg.split_rh_floor,
-        cellar_winter_setpoint=cfg.cellar_winter_setpoint,
+        split_rh_ceiling=cellar["cellar_rh_ceiling"],
+        split_rh_floor=cellar["cellar_rh_floor"],
+        cellar_winter_setpoint=cellar["cellar_setpoint_winter"],
+        cellar_fan_minutes=int(cellar["cellar_fan_minutes"]),
         cellar_fan_on=(
             cellar_fan.state == STATE_ON
             if cellar_fan is not None and cellar_fan.state in (STATE_ON, STATE_OFF)

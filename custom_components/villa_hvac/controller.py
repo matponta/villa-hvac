@@ -22,6 +22,11 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    OPT_SPLIT_RH_CEILING,
+    OPT_SPLIT_RH_FLOOR,
+    OPT_CELLAR_WINTER_SETPOINT,
+    OPT_SPLIT_CANTINA_SETPOINT,
+    CELLAR_NUMBERS,
     COMFORT_FLOOR_MAX,
     COMFORT_FLOOR_MIN,
     COMFORT_FLOOR_OFFSET,
@@ -189,6 +194,29 @@ def _switch_state(
         return None
     state = hass.states.get(entity_id)
     return state.state if state else None
+
+
+def cellar_settings(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, float]:
+    """v0.88.0: the wine-cellar knobs — number entity, else option, else default.
+
+    Keys = `CELLAR_NUMBERS` suffixes. The engine (split head + fan) and the VMC
+    (the cantina's RH band) both read this, so one slider drives both."""
+    options = {
+        "cellar_setpoint_summer": OPT_SPLIT_CANTINA_SETPOINT,
+        "cellar_setpoint_winter": OPT_CELLAR_WINTER_SETPOINT,
+        "cellar_rh_floor": OPT_SPLIT_RH_FLOOR,
+        "cellar_rh_ceiling": OPT_SPLIT_RH_CEILING,
+    }
+    out: dict[str, float] = {}
+    for suffix, (_name, lo, hi, _step, default, _unit, _icon) in CELLAR_NUMBERS.items():
+        value = _number_value(hass, entry, suffix)
+        if value is None and suffix in options:
+            try:
+                value = float(entry.options[options[suffix]])
+            except (KeyError, TypeError, ValueError):
+                value = None
+        out[suffix] = min(max(value if value is not None else default, lo), hi)
+    return out
 
 
 def _number_value(
