@@ -573,7 +573,9 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        (`sensor.<room>_inverno`, `sensor.tempo_riscaldamento`). W2–W4 v0.81.0:
        `sensor.riduzione_consigliata` (how deep an away setback can go for the
        return ETA + pre-heat start); W3 = #8 in winter (Via at the advised depth,
-       Casa from the start, hold past the ETA until presence); W4 PV heating
+       Casa from the LIVE optimum start — v0.89.0: key rooms' current temp +
+       recovery + 30 min, ≤ max lead; hold past the ETA until presence, max
+       `winter_return_max_hold_hours` 6; latch persisted `villa_hvac_return`); W4 PV heating
        (owner rooms → Casa target on a NET Condominio surplus, SoC ≥ 90 start /
        85 stay, opt-in `switch.pv_heat`, needs Auto setback). See STORY "As built".
 10. [x] #8 Return-home pre-conditioning (v0.25.0) — was "weekend scenes",

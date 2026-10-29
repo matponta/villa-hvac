@@ -127,3 +127,24 @@ actuation; every actuating feature opt-in and summer-inert.
   value stays > 0.5 °C away for 30 min. Replay of 23/10 05:25–11:00: 1 write
   instead of ~20. Sensor: `setback_depth_applied` = what is written,
   `setback_depth_max` = the plan's deepest allowed.
+
+## v0.89.0 (2026-10-29) — optimum start on the live temperature
+- Runs 24/10 and 28/10 (ETA 19:00): both pre-heats started at the 12 h cap
+  (07:32, 07:14) and the key rooms were at 21 °C by 12–13h, 6–7 h early, with
+  afternoon overshoot to ~22. The plan assumed the rooms coast to ~17.8 °C
+  while waiting; they stayed at ~19.3 (envelope mass), so the predicted start
+  was always on the cap.
+- W2 `start` is now the LIVE optimum start: ETA − (slowest key + plannable
+  room's `recovery_minutes` from its CURRENT temperature) − 30 min, never before
+  ETA − max lead. Re-evaluated every cycle, so as a room coasts the start moves
+  earlier by itself. The coast-then-recover plan stays for the depth choice and
+  display (`planned_start`, sensor `preheat_start_planned`). Replay with today's
+  models: start ~09:30–10:30 instead of 07:15–07:30. The learnt k_h is still
+  pessimistic (8–9 h predicted vs ~5 h observed, n_k = 4), so it will move later
+  as W1 learns.
+- Latch: remembers its ETA; a moved ETA drops it and re-plans; it gives up
+  `winter_return_max_hold_hours` (default 6) after the ETA when nobody came
+  (24/10: Casa held 21 h for an empty house) → native Via until re-armed.
+  Sensor `preheat_hold_until`.
+- Latch persisted (`villa_hvac_return` Store): the 28/10 12:54 restart had
+  dropped the house back to Via until Ehi arrived at 14:33.

@@ -135,6 +135,9 @@ DEFAULT_WINTER_SETBACK_MAX = 6.0
 # pre-heat start, never earlier than this before the ETA.
 OPT_WINTER_RETURN_MAX_LEAD = "winter_return_max_lead_hours"
 DEFAULT_WINTER_RETURN_MAX_LEAD = 12.0
+# v0.89.0: an unanswered pre-heat goes back to Via this long after the ETA.
+OPT_WINTER_RETURN_MAX_HOLD = "winter_return_max_hold_hours"
+DEFAULT_WINTER_RETURN_MAX_HOLD = 6.0
 RETURN_KEY_DEFAULT_ZONES: frozenset[str] = frozenset({
     "main_bedroom", "bagno_padronale_01", "living_room",
 })

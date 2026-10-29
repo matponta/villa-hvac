@@ -922,7 +922,8 @@ class SupervisorEngine:
         self.last_s_eff_active: dict[str, float | None] = {}
         # #8: overrides the effective house mode while Via+armed (deep setback ->
         # pre-cond ramp). Applied to the state before policies run. Holds the latch.
-        self.away_return = AwayReturnController()
+        self.away_return = AwayReturnController(
+            store=Store(hass, 1, "villa_hvac_return"))
         self._model_store = model_store
         self._house_store = house_store
         # v0.80.0 STORY_WINTER_BRAIN W1: radiant observer (winter-only learning,

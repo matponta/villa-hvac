@@ -74,7 +74,9 @@ def test_the_slowest_room_starts_first_and_drives_the_house_start():
     slow_plan = next(p for p in a.rooms if p.zone == "slow")
     assert fast_plan.setback == slow_plan.setback       # one uniform depth
     assert slow_plan.start < fast_plan.start == fast_plan.start
-    assert a.start == slow_plan.start
+    assert a.planned_start == slow_plan.start
+    # v0.89.0: both rooms already at target → the live start is ETA − margin.
+    assert a.start == a.eta - timedelta(minutes=30)
 
 
 def test_cold_room_already_too_far_preheats_now():
@@ -345,7 +347,7 @@ def test_only_key_rooms_drive_the_house_start():
     key_plan = next(p for p in a.rooms if p.zone == "key")
     slow_plan = next(p for p in a.rooms if p.zone == "slow")
     assert slow_plan.start < key_plan.start             # would have driven it before
-    assert a.start == key_plan.start and a.limiting_room == "key"
+    assert a.planned_start == key_plan.start and a.limiting_room == "key"
 
 
 def test_unplannable_room_never_starts_the_house_now():
@@ -355,7 +357,7 @@ def test_unplannable_room_never_starts_the_house_now():
     a = _advice(rooms, hours=57, max_lead=timedelta(hours=24))
     bagno = next(p for p in a.rooms if p.zone == "bagno")
     assert not bagno.plannable
-    assert a.start == next(p for p in a.rooms if p.zone == "bed").start
+    assert a.planned_start == next(p for p in a.rooms if p.zone == "bed").start
     assert a.eta - a.start <= timedelta(hours=24)
 
 
@@ -389,7 +391,7 @@ def test_over_long_lead_makes_the_setback_shallower_not_the_rooms_cold():
         floor=16.0, max_depth=6.0, min_depth=4.0, max_lead=timedelta(hours=2),
     )
     assert via.depth == 4.0 and via.capped
-    assert via.eta - via.start == timedelta(hours=2)
+    assert via.eta - via.planned_start == timedelta(hours=2)
 
 
 # --- v0.85.0: no setpoint flapping while waiting ------------------------------------
@@ -449,3 +451,124 @@ def test_winter_return_writes_the_held_depth(monkeypatch):
     assert ctrl.apply(_via(t), None, None, commit=True,
                       winter_advice=a1).mode_offset == held
     assert ctrl.written_depth == -held
+
+
+# --- v0.89.0: optimum start, max hold, latch across restarts --------------------
+
+CAMERA = WinterParams(a=0.0131, k_h=0.433, lag_min=50.3)   # live 29/10
+
+
+def test_live_start_from_the_current_temperature_not_the_coast_prediction():
+    """24/10: camera at 19.3 °C at 07:00 for a 19:00 ETA. The plan assumed it
+    would coast to ~17.8 and sat on the 12 h cap; the live start uses 19.3."""
+    from custom_components.villa_hvac.supervisor.winter_model import recovery_minutes
+    a = _advice([_room("camera", temp=19.3, params=CAMERA)], hours=12,
+                max_lead=timedelta(hours=12))
+    need = recovery_minutes(19.3, 21.0, 5.0, CAMERA)
+    assert a.start == a.eta - timedelta(minutes=need) - timedelta(minutes=30)
+    assert a.start > a.planned_start
+    assert a.live_start == a.start
+
+
+def test_live_start_moves_earlier_as_the_room_cools():
+    warm = _advice([_room(temp=20.5)], hours=12, max_lead=timedelta(hours=12))
+    cold = _advice([_room(temp=18.5)], hours=12, max_lead=timedelta(hours=12))
+    assert cold.start < warm.start
+
+
+def test_live_start_never_before_the_max_lead():
+    a = _advice([_room(temp=16.0, params=CAMERA)], hours=30,
+                max_lead=timedelta(hours=12))
+    assert a.start == a.eta - timedelta(hours=12)
+
+
+def test_live_start_only_counts_key_rooms():
+    a = _advice([_room("key", temp=20.5),
+                 WinterRoom(zone="bath", name="bath", temp=17.0, target=21.0,
+                            params=P, key=False)],
+                hours=12, max_lead=timedelta(hours=12))
+    only_key = _advice([_room("key", temp=20.5)], hours=12,
+                       max_lead=timedelta(hours=12))
+    assert a.start == only_key.start
+
+
+def _latched_ctrl(monkeypatch, advice):
+    _patch_return(monkeypatch)
+    ctrl = rh.AwayReturnController()
+    ctrl.apply(_via(advice.start + timedelta(minutes=1)), None, None, commit=True,
+               winter_advice=advice)
+    assert ctrl.decision == rh.RETURN_PRECOND
+    return ctrl
+
+
+def test_unanswered_preheat_gives_up_after_the_max_hold(monkeypatch):
+    """24/10: nobody came and Casa was held 21 h. Default hold = 6 h."""
+    advice = _advice([_room()], hours=48)
+    ctrl = _latched_ctrl(monkeypatch, advice)
+    assert ctrl.hold_until == advice.eta + timedelta(hours=6)
+    held = ctrl.apply(_via(advice.eta + timedelta(hours=5)), None, None,
+                      commit=True, winter_advice=None)
+    assert held.house_mode == "Casa"
+    src = _via(advice.eta + timedelta(hours=6))
+    assert ctrl.apply(src, None, None, commit=True, winter_advice=None) is src
+    assert ctrl.decision is None and ctrl.hold_until is None
+    later = _via(advice.eta + timedelta(hours=8))
+    assert ctrl.apply(later, None, None, commit=True, winter_advice=None) is later
+
+
+def test_a_moved_eta_drops_the_latch_and_replans(monkeypatch):
+    advice = _advice([_room()], hours=48)
+    ctrl = _latched_ctrl(monkeypatch, advice)
+    t = advice.start + timedelta(minutes=5)
+    moved = winter_setback_advice(
+        [_room()], now=t, eta=advice.eta + timedelta(days=1), outdoor=5.0,
+        floor=16.0, max_depth=6.0, max_lead=timedelta(hours=48))
+    out = ctrl.apply(_via(t), None, None, commit=True, winter_advice=moved)
+    assert ctrl.decision == rh.RETURN_WAITING and out.house_mode == "Via"
+
+
+def test_the_latch_does_not_advance_while_not_actuating(monkeypatch):
+    advice = _advice([_room()], hours=48)
+    ctrl = _latched_ctrl(monkeypatch, advice)
+    src = _via(advice.eta + timedelta(hours=7))
+    ctrl.apply(src, None, None, commit=False, winter_advice=None)
+    assert ctrl.hold_until is not None                      # still latched
+
+
+class _MemStore:
+    def __init__(self, data=None):
+        self.data = data
+
+    async def async_load(self):
+        return self.data
+
+    async def async_save(self, data):
+        self.data = data
+
+
+async def test_the_preheat_latch_survives_a_restart(hass, monkeypatch):
+    """28/10: a 12:54 restart dropped the house back to Via mid pre-heat."""
+    _patch_return(monkeypatch)
+    store = _MemStore()
+    advice = _advice([_room()], hours=48)
+    ctrl = rh.AwayReturnController(store=store)
+    await ctrl.async_load()
+    ctrl.apply(_via(advice.start + timedelta(minutes=1)), hass, None, commit=True,
+               winter_advice=advice)
+    await hass.async_block_till_done()
+    assert store.data["latched"] is True
+
+    reborn = rh.AwayReturnController(store=store)
+    await reborn.async_load()
+    # Rooms already warm → a fresh advice would say WAITING again.
+    t = advice.start + timedelta(hours=1)
+    fresh = winter_setback_advice(
+        [_room(temp=21.5)], now=t, eta=advice.eta, outdoor=5.0,
+        floor=16.0, max_depth=6.0, max_lead=timedelta(hours=48))
+    out = reborn.apply(_via(t), hass, None, commit=True, winter_advice=fresh)
+    assert out.house_mode == "Casa"
+
+    reborn.apply(_via(advice.eta + timedelta(hours=7)), hass, None, commit=True,
+                 winter_advice=None)
+    await hass.async_block_till_done()
+    assert store.data == {"latched": False, "eta": None}

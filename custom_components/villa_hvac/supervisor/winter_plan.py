@@ -64,6 +64,13 @@ class WinterAdvice:
     # actually gets), not below the native Via. `depth` jumps 3↔5 at the cap
     # boundary while the drop is continuous (live 23/10: setpoints 16↔18.1).
     setpoint_depth: float = 0.0
+    # v0.89.0 optimum start: `start` is now the LIVE start (key rooms' current
+    # temperature + their recovery + margin); `planned_start` is the old
+    # coast-then-recover prediction, kept for the depth choice and display.
+    # Two runs (24/10, 28/10) were warm 6–7 h early: the rooms coast far less
+    # than the model predicts, so the planned start sat on the 12 h cap.
+    planned_start: datetime | None = None
+    live_start: datetime | None = None
 
 
 def outdoor_estimate(forecast, now: datetime, until: datetime, current: float | None):
@@ -136,6 +143,7 @@ def winter_setback_advice(
     rooms, *, now: datetime, eta: datetime | None, outdoor: float | None,
     floor: float, max_depth: float, min_depth: float = 0.0,
     max_lead: timedelta = timedelta(hours=12),
+    margin: timedelta = timedelta(minutes=30),
 ) -> WinterAdvice | None:
     """Hold the deepest allowed setback (≥ floor, ≤ max_depth below Casa) and
     start the house pre-heat at the earliest start of the KEY rooms, so they are
@@ -182,7 +190,9 @@ def winter_setback_advice(
         else:
             depth = min_depth
         plans, first = best
-    start = max(first.start, earliest) if first is not None else earliest
+    planned = max(first.start, earliest) if first is not None else earliest
+    live = _live_start(rooms, plans, eta, outdoor, margin)
+    start = max(live, earliest) if live is not None else planned
     drop = max(0.0, max(p.target - p.temp_at_start for p in plans))
     return WinterAdvice(
         eta=eta, hours=round(hours, 1), outdoor=round(outdoor, 1),
@@ -191,7 +201,30 @@ def winter_setback_advice(
         saved_dh=round(sum(p.saved_dh for p in plans), 1),
         capped=first is None or first.start < earliest,
         setpoint_depth=round(max(min_depth, min(depth, drop)), 1),
+        planned_start=planned, live_start=live,
     )
+
+
+def _live_start(rooms, plans, eta: datetime, outdoor: float, margin: timedelta):
+    """v0.89.0 optimum start: ETA − (slowest driver's recovery from its
+    CURRENT temperature) − margin. Re-evaluated every cycle, so as the room
+    coasts the start moves earlier by itself — no coast prediction involved.
+    Same drivers as the plan (key + plannable, else plannable). None when no
+    driver's recovery is computable (then the planned start is used)."""
+    by_zone = {r.zone: r for r in rooms}
+    drivers = ([p for p in plans if p.key and p.plannable]
+               or [p for p in plans if p.plannable])
+    needs = []
+    for p in drivers:
+        r = by_zone.get(p.zone)
+        if r is None:
+            continue
+        m = recovery_minutes(r.temp, r.target, outdoor, r.params)
+        if m is not None:
+            needs.append(m)
+    if not needs:
+        return None
+    return eta - timedelta(minutes=max(needs)) - margin
 
 
 # --- v0.85.0: hold the written depth (no setpoint flapping) -------------------

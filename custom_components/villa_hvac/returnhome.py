@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_RETURN_DAYPART_HOURS,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
+    DEFAULT_WINTER_RETURN_MAX_HOLD,
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_HOME,
@@ -41,6 +42,7 @@ from .const import (
     OPT_NOTIFY_TARGET,
     OPT_RETURN_MARGIN_MIN,
     OPT_RETURN_MAX_LEAD_HOURS,
+    OPT_WINTER_RETURN_MAX_HOLD,
     RETURN_ACTION_PREFIX,
     RETURN_ACTION_UNKNOWN,
     RETURN_DAYPART_EVENING,
@@ -67,7 +69,9 @@ from .supervisor.winter_plan import DepthHold, hold_depth
 _LOGGER = logging.getLogger(__name__)
 
 
-def _opt_float(entry: ConfigEntry, key: str, default: float) -> float:
+def _opt_float(entry: ConfigEntry | None, key: str, default: float) -> float:
+    if entry is None:
+        return default
     try:
         return float(entry.options.get(key, default))
     except (TypeError, ValueError):
@@ -77,14 +81,61 @@ def _opt_float(entry: ConfigEntry, key: str, default: float) -> float:
 class AwayReturnController:
     """Overrides the effective house mode while Via+armed (#8). Holds the latch."""
 
-    def __init__(self) -> None:
+    def __init__(self, store=None) -> None:
         self._latched = False
+        # v0.89.0: the ETA the latch was taken for (hold limit, re-plan on a
+        # changed ETA) + a Store so a restart mid pre-heat keeps it (28/10:
+        # a 12:54 restart dropped the house back to Via until someone arrived).
+        self._latched_eta: datetime | None = None
+        self._store = store
+        self._saved: tuple | None = None
         # v0.85.0: the winter WAITING depth actually written (held, quantised).
         self._depth_hold = DepthHold()
         # Last computed view, for the diagnostic sensor (read-only).
         self.decision: str | None = None
         self.eta = None
         self.lead: timedelta | None = None
+        self._max_hold: timedelta | None = None
+
+    async def async_load(self) -> None:
+        """v0.89.0: restore the latch persisted before a restart (best-effort)."""
+        if self._store is None:
+            return
+        try:
+            data = (await self._store.async_load()) or {}
+            eta = dt_util.parse_datetime(data.get("eta") or "")
+        except Exception:  # noqa: BLE001 - a corrupt file must never block setup
+            _LOGGER.warning("Could not load the return latch", exc_info=True)
+            return
+        if data.get("latched") and eta is not None:
+            self._latched, self._latched_eta = True, eta
+            _LOGGER.info("Return pre-heat latch restored (ETA %s)", eta)
+        self._saved = (self._latched, self._latched_eta)
+
+    def _commit_latch(self, hass, latched: bool, eta) -> None:
+        self._latched = latched
+        self._latched_eta = eta if latched else None
+        key = (self._latched, self._latched_eta)
+        if self._store is None or key == self._saved:
+            return
+        self._saved = key
+        data = {"latched": self._latched,
+                "eta": self._latched_eta.isoformat() if self._latched_eta else None}
+
+        async def _save() -> None:
+            try:
+                await self._store.async_save(data)
+            except Exception:  # noqa: BLE001 - persistence is best-effort
+                _LOGGER.debug("Return latch persist failed", exc_info=True)
+
+        hass.async_create_task(_save())
+
+    @property
+    def hold_until(self) -> datetime | None:
+        """v0.89.0: when an unanswered pre-heat gives up (None = not latched)."""
+        if not self._latched or self._latched_eta is None or self._max_hold is None:
+            return None
+        return self._latched_eta + self._max_hold
 
     @property
     def written_depth(self) -> float | None:
@@ -122,7 +173,11 @@ class AwayReturnController:
         opt_in = return_precond_enabled(hass, entry)
         armed = return_armed(hass, entry)
         if state.season == SEASON_WINTER:
-            return self._apply_winter(state, opt_in, armed, winter_advice, commit)
+            self._max_hold = timedelta(hours=_opt_float(
+                entry, OPT_WINTER_RETURN_MAX_HOLD, DEFAULT_WINTER_RETURN_MAX_HOLD))
+            return self._apply_winter(
+                state, opt_in, armed, winter_advice, commit, hass, self._max_hold)
+        self._max_hold = None
         # Local wall clock (review: state.now is UTC, so a "sera 19:00" ETA
         # landed at 21:00 CEST and the summer pre-cond ramped 2 h late).
         eta = return_eta(
@@ -155,7 +210,7 @@ class AwayReturnController:
             eta=eta, lead_time=lead, now=state.now, latched=self._latched,
         )
         if commit:
-            self._latched = new_latched
+            self._commit_latch(hass, new_latched, eta)
         self.decision, self.eta, self.lead = decision, eta, lead
         if decision == RETURN_WAITING:
             return replace(state, house_mode=HOUSE_MODE_VACATION, mode_offset=None)
@@ -164,29 +219,52 @@ class AwayReturnController:
         return state
 
 
-    def _apply_winter(self, state, opt_in: bool, armed: bool, advice, commit: bool):
+    def _apply_winter(self, state, opt_in: bool, armed: bool, advice, commit: bool,
+                      hass=None, max_hold: timedelta | None = None):
         """v0.81.0 W3 winter return pre-conditioning on the radiant model.
 
         WAITING keeps Via (comfort preset, setpoint-only winter) but with the
         ADVISED depth below Casa (W2) instead of the fixed Via offset; PRECOND
         switches to Casa at the advised start so the slow floor is warm by the
         ETA. Never building_protection (the v0.76 reason #8 was off in winter).
-        No advice (no ETA / no data) → inert, native Via."""
+        No advice (no ETA / no data) → inert, native Via.
+
+        v0.89.0: the start is the LIVE optimum start (W2 `start`); the latch
+        remembers its ETA, is dropped when the armed ETA changes (re-plan), and
+        gives up `max_hold` after the ETA when nobody came (24/10: Casa held
+        21 h for an empty house) — back to native Via until re-armed."""
         is_via = state.house_mode == HOUSE_MODE_AWAY
-        if self._latched and is_via and armed and opt_in:
-            # Hold & wait for presence (review MAJOR): once pre-heating, stay in
-            # Casa past the ETA and through any advice gap (no ETA left, a
-            # sensor dropout) until the owner arrives (#2c → Casa) or disarms.
-            self.decision = RETURN_PRECOND
-            return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
+        latched = self._latched
+        if latched and is_via and armed and opt_in:
+            new_eta = advice.eta if advice is not None else None
+            if new_eta is not None and new_eta != self._latched_eta:
+                # The owner moved the return: plan it afresh.
+                latched = False
+                if commit:
+                    self._commit_latch(hass, False, None)
+            elif (max_hold is not None and self._latched_eta is not None
+                  and state.now >= self._latched_eta + max_hold):
+                if commit:
+                    _LOGGER.info("Return pre-heat: nobody home %s after the ETA; "
+                                 "back to Via", max_hold)
+                    self._commit_latch(hass, False, None)
+                self.decision, self.eta, self.lead = None, self._latched_eta, None
+                return state
+            else:
+                # Hold & wait for presence (review MAJOR): once pre-heating, stay
+                # in Casa past the ETA and through any advice gap (no ETA left,
+                # a sensor dropout) until the owner arrives (#2c → Casa), disarms
+                # or the hold runs out.
+                self.decision = RETURN_PRECOND
+                return replace(state, house_mode=HOUSE_MODE_HOME, mode_offset=0.0)
         eta = advice.eta if advice is not None else None
         lead = (advice.eta - advice.start) if advice is not None else timedelta(0)
         decision, new_latched = return_decision(
             is_via=is_via and advice is not None, armed=armed, opt_in=opt_in,
-            eta=eta, lead_time=lead, now=state.now, latched=self._latched,
+            eta=eta, lead_time=lead, now=state.now, latched=latched,
         )
         if commit:
-            self._latched = new_latched
+            self._commit_latch(hass, new_latched, eta)
         self.decision, self.eta, self.lead = decision, eta, lead
         if decision == RETURN_WAITING:
             # v0.85.0: write the predicted drop, quantised and held (it used to

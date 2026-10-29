@@ -440,6 +440,16 @@ class WinterSetbackAdviceSensor(CoordinatorEntity[VillaHvacCoordinator], SensorE
             "hours_away": a.hours,
             "outdoor_used": a.outdoor,
             "preheat_start": dt_util.as_local(a.start).isoformat(),
+            # v0.89.0: `preheat_start` is the live optimum start; this is the
+            # coast-then-recover prediction it replaced.
+            "preheat_start_planned": (
+                dt_util.as_local(a.planned_start).isoformat()
+                if a.planned_start is not None else None
+            ),
+            "preheat_hold_until": (
+                dt_util.as_local(ar.hold_until).isoformat()
+                if getattr(ar, "hold_until", None) is not None else None
+            ),
             "limiting_room": a.limiting_room,
             "preheat_start_capped": a.capped,
             "key_rooms": [p.name for p in a.rooms if p.key],
