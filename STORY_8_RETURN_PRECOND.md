@@ -101,3 +101,11 @@ disabled/paused (l'override non forza zone #10/#4, che restano BP). Estendere
 
 ### Release
 `v0.25.0` (commit + tag + gh release), CI verde + test.
+
+### v0.91.0 — the arm switches itself off
+`switch.return_armed` stayed ON with a 28/10 date until 2/11 — and an armed
+switch also SKIPS the "quando torni?" ask on the next Via. `ReturnHomeManager`
+now checks every 5 min (pure `return_expired`): once the ETA (date + fascia) has
+come, it disarms at once if the house is no longer Via (owner back), else after
+`winter_return_max_hold_hours` (6 h) — the same wait-for-a-late-arrival as the
+winter latch.

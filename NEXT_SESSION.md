@@ -1,5 +1,16 @@
 # Next session — kickstart prompts
 
+## v0.91.0 — cellar "calda" + stale return arm (2026-11-02) — NOT DEPLOYED
+From the 2/11 log review. Cellar: mean-of-run sample + warm outranks dry air
+(STORY_CELLAR.md). Return: `return_armed` auto-off after the ETA. After deploy:
+`sensor.cantina_vini_stato` should mostly read `secca` (RH 46 %) not `calda`;
+reason `troppo_calda` → head setpoint 19 while above 21. `switch.return_armed`
+(still ON with 28/10) goes off within 5 min.
+Still open from the same review: Condominio grid power sensor unavailable >48 h
+(FusionSolar "energy balance" HTTP 418) ⇒ PV heating `no data`; fallback idea =
+`sensor.grid_consumption_power_2 − grid_injection_power_2` (kW). Smarty Modbus
+errors on both VMC units, both filters due, `switch.vmc_alerts` OFF.
+
 ## v0.90.0 — palestra + bagno damp control (2026-10-29) — NOT DEPLOYED
 Built from `STORY_GYM_DAMP.md` (see its "As built"). Deploy-dark: nothing moves
 until `switch.gym_damp` (default OFF) is on with the master.

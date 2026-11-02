@@ -199,7 +199,10 @@ do local bang-bang regulation.
   shared outdoor unit can heat (`cede_al_garage`). Sensors
   `sensor.cantina_vini_*`, `switch.cellar_alerts` (default ON). Deploy gate: retire
   the legacy `circolazione_aria_cantina_vini` / `master_circolazione_aria_cantina`
-  / `solo_ventilatore_cantina` automations.
+  / `solo_ventilatore_cantina` automations. v0.91.0: the sample is the MEAN of a
+  fan run (the reading swings ±1.5 °C within one run), and above t_high the
+  dry-air relax is dropped and the head is pushed 1 °C under the setpoint (≥18;
+  its own probe reads ~2 °C low) — reason `troppo_calda`.
 - **Palestra damp (v0.90.0, `STORY_GYM_DAMP.md`)** — `GymDampController` (before
   `SplitGroupController`) drives the bagno-palestra dehumidifier plug
   (`switch.shellyplugsg3_9070694d542c`, Shelly-native ONLY — the same plug is also
@@ -602,6 +605,8 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
         `switch.villa_hvac_return_precond` (opt-in, deploy-dark),
         `switch.villa_hvac_return_armed`, `date.villa_hvac_return_date`,
         `select.villa_hvac_return_daypart`, `sensor.villa_hvac_return_plan`.
+        v0.91.0: `return_armed` switches itself off once the ETA has passed
+        (at once if the house left Via, else after the 6 h max hold).
         Lead-time is ADVISORY until k converges (gain-limited rooms clamp to
         `OPT_RETURN_MAX_LEAD_HOURS`); fail-safe already covers it (override
         vanishes on unload → native Via). Spec: `STORY_8_RETURN_PRECOND.md`.

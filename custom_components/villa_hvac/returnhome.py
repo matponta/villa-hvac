@@ -23,7 +23,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -51,6 +54,7 @@ from .const import (
     SEASON_WINTER,
 )
 from .controller import (
+    current_house_mode,
     return_armed,
     return_date,
     return_daypart,
@@ -62,11 +66,14 @@ from .supervisor import (
     ReturnRoom,
     return_decision,
     return_eta,
+    return_expired,
     return_lead_time,
 )
 from .supervisor.winter_plan import DepthHold, hold_depth
 
 _LOGGER = logging.getLogger(__name__)
+
+RETURN_EXPIRY_CHECK = timedelta(minutes=5)
 
 
 def _opt_float(entry: ConfigEntry | None, key: str, default: float) -> float:
@@ -298,6 +305,7 @@ class ReturnHomeManager:
         self.entry = entry
         self._unsub_mode = None
         self._unsub_action = None
+        self._unsub_expiry = None
 
     def start(self) -> None:
         mode_id = self._entity_id("select", "house_mode")
@@ -308,12 +316,35 @@ class ReturnHomeManager:
         self._unsub_action = self.hass.bus.async_listen(
             "mobile_app_notification_action", self._on_action
         )
+        self._unsub_expiry = async_track_time_interval(
+            self.hass, self._check_expiry, RETURN_EXPIRY_CHECK
+        )
 
     def stop(self) -> None:
         if self._unsub_mode:
             self._unsub_mode()
         if self._unsub_action:
             self._unsub_action()
+        if self._unsub_expiry:
+            self._unsub_expiry()
+
+    @callback
+    def _check_expiry(self, now: datetime | None = None) -> None:
+        """v0.91.0: switch `return_armed` off once its time has come and gone."""
+        if not return_armed(self.hass, self.entry):
+            return
+        local = dt_util.as_local(now or dt_util.utcnow())
+        eta = return_eta(
+            return_date(self.hass, self.entry), return_daypart(self.hass, self.entry),
+            DEFAULT_RETURN_DAYPART_HOURS, local,
+        )
+        hold = timedelta(hours=_opt_float(
+            self.entry, OPT_WINTER_RETURN_MAX_HOLD, DEFAULT_WINTER_RETURN_MAX_HOLD))
+        is_via = current_house_mode(self.hass, self.entry) == HOUSE_MODE_AWAY
+        if return_expired(eta, local, is_via=is_via, hold=hold):
+            _LOGGER.info("Return %s is past (house %s): disarming",
+                         eta, "still Via" if is_via else "back")
+            self.hass.async_create_task(self._set_armed(False))
 
     def _entity_id(self, domain: str, suffix: str) -> str | None:
         registry = er.async_get(self.hass)

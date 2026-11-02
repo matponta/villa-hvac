@@ -237,3 +237,47 @@ def test_apply_latch_survives_when_not_committing(monkeypatch):
     out = ctrl.apply(_house(_now(11)), None, _ENTRY, commit=False)
     assert out.house_mode == HOUSE_MODE_HOME
     assert ctrl._latched is True
+
+
+# --- v0.91.0: the armed return switches itself off once its time is past -------
+
+from custom_components.villa_hvac.supervisor import return_expired  # noqa: E402
+
+HOLD = timedelta(hours=6)
+
+
+def test_expired_only_after_the_eta():
+    eta = _now(19)
+    assert not return_expired(None, _now(20), is_via=False, hold=HOLD)
+    assert not return_expired(eta, _now(18, 59), is_via=False, hold=HOLD)
+    assert return_expired(eta, _now(19), is_via=False, hold=HOLD)
+
+
+def test_expired_waits_for_a_late_arrival_while_still_via():
+    eta = _now(19)
+    assert not return_expired(eta, _now(23), is_via=True, hold=HOLD)
+    assert return_expired(eta, _now(1, d=16), is_via=True, hold=HOLD)
+
+
+def test_manager_disarms_a_stale_return(monkeypatch):
+    _patch(monkeypatch, rdate=date(2026, 7, 14))
+    monkeypatch.setattr(rh, "current_house_mode", lambda h, e: HOUSE_MODE_HOME)
+    mgr = rh.ReturnHomeManager(types.SimpleNamespace(), _ENTRY)
+    calls = []
+    monkeypatch.setattr(mgr, "_set_armed", lambda on: calls.append(on))
+    created = []
+    mgr.hass.async_create_task = lambda coro: created.append(coro)
+    mgr._check_expiry(_now(10))
+    assert calls == [False] and len(created) == 1
+
+
+def test_manager_keeps_a_future_or_held_return(monkeypatch):
+    _patch(monkeypatch)                                  # ETA 15/7 19:00
+    monkeypatch.setattr(rh, "current_house_mode", lambda h, e: HOUSE_MODE_AWAY)
+    mgr = rh.ReturnHomeManager(types.SimpleNamespace(), _ENTRY)
+    calls = []
+    monkeypatch.setattr(mgr, "_set_armed", lambda on: calls.append(on))
+    mgr.hass.async_create_task = lambda coro: None
+    mgr._check_expiry(_now(10))                          # before the ETA
+    mgr._check_expiry(_now(22))                          # late, still Via: wait
+    assert calls == []

@@ -40,6 +40,7 @@ from custom_components.villa_hvac.supervisor.cellar import (
     REASON_HOLD,
     REASON_NO_SAMPLE,
     REASON_RELAXED,
+    REASON_WARM,
     CellarSample,
     cellar_fan_wanted,
     cellar_head,
@@ -90,6 +91,40 @@ def test_sample_only_on_mixed_air():
                         dt.timedelta(minutes=90)) is s
     assert sample_fresh(s, T0 + MIX + dt.timedelta(minutes=91),
                         dt.timedelta(minutes=90)) is None
+
+
+def test_sample_is_the_mean_of_the_run():
+    """v0.91.0: the head's cold jet swings the reading ±1.5 °C within a run."""
+    since = T0 - MIX
+    s = None
+    for i, t in enumerate((22.6, 19.8, 21.4, 20.2)):
+        s = cellar_sample(s, fan_on=True, fan_since=since,
+                          now=T0 + dt.timedelta(seconds=30 * i),
+                          temp=t, rh=48.0, mix_min=MIX)
+    assert s.n == 4 and s.temp == pytest.approx(21.0)
+    # a new run starts a new mean
+    nxt = T0 + dt.timedelta(hours=1)
+    s2 = cellar_sample(s, fan_on=True, fan_since=nxt - MIX, now=nxt,
+                       temp=19.5, rh=50.0, mix_min=MIX)
+    assert (s2.temp, s2.n) == (19.5, 1)
+
+
+def test_warm_outranks_dry_air():
+    w = _w(False)                        # winter: setpoint 18, t_high 19
+    d = cellar_head(w, _s(temp=19.4, rh=46.0), drying=False, relaxed=True,
+                    hysteresis=3.0)
+    assert (d.setpoint, d.reason, d.warm, d.relaxed) == (18.0, REASON_WARM, True, False)
+    ww = cellar_window(False, summer_setpoint=18.0, winter_setpoint=20.0,
+                       rh_floor=55.0, rh_ceiling=70.0)  # t_high 21
+    d = cellar_head(ww, _s(temp=21.9, rh=46.0), drying=False, relaxed=True,
+                    hysteresis=3.0)
+    assert (d.setpoint, d.reason) == (19.0, REASON_WARM)
+    # stays warm down to t_high - 0.5, then back to the dry-air relax
+    assert cellar_head(ww, _s(temp=20.7, rh=46.0), drying=False, relaxed=False,
+                       hysteresis=3.0, warm=True).warm
+    d = cellar_head(ww, _s(temp=20.4, rh=46.0), drying=False, relaxed=False,
+                    hysteresis=3.0, warm=True)
+    assert (d.warm, d.setpoint, d.reason) == (False, 21.0, REASON_RELAXED)
 
 
 def test_head_holds_the_setpoint_in_band():

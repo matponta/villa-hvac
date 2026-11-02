@@ -312,9 +312,12 @@ def test_split_controller_cantina_dry_when_humid():
 
 def test_split_controller_cantina_relaxes_setpoint_when_dry():
     # dry cellar (44%) -> warmer setpoint so the compressor dries the wine less.
-    out = SplitGroupController()(_split_house(cantina_temp=25.0, cantina_rh=44.0))
+    out = SplitGroupController()(_split_house(cantina_temp=20.0, cantina_rh=44.0))
     assert out[hvac_mode_lever(CANTINA)] == "cool"
     assert out[temperature_lever(CANTINA)] == 20.5   # 19 + 1.5 relax
+    # v0.91.0: a dry but WARM cellar (above t_high 21) is cooled harder instead.
+    out = SplitGroupController()(_split_house(cantina_temp=25.0, cantina_rh=44.0))
+    assert out[temperature_lever(CANTINA)] == 18.0   # 19 - 1, at the unit floor
 
 
 # --- P1: fail-safe hand-back -------------------------------------------------

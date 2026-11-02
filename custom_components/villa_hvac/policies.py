@@ -1520,6 +1520,7 @@ class SplitGroupController:
         self._sample: CellarSample | None = None
         self._drying = False
         self._relaxed = False
+        self._warm = False
         self.cellar_view: dict | None = None
 
     @property
@@ -1552,7 +1553,7 @@ class SplitGroupController:
         fresh = sample_fresh(self._sample, state.now, CELLAR_SAMPLE_MAX_AGE)
         decision = cellar_head(
             window, fresh, drying=self._drying, relaxed=self._relaxed,
-            hysteresis=CELLAR_RH_HYSTERESIS,
+            hysteresis=CELLAR_RH_HYSTERESIS, warm=self._warm,
         )
         # v0.88.0: a manual heat call (garage, someone working there in winter)
         # owns the shared outdoor unit — a cooling wine head would block it.
@@ -1568,6 +1569,7 @@ class SplitGroupController:
             "temp": fresh.temp if fresh else None,
             "humidity": fresh.rh if fresh else None,
             "sample_at": self._sample.at.isoformat() if self._sample else None,
+            "sample_n": self._sample.n if self._sample else None,
             "window": {
                 "setpoint": window.setpoint, "t_low": window.t_low,
                 "t_high": window.t_high, "rh_floor": window.rh_floor,
@@ -1581,9 +1583,10 @@ class SplitGroupController:
             "enabled": state.split_enabled and actuate,
         }
         if not (actuate and state.split_enabled) or z is None or z.split_climate is None:
-            self._drying = self._relaxed = False
+            self._drying = self._relaxed = self._warm = False
             return {}
         self._drying, self._relaxed = decision.drying, decision.relaxed
+        self._warm = decision.warm
         on, since = split_dwell(
             decision.mode != "off", self._dwell.get(z.zone_id), state.now,
             state.split_min_on, state.split_min_off,

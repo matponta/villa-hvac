@@ -54,6 +54,7 @@ from .returnhome import (
     RETURN_WAITING,
     ReturnRoom,
     return_decision,
+    return_expired,
     return_eta,
     return_lead_time,
 )
@@ -281,6 +282,7 @@ __all__ = [
     "rebase_solar_units",
     "reconcile",
     "return_decision",
+    "return_expired",
     "return_eta",
     "return_lead_time",
     "rls_capacity_update",

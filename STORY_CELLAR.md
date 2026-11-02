@@ -71,6 +71,23 @@ Actuation needs `switch.supervisor` + `switch.split_ac`.
   yields too. Back to `cool` after the garage stops (3 min min-off). Without
   this a cooling cantina head would have blocked the garage heating.
 
+## v0.91.0 — a cellar that read "calda" half the time (2026-11-02)
+
+Live 31/10–2/11: `sensor.cantina_vini_stato` was `calda` 21 h of 48 (winter
+setpoint 20, t_high 21; sample 21.95 °C, RH 46 %). Two causes:
+
+- **The sample was one noisy point.** Within a single 20-min fan run the EP swings
+  19.7 ↔ 23 °C in a few minutes (the head's cold jet passing the sensor); the
+  sample was the run's LAST reading. Now `cellar_sample` averages every mixed
+  reading of the run (same `fan_since`; moving average past 40 readings for a
+  long drying run). `sample_n` on the sensor.
+- **Dry air beat warm air.** Below the RH floor the setpoint was raised to
+  t_high even with the cellar ABOVE t_high, and the head's own probe reads ~2 °C
+  under the mixed air (19 vs 21–22, integer) — it sat idle. Now above t_high
+  (until 0.5 °C under it) the relax is dropped and the setpoint goes
+  `WARM_PUSH` (1 °C) under the window setpoint, never below the unit's 18 °C;
+  reason `troppo_calda`.
+
 ## Open
 
 - A cellar that stays below 55 % needs a humidifier: the split can only dry.

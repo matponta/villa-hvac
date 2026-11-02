@@ -9,11 +9,18 @@ design, both measured live 2026-10-27/28:
   (a warm pocket); within 10 min of the fan going ON it reads ~19.5 °C / 50 %,
   the same water content (~8.7 g/m³) — that is the cellar. So only a reading
   taken with the fan running for `mix_min` counts (`cellar_sample`); it is held
-  between circulation runs and expires after `max_age`.
+  between circulation runs and expires after `max_age`. v0.91.0: within one run
+  the reading still swings ±1.5 °C in minutes (the head's cold jet passing the
+  sensor: 19.7 ↔ 23 °C on 31/10), so the sample is the MEAN of the run's mixed
+  readings, not its last value — the last value alone read "calda" ~45 % of the
+  time on 31/10–2/11.
 - **The split can only dry.** Cooling condenses water on the coil, so holding the
   wine cold and holding it humid pull against each other. Temperature wins
   (stability matters most for red wine); the setpoint is relaxed a little only
-  while the air is too dry, and never above the season's ceiling.
+  while the air is too dry, and never above the season's ceiling. v0.91.0: above
+  the ceiling the dry-air relax is dropped and the head is pushed `WARM_PUSH`
+  below the setpoint (never under the unit's 18 °C floor) — its own probe reads
+  ~2 °C under the mixed air (19 vs 21–22 °C), so the plain setpoint left it idle.
 
 Season windows (`CELLAR_WINDOWS`): the wine wants 12–14 °C and 60–70 % RH; the
 unit cannot go below 18 °C. Summer = hold the floor (18), tolerate up to 20.
@@ -38,8 +45,14 @@ CELLAR_UNKNOWN = "sconosciuta"
 REASON_HOLD = "mantieni"
 REASON_DRYING = "deumidifica"
 REASON_RELAXED = "aria_secca"
+REASON_WARM = "troppo_calda"           # v0.91.0: above t_high, push the head
 REASON_NO_SAMPLE = "senza_misura"
 REASON_YIELD_HEAT = "cede_al_garage"   # v0.88.0: a manual heat call owns the outdoor unit
+
+HEAD_FLOOR = 18.0        # the Daikin head's lowest cooling setpoint
+WARM_PUSH = 1.0          # °C under the setpoint while the cellar is above t_high
+WARM_HYSTERESIS = 0.5    # stays "warm" until this far under t_high
+SAMPLE_MEAN_MAX_N = 40   # ~20 min of 30 s ticks; beyond, a moving average
 
 
 @dataclass(frozen=True)
@@ -61,6 +74,8 @@ class CellarSample:
     temp: float
     rh: float
     at: datetime
+    run: datetime | None = None   # v0.91.0: fan run the mean belongs to
+    n: int = 1                    # readings in that mean
 
 
 @dataclass(frozen=True)
@@ -70,6 +85,7 @@ class CellarDecision:
     drying: bool             # hysteresis state to carry
     relaxed: bool            # hysteresis state to carry
     reason: str
+    warm: bool = False       # hysteresis state to carry (v0.91.0)
 
 
 def cellar_window(
@@ -102,12 +118,21 @@ def cellar_sample(
     rh: float | None,
     mix_min: timedelta,
 ) -> CellarSample | None:
-    """Take the reading only once the fan has mixed the air; else keep `prev`."""
+    """Take the reading only once the fan has mixed the air; else keep `prev`.
+
+    Within one run (same `fan_since`) the readings are averaged — a running mean,
+    a moving average past `SAMPLE_MEAN_MAX_N` (a drying run lasts hours)."""
     if (
         fan_on and fan_since is not None and now - fan_since >= mix_min
         and temp is not None and rh is not None
     ):
-        return CellarSample(temp, rh, now)
+        if prev is None or prev.run != fan_since:
+            return CellarSample(temp, rh, now, fan_since, 1)
+        n = min(prev.n + 1, SAMPLE_MEAN_MAX_N)
+        return CellarSample(
+            prev.temp + (temp - prev.temp) / n, prev.rh + (rh - prev.rh) / n,
+            now, fan_since, n,
+        )
     return prev
 
 
@@ -132,6 +157,7 @@ def cellar_head(
     drying: bool,
     relaxed: bool,
     hysteresis: float,
+    warm: bool = False,
 ) -> CellarDecision:
     """Mode + setpoint for the wine head.
 
@@ -140,6 +166,8 @@ def cellar_head(
       RH falls `hysteresis` below the ceiling.
     - RH below the floor: hold `cool`, setpoint raised by `relax` (capped at
       `t_high`) so the coil runs — and dries — less. Ends `hysteresis` above.
+    - v0.91.0, above `t_high` (until `WARM_HYSTERESIS` under it): temperature
+      outranks dry air — no relax, setpoint `WARM_PUSH` lower (>= HEAD_FLOOR).
     - no mixed sample: plain `cool` at the setpoint (the head self-regulates on
       its own probe); the hysteresis states are dropped.
     """
@@ -150,10 +178,16 @@ def cellar_head(
     relaxed = not drying and (
         rh < window.rh_floor or (relaxed and rh < window.rh_floor + hysteresis)
     )
+    warm = sample.temp > window.t_high or (
+        warm and sample.temp > window.t_high - WARM_HYSTERESIS
+    )
     if drying:
         if sample.temp <= window.setpoint + 0.5:
-            return CellarDecision("dry", None, True, False, REASON_DRYING)
-        return CellarDecision("cool", window.setpoint, True, False, REASON_DRYING)
+            return CellarDecision("dry", None, True, False, REASON_DRYING, warm)
+        return CellarDecision("cool", window.setpoint, True, False, REASON_DRYING, warm)
+    if warm:
+        sp = max(window.setpoint - WARM_PUSH, HEAD_FLOOR)
+        return CellarDecision("cool", sp, False, False, REASON_WARM, True)
     if relaxed:
         sp = min(window.setpoint + window.relax, window.t_high)
         return CellarDecision("cool", sp, False, True, REASON_RELAXED)

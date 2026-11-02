@@ -110,3 +110,17 @@ def return_decision(
     if latched or now >= window_start:
         return RETURN_PRECOND, True
     return RETURN_WAITING, False
+
+
+def return_expired(
+    eta: datetime | None, now: datetime, *, is_via: bool, hold: timedelta,
+) -> bool:
+    """v0.91.0: the armed return is over — disarm it.
+
+    Once the ETA has come: at once if the house has left Via (the owner is back,
+    or set another mode), else `hold` after the ETA — the pre-cond keeps waiting
+    for a late arrival that long, the same give-up as the winter latch. A stale
+    arm (28/10 still armed on 2/11) would otherwise silence the next Via ask."""
+    if eta is None or now < eta:
+        return False
+    return not is_via or now >= eta + hold
