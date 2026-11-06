@@ -424,6 +424,10 @@ async def test_house_state_reads_the_knx_pair_with_freshness(hass):
     with freeze_time(dt.datetime.now(dt.UTC) + dt.timedelta(minutes=31)):
         s = build_house_state(hass, entry, entry.runtime_data)
         assert s.gym_rh_palestra is None                # silent > 30 min -> stale
+        # v0.93.1: the UP Sense reports on change only — still in the mean
+        assert s.gym_rh_fallback == 67.0
+    with freeze_time(dt.datetime.now(dt.UTC) + dt.timedelta(hours=6, minutes=1)):
+        assert build_house_state(hass, entry, entry.runtime_data).gym_rh_fallback is None
 
 
 async def test_fail_safe_restores_the_plug_as_found(hass):

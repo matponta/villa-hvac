@@ -1,6 +1,7 @@
 # Next session — kickstart prompts
 
-## v0.93.0 — palestra RH = mean(KNX, UP Sense) (2026-11-06)
+## v0.93.0/.1 — palestra RH = mean(KNX, UP Sense) (2026-11-06) — LIVE
+v0.93.1: UP Sense freshness 6 h (it reports on change only; 30 min dropped it).
 The KNX palestra hygrometer went stale-low for ~1 h on 6/11 (76 → 55 %, back
 to 65–69 % after the restart) and swaps sides with the UP Sense by ~10 points
 over days. The control now averages the two (`rh_palestra_media`). Live

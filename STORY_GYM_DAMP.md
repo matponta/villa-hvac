@@ -291,3 +291,10 @@ never on 6/11, gap ≤ 7). Owner decision: average them.
 - Thresholds set live the same day (owner): dehumidifier 63/58, split 63 door
   closed / 68 door open (wall-surface mould criterion with soil walls at an
   assumed 16–18 °C ⇒ air ≤ 59–66 %).
+
+### v0.93.1 — the UP Sense reports on change only
+Live 6/11 19:39: `up=None`, `source=knx` — the mean wasn't in use. The UP
+Sense sends a value only when it moves by 1 % (one value held up to ~5 h on
+4–6/11), so the 30-min `last_reported` freshness dropped it most of the time.
+It now gets its own window, `GYM_UP_STALE` = 6 h (offline still shows as
+`unavailable`). The KNX pair keeps 30 min (they report every 5 min).

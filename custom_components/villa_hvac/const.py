@@ -1237,6 +1237,10 @@ GYM_SPLIT_HYSTERESIS = 4.0   # % RH: the split stops this far below its threshol
 GYM_SPLIT_MIN_TEMP = 18.0    # °C: `dry` cools — never below this (radiant heats)
 OUTDOOR_DEWPOINT = "sensor.gw3000a_dewpoint"
 GYM_RH_STALE_MIN = timedelta(minutes=30)
+# v0.93.1: the UP Sense only reports when its value moves by 1 % (held one value
+# up to ~5 h on 4-6/11); with the 30-min window it dropped out of the palestra
+# mean most of the time. Offline shows as `unavailable` anyway.
+GYM_UP_STALE = timedelta(hours=6)
 GYM_BLIND_HOLD = timedelta(hours=2)      # every sensor out: hold, then dehumidifier OFF
 GYM_DEHUM_RUN_W = 100.0                  # W: above = running (measured ~200 W, owner 2026-10-29)
 # Knobs (number entities). Unique-id suffix -> (name, min, max, step, default,

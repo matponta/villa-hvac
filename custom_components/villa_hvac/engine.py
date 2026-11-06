@@ -71,6 +71,7 @@ from .const import (
     GYM_RH_FALLBACK,
     GYM_RH_PALESTRA,
     GYM_RH_STALE_MIN,
+    GYM_UP_STALE,
     GYM_TEMP,
     OUTDOOR_DEWPOINT,
     CONDOMINIO_BATTERY_CAPACITY,
@@ -869,7 +870,7 @@ def build_house_state(
         gym_enabled=gym_damp_enabled(hass, entry),
         gym_rh_palestra=_fresh_num(hass, GYM_RH_PALESTRA, GYM_RH_STALE_MIN.total_seconds()),
         gym_rh_bagno=_fresh_num(hass, GYM_RH_BAGNO, GYM_RH_STALE_MIN.total_seconds()),
-        gym_rh_fallback=_fresh_num(hass, GYM_RH_FALLBACK, GYM_RH_STALE_MIN.total_seconds()),
+        gym_rh_fallback=_fresh_num(hass, GYM_RH_FALLBACK, GYM_UP_STALE.total_seconds()),
         gym_temp=_num(hass, GYM_TEMP),
         gym_dewpoint_outdoor=_num(hass, OUTDOOR_DEWPOINT),
         gym_dehum_on=(
