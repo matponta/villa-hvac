@@ -51,6 +51,8 @@ from .const import (
     CELLAR_ZONE,
     GYM_BLIND_HOLD,
     GYM_DEHUM_SWITCH,
+    GYM_SPLIT_HYSTERESIS,
+    GYM_SPLIT_MIN_TEMP,
     DEFAULT_SPLIT_CANTINA_SETPOINT,
     DEAD_FANCOILS,
     COOL_CAPACITY,
@@ -1392,6 +1394,7 @@ class GymDampController:
         self._active = False
         self._stage2_since = None
         self._blind_since = None
+        self._split_active = False    # v0.92.0 off-season split hysteresis
         self._dwell: tuple[bool, object] | None = None
         self._snapshot: bool | None = None
 
@@ -1439,13 +1442,19 @@ class GymDampController:
             blind_for=now - self._blind_since if self._blind_since else None,
             blind_hold=GYM_BLIND_HOLD,
             ceiling=state.gym_rh_ceiling, release=state.gym_rh_release,
+            split_active=self._split_active, door_open=state.gym_door_open,
+            split_rh_closed=state.gym_split_rh_closed,
+            split_rh_open=state.gym_split_rh_open,
+            split_hysteresis=GYM_SPLIT_HYSTERESIS,
+            temp=state.gym_temp, split_min_temp=GYM_SPLIT_MIN_TEMP,
         )
         self._active = decision.active
+        self._split_active = decision.split_active
         # stage 2 clock: the split drying alone while still at/above the ceiling
         above = decision.rh_ctrl is not None and decision.rh_ctrl >= state.gym_rh_ceiling
-        if decision.split_humidity == "dry" and above:
+        if summer and decision.split_humidity == "dry" and above:
             self._stage2_since = self._stage2_since or now
-        elif decision.rh_ctrl is not None:
+        elif decision.rh_ctrl is not None or not summer:
             self._stage2_since = None
         enabled = actuate and state.gym_enabled
         self.decision = decision if enabled else None
@@ -1464,6 +1473,8 @@ class GymDampController:
             "dewpoint_outdoor": state.gym_dewpoint_outdoor,
             "ceiling": state.gym_rh_ceiling,
             "release": state.gym_rh_release,
+            "door_open": state.gym_door_open,
+            "split_threshold": decision.split_threshold,
             "dehum_on": state.gym_dehum_on,
             "dehum_power": state.gym_dehum_power,
             "stage2_since": self._stage2_since.isoformat() if self._stage2_since else None,
@@ -1665,8 +1676,11 @@ class SplitGroupController:
             # ON: emit mode -> setpoint -> fan (C7 order; dict insertion order kept).
             # When the dwell HOLDS us on past a desired-off (min-on not elapsed) keep
             # cooling at the comfort setpoint rather than emitting the desired `off`.
-            emit_mode = mode if desired_on else "cool"
-            emit_sp = setpoint if desired_on else comfort_sp
+            # v0.92.0: outside summer the only reason to be on is `dry` — a
+            # min-on hold keeps drying, never cools a heated room.
+            hold_mode, hold_sp = ("cool", comfort_sp) if summer else ("dry", None)
+            emit_mode = mode if desired_on else hold_mode
+            emit_sp = setpoint if desired_on else hold_sp
             out[hv] = emit_mode        # cool OR dry (both cool-side); dry has no setpoint
             if emit_sp is not None:
                 out[temperature_lever(z.split_climate)] = float(emit_sp)

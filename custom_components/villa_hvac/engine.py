@@ -65,6 +65,7 @@ from .const import (
     CELLAR_FAN,
     CELLAR_ZONE,
     GYM_DEHUM_POWER,
+    GYM_DOOR,
     GYM_DEHUM_SWITCH,
     GYM_RH_BAGNO,
     GYM_RH_FALLBACK,
@@ -883,7 +884,17 @@ def build_house_state(
         gym_dehum_min_on=timedelta(minutes=gym["gym_dehum_min_on"]),
         gym_dehum_min_off=timedelta(minutes=gym["gym_dehum_min_off"]),
         gym_stage2_delay=timedelta(minutes=gym["gym_stage2_delay"]),
+        gym_door_open=_door_open(hass.states.get(GYM_DOOR)),
+        gym_split_rh_closed=gym["gym_split_rh_closed"],
+        gym_split_rh_open=gym["gym_split_rh_open"],
     )
+
+
+def _door_open(state) -> bool | None:
+    """v0.92.0: a door contact read as open/closed (None = unknown)."""
+    if state is None or state.state not in (STATE_ON, STATE_OFF):
+        return None
+    return state.state == STATE_ON
 
 
 class WinterModelStore(RoomModelStore):

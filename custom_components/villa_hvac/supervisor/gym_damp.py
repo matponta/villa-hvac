@@ -14,8 +14,13 @@ Rules (owner + physics):
   reads 15–25 points low all year. `rh_ctrl = max(palestra, bagno)`; one KNX
   sensor stale → the other; both stale → the UP Sense on the stairs door;
   everything blind → hold the last state for `blind_hold`, then stop.
-- **Winter: dehumidifier only.** `dry` cools the room and fights the radiant;
-  the dehumidifier's ~250 W is a bonus.
+- **Outside summer: dehumidifier first, split `dry` on top (v0.92.0, owner
+  2026-11-06).** The split joins when the room is humid enough, with a lower
+  threshold while the palestra door (`binary_sensor.up_sense_contact`) is
+  CLOSED — the split then dries a closed room — and a higher one while it is
+  open or unknown (the split would also dry the stairwell). It stops
+  `split_hysteresis` below its threshold and never runs while the room is
+  colder than `split_min_temp` (`dry` cools; the radiant must not chase it).
 - **Summer: split first.** It removes heat AND water; the dehumidifier dumps
   its heat into a room being cooled, so it joins only after `stage2_delay` of
   split-alone above the ceiling, or when the split can't help (yielding to a
@@ -26,7 +31,7 @@ Rules (owner + physics):
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 # Reasons (Italian — they surface verbatim as the sensor state).
@@ -34,6 +39,7 @@ REASON_DRY = "asciutto"
 REASON_DEHUM = "deumidifica"
 REASON_SPLIT_DRY = "split_dry"
 REASON_SPLIT_AND_DEHUM = "split_dry+deumidificatore"
+REASON_DEHUM_AND_SPLIT = "deumidificatore+split_dry"   # v0.92.0, outside summer
 REASON_SPLIT_BUSY = "split_occupato"        # the split yields to a garage heat call
 REASON_FALLBACK = "sensore_ripiego"         # deciding on the UP Sense
 REASON_BLIND = "sensori_ko"
@@ -81,6 +87,8 @@ class GymDampDecision:
     reason: str
     rh_ctrl: float | None
     source: str
+    split_active: bool = False   # v0.92.0: off-season split hysteresis state to carry
+    split_threshold: float | None = None   # v0.92.0: the door-dependent split start
 
 
 def gym_damp_decision(
@@ -98,12 +106,25 @@ def gym_damp_decision(
     blind_hold: timedelta,
     ceiling: float,
     release: float,
+    split_active: bool = False,
+    door_open: bool | None = None,
+    split_rh_closed: float | None = None,
+    split_rh_open: float | None = None,
+    split_hysteresis: float = 4.0,
+    temp: float | None = None,
+    split_min_temp: float = 18.0,
 ) -> GymDampDecision:
     """One cycle of the damp law. `active` is the carried hysteresis state;
     `stage2_elapsed` is how long the split has been drying alone above the
     ceiling (None = not running); `blind_for` how long every sensor has been
-    out (None = not blind)."""
+    out (None = not blind).
+
+    v0.92.0: outside summer the split `dry` joins on its own hysteresis —
+    start at `split_rh_closed` (door closed) / `split_rh_open` (door open or
+    unknown), stop `split_hysteresis` below it. `split_rh_*` None = no
+    off-season split (the v0.90 law)."""
     rh, source = gym_rh_source(rh_palestra, rh_bagno, rh_fallback)
+    threshold = split_rh_closed if door_open is False else split_rh_open
     if rh is None:
         if blind_for is not None and blind_for >= blind_hold:
             return GymDampDecision(False, False, None, REASON_BLIND, None, source)
@@ -123,12 +144,33 @@ def gym_damp_decision(
         split_yielding=split_yielding, stage2_elapsed=stage2_elapsed,
         stage2_delay=stage2_delay, rh=rh, source=source,
     )
-    if source == SOURCE_FALLBACK:
-        return GymDampDecision(
-            decision.active, decision.dehum, decision.split_humidity,
-            REASON_FALLBACK, rh, source,
+    if not summer and threshold is not None:
+        decision = _off_season_split(
+            decision, rh=rh, threshold=threshold, carried=split_active,
+            hysteresis=split_hysteresis,
+            usable=(
+                split_available and not split_yielding
+                and temp is not None and temp >= split_min_temp
+            ),
         )
+    if source == SOURCE_FALLBACK:
+        return replace(decision, reason=REASON_FALLBACK)
     return decision
+
+
+def _off_season_split(
+    decision: GymDampDecision, *, rh: float, threshold: float, carried: bool,
+    hysteresis: float, usable: bool,
+) -> GymDampDecision:
+    """Add the palestra split's `dry` on top of the dehumidifier (not summer)."""
+    want = rh >= threshold or (carried and rh > threshold - hysteresis)
+    if not (want and usable):
+        return replace(decision, split_active=False, split_threshold=threshold)
+    reason = REASON_DEHUM_AND_SPLIT if decision.dehum else REASON_SPLIT_DRY
+    return replace(
+        decision, split_humidity="dry", reason=reason,
+        split_active=True, split_threshold=threshold,
+    )
 
 
 def _act(

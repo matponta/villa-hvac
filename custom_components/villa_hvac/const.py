@@ -1229,6 +1229,12 @@ GYM_RH_PALESTRA = "sensor.umidita_palestra"              # KNX 8/0/2
 GYM_RH_BAGNO = "sensor.umidita_bagno_palestra"           # KNX 8/0/3
 GYM_RH_FALLBACK = "sensor.up_sense_humidity"             # UniFi UP Sense, stairs door
 GYM_TEMP = "sensor.palestra_temperature"                 # for the dew point
+# v0.92.0: palestra -> stairs door (UniFi UP Sense contact, `on` = OPEN). Closed
+# ~77 % of 30/10-6/11. Outside summer the split `dry` joins the dehumidifier at
+# a lower RH with the door closed, a higher one open/unknown.
+GYM_DOOR = "binary_sensor.up_sense_contact"
+GYM_SPLIT_HYSTERESIS = 4.0   # % RH: the split stops this far below its threshold
+GYM_SPLIT_MIN_TEMP = 18.0    # °C: `dry` cools — never below this (radiant heats)
 OUTDOOR_DEWPOINT = "sensor.gw3000a_dewpoint"
 GYM_RH_STALE_MIN = timedelta(minutes=30)
 GYM_BLIND_HOLD = timedelta(hours=2)      # every sensor out: hold, then dehumidifier OFF
@@ -1246,6 +1252,11 @@ GYM_NUMBERS = {
                           15.0, "min", "mdi:timer-off-outline"),
     "gym_stage2_delay": ("Palestra attesa deumidificatore in estate", 15.0, 480.0, 15.0,
                          120.0, "min", "mdi:timer-sand"),
+    # v0.92.0: off-season split `dry` thresholds by the palestra door state.
+    "gym_split_rh_closed": ("Palestra split deumidifica porta chiusa", 50.0, 85.0, 1.0,
+                            62.0, "%", "mdi:door-closed"),
+    "gym_split_rh_open": ("Palestra split deumidifica porta aperta", 50.0, 85.0, 1.0,
+                          68.0, "%", "mdi:door-open"),
 }
 # Alerts (switch.gym_damp_alerts, default ON): once per episode.
 GYM_ALERT_TAG = "villa_hvac_palestra_umidita"

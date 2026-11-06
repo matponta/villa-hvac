@@ -1,5 +1,16 @@
 # Next session — kickstart prompts
 
+## v0.92.0 — palestra split `dry` also outside summer (2026-11-06) — NOT DEPLOYED
+Owner: when the palestra is damp, run the split in `dry` too — especially with
+the palestra door closed, also open but at a higher RH. Outside summer the split
+`dry` now joins the dehumidifier at `number.palestra_split_deumidifica_porta_chiusa`
+(62 %) with `binary_sensor.up_sense_contact` closed, `…_porta_aperta` (68 %)
+open/unknown; stops 4 % below; never below 18 °C room temp; yields to garage heat.
+Needs `switch.split_ac` ON too (the head's single writer). Summer law unchanged.
+After deploy: `sensor.hvac_palestra_umidita` attrs `door_open`, `split_threshold`;
+reason `deumidificatore+split_dry`. Watch: radiant fighting the cooling `dry`
+(palestra temp, heat call), trio outdoor unit in low-ambient cool mode.
+
 ## v0.91.0 — cellar "calda" + stale return arm (2026-11-02) — NOT DEPLOYED
 From the 2/11 log review. Cellar: mean-of-run sample + warm outranks dry air
 (STORY_CELLAR.md). Return: `return_armed` auto-off after the ETA. After deploy:

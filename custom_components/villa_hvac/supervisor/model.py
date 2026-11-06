@@ -235,6 +235,10 @@ class HouseState:
     gym_dehum_min_on: timedelta = timedelta(minutes=30)
     gym_dehum_min_off: timedelta = timedelta(minutes=15)
     gym_stage2_delay: timedelta = timedelta(minutes=120)
+    # v0.92.0: off-season split `dry` (door-dependent threshold; None = off).
+    gym_door_open: bool | None = None
+    gym_split_rh_closed: float | None = None
+    gym_split_rh_open: float | None = None
 
 
 

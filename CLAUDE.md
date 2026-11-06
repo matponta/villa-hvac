@@ -209,7 +209,10 @@ do local bang-bang regulation.
   in Matter/Apple Home) on `max(sensor.umidita_palestra, sensor.umidita_bagno_palestra)`
   62/55 %, year-round; summer = palestra split `dry` first (read by the split
   controller, the head's single writer), dehumidifier after 120 min / when the split
-  yields. NEVER control on EP1 3febdc RH (reads 15–25 points low). Opt-in
+  yields. v0.92.0: outside summer the split `dry` ALSO joins on a door-dependent
+  threshold (`binary_sensor.up_sense_contact` closed 62 % / open 68 %, −4 %
+  release, room ≥18 °C, yields to garage heat).
+  NEVER control on EP1 3febdc RH (reads 15–25 points low). Opt-in
   `switch.gym_damp`; plug restored to its found state on hand-back. VMC untouched.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is
   composed by the pure `compose_center` (supervisor.py) — base mode center + AT MOST

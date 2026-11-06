@@ -535,8 +535,9 @@ def split_head_target(
     `comfort` (palestra) cools only in summer while someone is home and the room is
     occupied, else it is turned off. v0.90.0 (STORY_GYM_DAMP): `humidity_mode="dry"`
     from the gym damp law makes it dry the room in summer whoever is home — `cool`
-    if the room is occupied and warm (cooling dries too), else `dry`. Winter is
-    always `off` (dry would fight the radiant; the dehumidifier carries it).
+    if the room is occupied and warm (cooling dries too), else `dry`. v0.92.0:
+    outside summer the damp law may ask `dry` too (on top of the dehumidifier,
+    door-dependent threshold, room-temperature floor) → `dry`; otherwise `off`.
     """
     if role == SPLIT_ROLE_STORAGE:
         if rh is not None and rh > rh_ceiling:
@@ -549,7 +550,7 @@ def split_head_target(
         return ("cool", setpoint)
     if role == SPLIT_ROLE_COMFORT:
         if not summer:
-            return ("off", None)
+            return ("dry", None) if humidity_mode == "dry" else ("off", None)
         if humidity_mode == "dry":
             if home and occupied and temp is not None and temp > comfort_setpoint:
                 return ("cool", comfort_setpoint)

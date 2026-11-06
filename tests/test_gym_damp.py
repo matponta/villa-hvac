@@ -17,6 +17,7 @@ from custom_components.villa_hvac.const import (
     DOMAIN,
     GYM_DEHUM_POWER,
     GYM_DEHUM_SWITCH,
+    GYM_DOOR,
     GYM_RH_BAGNO,
     GYM_RH_FALLBACK,
     GYM_RH_PALESTRA,
@@ -41,6 +42,7 @@ from custom_components.villa_hvac.supervisor import (
 from custom_components.villa_hvac.supervisor.gym_damp import (
     REASON_BLIND,
     REASON_DEHUM,
+    REASON_DEHUM_AND_SPLIT,
     REASON_DISABLED,
     REASON_DRY,
     REASON_FALLBACK,
@@ -136,6 +138,61 @@ def test_fallback_and_blind():
     assert not gone.dehum and not gone.active and gone.reason == REASON_BLIND
 
 
+# --- v0.92.0: off-season split `dry`, door-dependent threshold ---------------------
+
+def _w(rh, *, door_open, split_active=False, temp=21.0, **kw):
+    return _d(rh, split_active=split_active, door_open=door_open,
+              split_rh_closed=62.0, split_rh_open=68.0, temp=temp, **kw)
+
+
+def test_door_closed_split_joins_the_dehumidifier_at_the_lower_threshold():
+    d = _w(62.0, door_open=False)
+    assert (d.dehum, d.split_humidity, d.reason) == (True, "dry", REASON_DEHUM_AND_SPLIT)
+    assert d.split_active and d.split_threshold == 62.0
+
+
+def test_door_open_needs_a_higher_rh():
+    d = _w(65.0, door_open=True)
+    assert d.dehum and d.split_humidity is None and d.split_threshold == 68.0
+    assert _w(68.0, door_open=True).split_humidity == "dry"
+
+
+def test_unknown_door_counts_as_open():
+    assert _w(65.0, door_open=None).split_humidity is None
+    assert _w(65.0, door_open=None).split_threshold == 68.0
+
+
+def test_split_hysteresis_and_door_change():
+    assert _w(59.0, door_open=False, split_active=True, active=True).split_humidity == "dry"
+    assert _w(58.0, door_open=False, split_active=True, active=True).split_humidity is None
+    # door opens mid-run: the open threshold applies (68 - 4 = 64)
+    assert _w(65.0, door_open=True, split_active=True, active=True).split_humidity == "dry"
+    assert _w(64.0, door_open=True, split_active=True, active=True).split_humidity is None
+
+
+def test_split_off_season_guards():
+    assert _w(70.0, door_open=False, temp=17.9).split_humidity is None   # too cold
+    assert _w(70.0, door_open=False, temp=None).split_humidity is None   # temp unknown
+    assert _w(70.0, door_open=False, split_available=False).split_humidity is None
+    d = _w(70.0, door_open=False, split_yielding=True)                  # garage heat
+    assert d.split_humidity is None and d.dehum
+    assert _w(None, door_open=False, blind_for=M).split_humidity is None  # blind
+
+
+def test_split_alone_if_its_threshold_is_below_the_ceiling():
+    d = _d(60.0, door_open=False, split_rh_closed=58.0, split_rh_open=68.0, temp=21.0)
+    assert (d.dehum, d.split_humidity, d.reason) == (False, "dry", REASON_SPLIT_DRY)
+
+
+def test_without_thresholds_the_v090_law_is_unchanged():
+    assert _d(70.0, door_open=False, temp=21.0).split_humidity is None
+
+
+def test_summer_ignores_the_door():
+    d = _w(62.0, door_open=True, summer=True)
+    assert (d.dehum, d.split_humidity, d.reason) == (False, "dry", REASON_SPLIT_DRY)
+
+
 # --- the split head's `dry` -------------------------------------------------------
 
 def _tgt(humidity_mode, *, summer=True, home=True, occupied=False, temp=23.0):
@@ -146,8 +203,10 @@ def _tgt(humidity_mode, *, summer=True, home=True, occupied=False, temp=23.0):
     )
 
 
-def test_split_never_dries_in_winter():
-    assert _tgt("dry", summer=False, occupied=True, temp=26.0) == ("off", None)
+def test_split_off_season_dries_only_when_asked():
+    # v0.92.0: the damp law may ask `dry` outside summer; otherwise still off.
+    assert _tgt("dry", summer=False, occupied=True, temp=26.0) == ("dry", None)
+    assert _tgt(None, summer=False, occupied=True, temp=26.0) == ("off", None)
 
 
 def test_split_dries_an_empty_or_away_gym_in_summer():
@@ -176,7 +235,8 @@ def _palestra(mode="off", occupied=False):
 
 
 def _house(*, now=T0, enabled=True, split=True, summer=False, rh_p=63.6, rh_b=62.3,
-           rh_f=67.0, plug=False, mode=HOUSE_MODE_HOME, garage=None, occupied=False):
+           rh_f=67.0, plug=False, mode=HOUSE_MODE_HOME, garage=None, occupied=False,
+           door=None, thresholds=None, temp=21.7):
     zones = {"palestra": _palestra(occupied=occupied)}
     if garage is not None:
         zones["garage"] = ZoneSnapshot(
@@ -189,7 +249,10 @@ def _house(*, now=T0, enabled=True, split=True, summer=False, rh_p=63.6, rh_b=62
         house_mode=mode, house_setpoint=25.0, split_enabled=split,
         split_palestra_setpoint=24.0, split_min_on=5 * M, split_min_off=3 * M,
         gym_enabled=enabled, gym_rh_palestra=rh_p, gym_rh_bagno=rh_b,
-        gym_rh_fallback=rh_f, gym_temp=21.7, gym_dehum_on=plug, gym_dehum_power=0.0,
+        gym_rh_fallback=rh_f, gym_temp=temp, gym_dehum_on=plug, gym_dehum_power=0.0,
+        gym_door_open=door,
+        gym_split_rh_closed=thresholds[0] if thresholds else None,
+        gym_split_rh_open=thresholds[1] if thresholds else None,
     )
 
 
@@ -274,6 +337,37 @@ def test_summer_garage_heat_turns_the_split_off_and_the_plug_on():
     assert gym.view["reason"] == REASON_SPLIT_BUSY
 
 
+def test_winter_door_closed_dries_with_both():
+    gym, split = _pair()
+    out = _run(gym, split, _house(door=False, thresholds=(62.0, 68.0)))
+    assert out[PLUG] == "on" and out[hvac_mode_lever(PALESTRA)] == "dry"
+    assert temperature_lever(PALESTRA) not in out
+    assert gym.view["reason"] == REASON_DEHUM_AND_SPLIT
+    assert gym.view["door_open"] is False and gym.view["split_threshold"] == 62.0
+
+
+def test_winter_door_open_keeps_the_split_off_until_68():
+    gym, split = _pair()
+    out = _run(gym, split, _house(door=True, thresholds=(62.0, 68.0)))
+    assert out[PLUG] == "on" and out[hvac_mode_lever(PALESTRA)] == "off"
+
+
+def test_winter_min_on_hold_keeps_drying_never_cools():
+    gym, split = _pair()
+    _run(gym, split, _house(door=False, thresholds=(62.0, 68.0)))
+    out = _run(gym, split, _house(now=T0 + 2 * M, door=True, thresholds=(62.0, 68.0)))
+    assert out[hvac_mode_lever(PALESTRA)] == "dry"      # split min-on 5 min holds
+    assert temperature_lever(PALESTRA) not in out
+    out = _run(gym, split, _house(now=T0 + 6 * M, door=True, thresholds=(62.0, 68.0)))
+    assert out[hvac_mode_lever(PALESTRA)] == "off"
+
+
+def test_winter_garage_heat_keeps_the_split_off():
+    gym, split = _pair()
+    out = _run(gym, split, _house(door=False, thresholds=(62.0, 68.0), garage="heat"))
+    assert out[hvac_mode_lever(PALESTRA)] == "off" and out[PLUG] == "on"
+
+
 def test_gym_disabled_leaves_the_split_as_before():
     gym, split = _pair()
     out = _run(gym, split, _house(summer=True, enabled=False))
@@ -304,6 +398,12 @@ async def test_house_state_reads_the_knx_pair_with_freshness(hass):
     assert s.gym_dehum_on is False and s.gym_dehum_power == 1.2
     assert (s.gym_rh_ceiling, s.gym_rh_release) == (62.0, 55.0)
     assert s.gym_stage2_delay == 120 * M and not s.gym_enabled
+    assert s.gym_door_open is None
+    assert (s.gym_split_rh_closed, s.gym_split_rh_open) == (62.0, 68.0)
+    hass.states.async_set(GYM_DOOR, "off")
+    assert build_house_state(hass, entry, entry.runtime_data).gym_door_open is False
+    hass.states.async_set(GYM_DOOR, "on")
+    assert build_house_state(hass, entry, entry.runtime_data).gym_door_open is True
     assert s.zones["palestra"].humidity == 63.6
     with freeze_time(dt.datetime.now(dt.UTC) + dt.timedelta(minutes=31)):
         s = build_house_state(hass, entry, entry.runtime_data)

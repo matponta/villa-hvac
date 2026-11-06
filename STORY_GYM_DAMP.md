@@ -248,3 +248,23 @@ Observe-only tick while dark (keep the view/telemetry live, like `observe_dark`)
   "bagno palestra has no RH sensor" comment the brief mentions was not found in
   `const.py`.
 - Tests: `tests/test_gym_damp.py` (27). Suite 914 green, ruff clean.
+
+## v0.92.0 — split `dry` outside summer too, by the door (2026-11-06)
+
+Owner: *"quando c'è umido in palestra accendiamo anche lo split in deumidifica,
+soprattutto se la porta palestra è chiusa (ma anche se è aperta, con una soglia
+di umidità maggiore)."* This lifts G3 (winter split OFF) for humidity.
+
+- Door = `binary_sensor.up_sense_contact` (palestra → stairs, `on` = open;
+  closed ~77 % of 30/10–6/11 — the "~96 % open" in §1 no longer holds).
+- Outside summer the dehumidifier law is unchanged; the split `dry` is added on
+  its own hysteresis: start at `gym_split_rh_closed` (62 %) door closed /
+  `gym_split_rh_open` (68 %) door open or unknown, stop `GYM_SPLIT_HYSTERESIS`
+  (4 %) below the threshold in force (a door opening mid-run raises it).
+- Guards: room temp ≥ `GYM_SPLIT_MIN_TEMP` (18 °C, unknown = no split — `dry`
+  cools, the radiant would chase it); garage heat call → split off; split
+  unavailable / `switch.split_ac` off → dehumidifier only; blind → no split.
+- `split_head_target` (comfort, not summer) → `("dry", None)` when asked; the
+  split min-on hold now keeps `dry` outside summer (never `cool` a heated room).
+- Summer unchanged (split first, door ignored).
+- Reason `deumidificatore+split_dry`; view gains `door_open`, `split_threshold`.
