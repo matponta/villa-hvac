@@ -117,6 +117,7 @@ from .supervisor.gym_damp import (
     GymDampDecision,
     dew_point,
     gym_damp_decision,
+    gym_palestra_rh,
 )
 from .supervisor.cellar import (
     REASON_HOLD,
@@ -1462,6 +1463,9 @@ class GymDampController:
             "rh_palestra": state.gym_rh_palestra,
             "rh_bagno": state.gym_rh_bagno,
             "rh_fallback": state.gym_rh_fallback,
+            "rh_palestra_media": _round(
+                gym_palestra_rh(state.gym_rh_palestra, state.gym_rh_fallback)
+            ),
             "rh_ctrl": decision.rh_ctrl,
             "source": decision.source,
             "reason": decision.reason if enabled else REASON_DISABLED,

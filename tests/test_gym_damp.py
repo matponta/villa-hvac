@@ -53,9 +53,12 @@ from custom_components.villa_hvac.supervisor.gym_damp import (
     SOURCE_KNX,
     SOURCE_KNX_BAGNO,
     SOURCE_KNX_PALESTRA,
+    SOURCE_MEAN,
+    SOURCE_UP_BAGNO,
     SOURCE_NONE,
     dew_point,
     gym_damp_decision,
+    gym_palestra_rh,
     gym_rh_source,
 )
 
@@ -68,12 +71,25 @@ PLUG = power_lever(GYM_DEHUM_SWITCH)
 
 # --- pure core -------------------------------------------------------------------
 
-def test_source_prefers_the_knx_pair_then_the_up_sense():
-    assert gym_rh_source(63.6, 62.3, 67.0) == (63.6, SOURCE_KNX)
-    assert gym_rh_source(None, 62.3, 67.0) == (62.3, SOURCE_KNX_BAGNO)
-    assert gym_rh_source(63.6, None, 67.0) == (63.6, SOURCE_KNX_PALESTRA)
+def test_source_palestra_is_the_mean_of_knx_and_up_then_max_with_bagno():
+    # v0.93.0: palestra = mean(KNX, UP Sense); bagno joins through the max
+    assert gym_rh_source(63.6, 62.3, 67.0) == (pytest.approx(65.3), SOURCE_MEAN)
+    assert gym_rh_source(55.0, 50.0, 62.0) == (58.5, SOURCE_MEAN)    # 6/11 17:30
+    assert gym_rh_source(55.0, 60.0, 62.0) == (60.0, SOURCE_MEAN)    # bagno wins
+    assert gym_rh_source(63.6, 62.3, None) == (63.6, SOURCE_KNX)
+    assert gym_rh_source(None, 62.3, 67.0) == (67.0, SOURCE_UP_BAGNO)
+    assert gym_rh_source(63.6, None, 67.0) == (pytest.approx(65.3), SOURCE_MEAN)
+    assert gym_rh_source(63.6, None, None) == (63.6, SOURCE_KNX_PALESTRA)
+    assert gym_rh_source(None, 62.3, None) == (62.3, SOURCE_KNX_BAGNO)
     assert gym_rh_source(None, None, 67.0) == (67.0, SOURCE_FALLBACK)
     assert gym_rh_source(None, None, None) == (None, SOURCE_NONE)
+
+
+def test_palestra_mean():
+    assert gym_palestra_rh(76.0, 62.0) == 69.0
+    assert gym_palestra_rh(None, 62.0) == 62.0
+    assert gym_palestra_rh(76.0, None) == 76.0
+    assert gym_palestra_rh(None, None) is None
 
 
 def test_the_ep1_is_not_even_an_input():
@@ -235,7 +251,7 @@ def _palestra(mode="off", occupied=False):
 
 
 def _house(*, now=T0, enabled=True, split=True, summer=False, rh_p=63.6, rh_b=62.3,
-           rh_f=67.0, plug=False, mode=HOUSE_MODE_HOME, garage=None, occupied=False,
+           rh_f=None, plug=False, mode=HOUSE_MODE_HOME, garage=None, occupied=False,
            door=None, thresholds=None, temp=21.7):
     zones = {"palestra": _palestra(occupied=occupied)}
     if garage is not None:
@@ -481,3 +497,11 @@ async def test_idle_dehumidifier_alert_once(hass):
     await alerts.async_check(T0 + 30 * M)
     await alerts.async_check(T0 + 60 * M)
     assert [c.data["title"] for c in sent] == ["Deumidificatore palestra fermo"]
+
+
+def test_view_shows_the_palestra_mean_and_decides_on_it():
+    # 6/11 17:30: KNX palestra 55 (stale-low), UP Sense 62, bagno 50.7
+    gym = GymDampController()
+    gym(_house(rh_p=55.0, rh_b=50.7, rh_f=62.0))
+    assert gym.view["rh_palestra_media"] == 58.5
+    assert gym.view["rh_ctrl"] == 58.5 and gym.view["source"] == SOURCE_MEAN

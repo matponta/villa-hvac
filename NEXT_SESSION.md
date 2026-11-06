@@ -1,5 +1,13 @@
 # Next session — kickstart prompts
 
+## v0.93.0 — palestra RH = mean(KNX, UP Sense) (2026-11-06)
+The KNX palestra hygrometer went stale-low for ~1 h on 6/11 (76 → 55 %, back
+to 65–69 % after the restart) and swaps sides with the UP Sense by ~10 points
+over days. The control now averages the two (`rh_palestra_media`). Live
+thresholds: dehumidifier 63/58, split 63 closed / 68 open. Watch a week of
+`sensor.palestra_umidita_di_controllo` + dew point; open question: which of
+the two hygrometers is right (a reference hygrometer would settle it).
+
 ## v0.92.0 — palestra split `dry` also outside summer (2026-11-06) — NOT DEPLOYED
 Owner: when the palestra is damp, run the split in `dry` too — especially with
 the palestra door closed, also open but at a higher RH. Outside summer the split

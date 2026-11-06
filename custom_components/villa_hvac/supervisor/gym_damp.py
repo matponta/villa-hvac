@@ -10,10 +10,14 @@ with old masonry against the soil and a shower. Two tools dry them:
 
 Rules (owner + physics):
 
-- **Control on the KNX pair, never on the EP1.** The EP1 3febdc self-heats and
-  reads 15–25 points low all year. `rh_ctrl = max(palestra, bagno)`; one KNX
-  sensor stale → the other; both stale → the UP Sense on the stairs door;
-  everything blind → hold the last state for `blind_hold`, then stop.
+- **Never on the EP1.** The EP1 3febdc self-heats and reads 15–25 points low
+  all year. v0.93.0: the palestra reading is the MEAN of its KNX thermostat
+  and the UP Sense on the palestra door — the two swap sides by ~10 points
+  over days (30/10–1/11 KNX low, 4–6/11 KNX high) and the KNX one sat ~7
+  points low for an hour on 6/11, so neither is trusted alone. `rh_ctrl =
+  max(palestra mean, bagno KNX)`; a missing input drops out of the mean / the
+  max; the UP Sense alone → `sensore_ripiego`; everything blind → hold the
+  last state for `blind_hold`, then stop.
 - **Outside summer: dehumidifier first, split `dry` on top (v0.92.0, owner
   2026-11-06).** The split joins when the room is humid enough, with a lower
   threshold while the palestra door (`binary_sensor.up_sense_contact`) is
@@ -47,6 +51,8 @@ REASON_MANUAL = "manuale"                   # set by the HA side (arbiter backof
 REASON_DISABLED = "disattivo"               # set by the HA side (switch off)
 
 SOURCE_KNX = "knx"
+SOURCE_MEAN = "media"                     # v0.93.0: palestra = mean(KNX, UP Sense)
+SOURCE_UP_BAGNO = "up_sense+knx_bagno"    # v0.93.0: palestra KNX out
 SOURCE_KNX_PALESTRA = "knx_palestra"
 SOURCE_KNX_BAGNO = "knx_bagno"
 SOURCE_FALLBACK = "up_sense"
@@ -67,16 +73,33 @@ def gym_rh_source(
     rh_palestra: float | None, rh_bagno: float | None, rh_fallback: float | None,
 ) -> tuple[float | None, str]:
     """The controlling RH and where it came from. Inputs are already
-    freshness-filtered (None = stale/unavailable). The EP1 is never an input."""
-    if rh_palestra is not None and rh_bagno is not None:
-        return max(rh_palestra, rh_bagno), SOURCE_KNX
-    if rh_palestra is not None:
-        return rh_palestra, SOURCE_KNX_PALESTRA
+    freshness-filtered (None = stale/unavailable). The EP1 is never an input.
+
+    v0.93.0: the palestra side is the mean of its KNX thermostat and the UP
+    Sense (`rh_fallback`); the bagno KNX joins through the max."""
+    palestra = gym_palestra_rh(rh_palestra, rh_fallback)
+    if palestra is not None and rh_bagno is not None:
+        rh = max(palestra, rh_bagno)
+        if rh_palestra is not None and rh_fallback is not None:
+            return rh, SOURCE_MEAN
+        return rh, SOURCE_KNX if rh_palestra is not None else SOURCE_UP_BAGNO
+    if palestra is not None:
+        if rh_palestra is not None and rh_fallback is not None:
+            return palestra, SOURCE_MEAN
+        if rh_palestra is not None:
+            return palestra, SOURCE_KNX_PALESTRA
+        return palestra, SOURCE_FALLBACK
     if rh_bagno is not None:
         return rh_bagno, SOURCE_KNX_BAGNO
-    if rh_fallback is not None:
-        return rh_fallback, SOURCE_FALLBACK
     return None, SOURCE_NONE
+
+
+def gym_palestra_rh(rh_knx: float | None, rh_up: float | None) -> float | None:
+    """v0.93.0: the palestra reading — mean of the KNX thermostat and the UP
+    Sense on the door, or whichever is available."""
+    if rh_knx is not None and rh_up is not None:
+        return (rh_knx + rh_up) / 2.0
+    return rh_knx if rh_knx is not None else rh_up
 
 
 @dataclass(frozen=True)

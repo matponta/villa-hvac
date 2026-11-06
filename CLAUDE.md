@@ -212,6 +212,9 @@ do local bang-bang regulation.
   yields. v0.92.0: outside summer the split `dry` ALSO joins on a door-dependent
   threshold (`binary_sensor.up_sense_contact` closed 62 % / open 68 %, −4 %
   release, room ≥18 °C, yields to garage heat).
+  v0.93.0: the palestra RH is the MEAN of its KNX thermostat and the UP Sense
+  on the door (the two swap sides by ~10 points; the KNX one went stale-low
+  6/11); `rh_ctrl = max(that mean, bagno KNX)`.
   NEVER control on EP1 3febdc RH (reads 15–25 points low). Opt-in
   `switch.gym_damp`; plug restored to its found state on hand-back. VMC untouched.
 - **Band center composition** (F4c Phase 1, v0.33.0): the fancoil band `center` is

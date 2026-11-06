@@ -268,3 +268,26 @@ di umidità maggiore)."* This lifts G3 (winter split OFF) for humidity.
   split min-on hold now keeps `dry` outside summer (never `cool` a heated room).
 - Summer unchanged (split first, door ignored).
 - Reason `deumidificatore+split_dry`; view gains `door_open`, `split_threshold`.
+
+## v0.93.0 — palestra reading = mean of KNX and UP Sense (2026-11-06)
+
+Live 6/11: the KNX palestra RH sat at 76 % all afternoon, dropped to 60.6 %
+between 16:39 and 16:44, slid to 55 % by 17:09 (the control read `asciutto`
+and stopped the dehumidifier), then jumped back to 65 % 18 s after the HA
+restart (17:48) and 69 % at 17:54 — temperature flat (20.2–20.5 °C), VMC 1
+unchanged at 33 %. The owner: the readings before the restart were stale.
+The UP Sense on the palestra door stayed at 61–62 % throughout.
+
+Over 10 days the two swap sides by ~10 points (30/10–1/11 KNX 62–66 vs UP
+72–77; 4–6/11 KNX 70–76 vs UP 61–65), so a divergence guard has no stable
+offset to test against (it would have fired for days in late October and
+never on 6/11, gap ≤ 7). Owner decision: average them.
+
+- `gym_palestra_rh` = mean(KNX palestra, UP Sense), or whichever is fresh.
+- `rh_ctrl = max(palestra mean, bagno KNX)`; sources `media`,
+  `up_sense+knx_bagno` (palestra KNX out), `knx` (UP out), as before for
+  single sensors; UP Sense alone → `sensore_ripiego`.
+- View: `rh_palestra_media`.
+- Thresholds set live the same day (owner): dehumidifier 63/58, split 63 door
+  closed / 68 door open (wall-surface mould criterion with soil walls at an
+  assumed 16–18 °C ⇒ air ≤ 59–66 %).
