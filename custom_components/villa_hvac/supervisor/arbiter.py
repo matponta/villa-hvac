@@ -19,6 +19,17 @@ DEFAULT_MAX_REASSERTS = 3
 # Once conceded, leave the lever alone (manual wins) for this long.
 DEFAULT_OVERRIDE_BACKOFF = timedelta(hours=2)
 
+# v0.94.0: a re-assert only counts toward conceding once our previous write has
+# had time to reach the bus and come back as a state update. Event-driven passes
+# arrive in bursts: a house-mode change made from the app fires 4 passes within
+# ~85 ms (select, the two mode bridges, the "Gabriele a casa" automation touching
+# a villa_hvac switch + number), which burned write + 3 re-asserts before the KNX
+# thermostats could echo the new setpoint -> 16 levers "conceded to a manual
+# override" for 2 h on every Via<->Casa change (23/11/2026 log). Inside this
+# window a still-diverged read is "pending": no write, no attempt counted.
+# Below the 30 s tick, so normal tick-driven re-asserts are unaffected.
+DEFAULT_MIN_REASSERT_INTERVAL = timedelta(seconds=20)
+
 
 # State strings that mean "don't conclude anything this cycle".
 TRANSIENT_STATES: tuple[str | None, ...] = ("unavailable", "unknown", None, "")
@@ -38,12 +49,14 @@ class LeverState:
 
     `written` is the value we last asserted; `attempts` counts consecutive
     re-asserts while the read stays diverged; `override_until` is set when we
-    have conceded the lever to a manual change.
+    have conceded the lever to a manual change; `written_at` is when we last
+    sent `written` to the bus (None = never sent by us).
     """
 
     written: str | None = None
     attempts: int = 0
     override_until: datetime | None = None
+    written_at: datetime | None = None
 
 
 
@@ -87,6 +100,7 @@ def reconcile(
     max_reasserts: int = DEFAULT_MAX_REASSERTS,
     backoff: timedelta = DEFAULT_OVERRIDE_BACKOFF,
     allow_override: bool = True,
+    min_reassert_interval: timedelta = timedelta(0),
 ) -> ReconcileResult:
     """Decide what (if anything) to write for one lever this cycle.
 
@@ -101,6 +115,12 @@ def reconcile(
     telegrams must never latch the villa into a multi-hour no-cooling state. For
     such a lever pass `allow_override=False` — it re-asserts the desired value
     indefinitely instead of conceding.
+
+    `min_reassert_interval` (v0.94.0) is the time our last write gets to land
+    before a still-diverged read may count as a re-assert. Within it the lever is
+    `pending` (no write, no attempt), so a burst of event-driven passes cannot
+    exhaust the re-asserts in milliseconds. Not applied to no-concede levers.
+    Default 0 keeps the pure function's historical per-call behaviour.
     """
     # 1. Honor an active manual-override backoff: hands off the lever.
     if state.override_until is not None and now < state.override_until:
@@ -126,16 +146,26 @@ def reconcile(
     # 5. Diverged. First time we want this value (or it changed) → write it.
     if state.written is None or not values_match(state.written, desired, tolerance):
         return ReconcileResult(
-            state=replace(state, written=str(desired), attempts=1),
+            state=replace(state, written=str(desired), attempts=1, written_at=now),
             write=str(desired),
             note="write",
         )
+
+    # 5b. Our last write is still in flight (v0.94.0): too soon to judge the
+    #     read. Wait without writing or counting — a burst of passes must not
+    #     turn one slow KNX echo into a "manual override".
+    if (
+        allow_override
+        and state.written_at is not None
+        and now - state.written_at < min_reassert_interval
+    ):
+        return ReconcileResult(state=state, note="pending")
 
     # 6. We already asserted `desired` but the read still diverges → dropped
     #    telegram or a hand change. Re-assert up to the limit before judging.
     if state.attempts < max_reasserts:
         return ReconcileResult(
-            state=replace(state, attempts=state.attempts + 1),
+            state=replace(state, attempts=state.attempts + 1, written_at=now),
             write=str(desired),
             note="reassert",
         )
@@ -146,7 +176,7 @@ def reconcile(
     #    lossy bus must never be able to latch it away from us.
     if not allow_override:
         return ReconcileResult(
-            state=replace(state, attempts=max_reasserts),
+            state=replace(state, attempts=max_reasserts, written_at=now),
             write=str(desired),
             note="reassert-hold",
         )

@@ -6,6 +6,8 @@ the fail-safe, and the house-state builder.
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_mock_service,
@@ -13,7 +15,11 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.villa_hvac.const import CONSENSO_BLOCCO, DOMAIN
 from custom_components.villa_hvac.engine import SupervisorEngine, build_house_state
-from custom_components.villa_hvac.supervisor import BLOCCO_LEVER, preset_lever
+from custom_components.villa_hvac.supervisor import (
+    BLOCCO_LEVER,
+    preset_lever,
+    temperature_lever,
+)
 
 CLIMATE = "climate.salotto_termostato_2"
 PADRONALE_VALVE = "binary_sensor.fancoil_camera_padronale_valvola"
@@ -379,7 +385,7 @@ async def test_fan_dispatch_asserts_state(hass):
     assert pct_calls[0].data == {"entity_id": "fan.fancoil_salotto", "percentage": 0}
 
 
-async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass):
+async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass, freezer):
     """THE padronale regression (proven live 2026-07-02/03): the fan is OFF while
     the bus retains EXACTLY the commanded % (a night silence left it there). The
     %-only read said "satisfied" -> zero writes -> the KNX interlock kept the EV
@@ -412,6 +418,9 @@ async def test_fan_lever_reasserts_on_when_off_with_retained_pct(hass):
     before = len(sized)
 
     # The morning-after state: fan OFF, % retained on the bus == the command.
+    # v0.94.0: hours later, so it is a real divergence, not our write's echo
+    # still in flight (re-asserts are time-gated by DEFAULT_MIN_REASSERT_INTERVAL).
+    freezer.tick(timedelta(hours=8))
     hass.states.async_set("fan.fancoil_salotto", "off", {"percentage": pct})
     await engine.request_run()
 
@@ -1134,6 +1143,35 @@ async def test_blocco_release_reasserts_forever_through_engine(hass):
     blocco = [c for c in off_calls if c.data["entity_id"] == CONSENSO_BLOCCO]
     assert len(blocco) == 6  # re-asserted every cycle, never gave up
     assert engine._lever_states[BLOCCO_LEVER].override_until is None
+
+
+async def test_mode_change_burst_does_not_concede_levers(hass):
+    """v0.94.0 regression (23/11/2026): a Via<->Casa change from the app fires a
+    burst of event-driven passes in the same instant (select, the two mode
+    bridges, the Gabriele automation's switch + number). The KNX thermostat has
+    not echoed the new setpoint yet, so every pass reads the OLD value. Before
+    the fix the 4th pass conceded the lever to a "manual override" for 2 h.
+    Now the burst writes once and waits (pending) for the echo."""
+    entry = await _setup(hass)
+    coordinator = entry.runtime_data
+    probe = "climate.probe_termostato"  # outside every zone map: only our policy opines
+    hass.states.async_set(
+        probe, "heat", {"preset_mode": "comfort", "temperature": 21.0}
+    )  # the read stays at 21: the mocked service never moves it
+    calls = async_mock_service(hass, "climate", "set_temperature")
+    lever = temperature_lever(probe)
+
+    def policy(_state):
+        return {lever: 19.0}  # Casa -> Via setback
+
+    engine = SupervisorEngine(hass, entry, coordinator, policies=[policy])
+    for _ in range(6):  # the burst (4 seen live) and then some
+        await engine._run()
+
+    writes = [c for c in calls if c.data["entity_id"] == probe]
+    assert len(writes) == 1  # one write, then pending while the echo is due
+    assert engine.lever_decisions[lever]["note"] == "pending"
+    assert engine._lever_states[lever].override_until is None
 
 
 async def test_duty_off_releases_a_blocked_villa_via_engine(hass):

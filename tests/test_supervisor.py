@@ -197,6 +197,82 @@ def test_satisfied_then_diverge_reasserts_not_first_write():
     assert r2.state.attempts == 1
 
 
+# --- v0.94.0: re-asserts are time-gated (event bursts must not concede) -------
+
+def test_burst_of_passes_inside_interval_is_pending_not_override():
+    """Bug 23/11/2026: a mode change from the app fired 4 passes in ~85 ms and
+    the KNX echo had not landed yet -> write + 3 re-asserts -> 'manual override'.
+    With the interval, passes inside it are `pending`: no write, no attempt."""
+    gap = timedelta(seconds=20)
+    r = _step("19.0", "21.0", LeverState(), now=T0, min_reassert_interval=gap)
+    assert (r.write, r.note, r.state.attempts) == ("19.0", "write", 1)
+    assert r.state.written_at == T0
+    for ms in (20, 40, 60, 85, 500):
+        r = _step("19.0", "21.0", r.state, now=T0 + timedelta(milliseconds=ms),
+                  min_reassert_interval=gap)
+        assert r.write is None
+        assert r.note == "pending"
+        assert r.state.attempts == 1
+        assert r.state.override_until is None
+
+
+def test_echo_landing_inside_interval_is_satisfied():
+    gap = timedelta(seconds=20)
+    r = _step("19.0", "21.0", LeverState(), now=T0, min_reassert_interval=gap)
+    r = _step("19.0", "21.0", r.state, now=T0 + timedelta(milliseconds=50),
+              min_reassert_interval=gap)
+    assert r.note == "pending"
+    r = _step("19.0", "19.0", r.state, now=T0 + timedelta(seconds=2),
+              min_reassert_interval=gap)
+    assert r.note == "satisfied"
+    assert r.state.attempts == 0 and r.state.override_until is None
+
+
+def test_real_hand_change_still_concedes_after_spaced_reasserts():
+    """A divergence that survives re-asserts spaced by the interval is still a
+    manual change: concede, at the first pass after the last re-assert landed."""
+    gap = timedelta(seconds=20)
+    t = T0
+    r = _step("19.0", "22.0", LeverState(), now=t, min_reassert_interval=gap)
+    assert r.note == "write"
+    t += timedelta(seconds=30)
+    r = _step("19.0", "22.0", r.state, now=t, min_reassert_interval=gap)
+    assert (r.note, r.state.attempts) == ("reassert", 2)
+    t += timedelta(seconds=5)  # an event pass right after: too soon
+    r = _step("19.0", "22.0", r.state, now=t, min_reassert_interval=gap)
+    assert r.note == "pending"
+    t += timedelta(seconds=25)
+    r = _step("19.0", "22.0", r.state, now=t, min_reassert_interval=gap)
+    assert (r.note, r.state.attempts) == ("reassert", 3)
+    t += timedelta(seconds=10)  # attempts exhausted but last write still young
+    r = _step("19.0", "22.0", r.state, now=t, min_reassert_interval=gap)
+    assert r.note == "pending" and r.state.override_until is None
+    t += timedelta(seconds=20)
+    r = _step("19.0", "22.0", r.state, now=t, min_reassert_interval=gap)
+    assert r.note == "override"
+    assert r.state.override_until == t + DEFAULT_OVERRIDE_BACKOFF
+
+
+def test_desired_change_inside_interval_rewrites_immediately():
+    gap = timedelta(seconds=20)
+    r = _step("19.0", "21.0", LeverState(), now=T0, min_reassert_interval=gap)
+    r = _step("20.0", "21.0", r.state, now=T0 + timedelta(seconds=1),
+              min_reassert_interval=gap)
+    assert (r.write, r.note, r.state.attempts) == ("20.0", "write", 1)
+
+
+def test_no_concede_lever_ignores_the_interval():
+    """The global block keeps re-asserting every pass, interval or not."""
+    gap = timedelta(seconds=20)
+    r = _step("off", "on", LeverState(), now=T0, allow_override=False,
+              min_reassert_interval=gap)
+    for ms in (10, 20, 30, 40, 50):
+        r = _step("off", "on", r.state, now=T0 + timedelta(milliseconds=ms),
+                  allow_override=False, min_reassert_interval=gap)
+        assert r.write == "off"
+        assert r.state.override_until is None
+
+
 # --- merge_desired -----------------------------------------------------------
 
 def test_merge_highest_priority_wins_per_lever():

@@ -196,6 +196,7 @@ from .supervisor.winter_model import recovery_minutes as winter_recovery_minutes
 from .supervisor import (
     BLOCCO_LEVER,
     CoverInfo,
+    DEFAULT_MIN_REASSERT_INTERVAL,
     DEFAULT_SETPOINT_TOLERANCE,
     DutyState,
     HouseState,
@@ -2123,6 +2124,9 @@ class SupervisorEngine:
             # The global cooling block must always be releasable/assertable by the
             # engine: never concede it to a phantom "manual" change from bus noise.
             allow_override=lever != BLOCCO_LEVER,
+            # v0.94.0: give our write time to echo before a diverged read counts
+            # as a re-assert (event bursts used to concede 16 levers in ~85 ms).
+            min_reassert_interval=DEFAULT_MIN_REASSERT_INTERVAL,
         )
         self._lever_states[lever] = result.state
         # B2: record the decision + warn on the transition INTO a manual-override

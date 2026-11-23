@@ -1,5 +1,23 @@
 # Next session — kickstart prompts
 
+## v0.94.0 — arbiter: re-asserts time-gated, no phantom overrides on mode change (2026-11-23) — NOT DEPLOYED
+Bug (live 16–23/11): every Via<->Casa change made directly on `select.house_mode`
+(app, or the 18 h away escalation) conceded the 16 thermostat `temperature:` levers
+to a "manual override" for 2 h (`sensor.hvac_levers` = 16; log 23/11 09:57:59
+"wanted 19.0, read 21.0" x16 within ~85 ms of the change). Cause: one app change
+fires 4 event-driven passes in the same instant (select -> apply_house_mode; the
+return bridge -> input_select -> one-way bridge -> select again; the "Gabriele a
+casa" automation's `switch.gabriroom_night_silence` + `number.camera_gabriele_offset`,
+each calling `request_run`). `reconcile()` counted write + 3 re-asserts before the
+KNX thermostats echoed the setpoint. Button changes (Buonanotte/Sveglia) fire only
+3 passes, hence never conceded. Same mechanism after some HA restarts (17/11: 6 levers).
+Fix: `LeverState.written_at` + `reconcile(min_reassert_interval=...)`; the engine
+passes `DEFAULT_MIN_REASSERT_INTERVAL` = 20 s: inside it a diverged read is
+`pending` (no write, no attempt). No-concede BLOCCO unchanged. Concession of a
+real hand change now ~60–110 s (was ~90 s on ticks, ~0 s on bursts).
+After deploy: change Via->Casa from the app -> `sensor.hvac_levers` stays 0, the
+thermostats move within ~1 s, no "conceded" WARNING in the log.
+
 ## v0.93.0/.1 — palestra RH = mean(KNX, UP Sense) (2026-11-06) — LIVE
 v0.93.1: UP Sense freshness 6 h (it reports on change only; 30 min dropped it).
 The KNX palestra hygrometer went stale-low for ~1 h on 6/11 (76 → 55 %, back
