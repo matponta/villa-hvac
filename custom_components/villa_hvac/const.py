@@ -717,6 +717,35 @@ PRESENCE_GROUP = "group.presenza_adulti"
 OPT_AWAY_HOURS = "away_escalation_hours"
 DEFAULT_AWAY_HOURS = 18
 
+# --- Via from the burglar alarm (v0.95.0, STORY_VIA_ANTIFURTO.md) ------------
+# The alarm is the most reliable empty-house signal (armed by whoever leaves
+# last, covers people without a tracker). Episode = the persistent mirror reads
+# `Inserito`; after the season's delay (summer short: fancoils recover fast;
+# winter long: the radiant setback barely pays for short outings) -> Via once.
+# Only the mirror: alarm_control_panel.ajax_antifurto reads `unknown` after
+# every restart until Ajax sends an event.
+ALARM_MIRROR = "input_select.antifurto_ajax_ultimo_stato"
+ALARM_ARMED = "Inserito"
+DEFAULT_ALARM_AWAY_SUMMER_MIN = 30.0
+DEFAULT_ALARM_AWAY_WINTER_HOURS = 8.0
+ALARM_AWAY_STORE = "villa_hvac_alarm_away"
+ALARM_AWAY_RECHECK = timedelta(minutes=5)
+# Knobs (number entities). Unique-id suffix -> (name, min, max, step, default,
+# unit, icon) — the CellarNumber table format.
+ALARM_AWAY_NUMBERS = {
+    "alarm_away_delay_summer": ("Via da antifurto ritardo estate", 0.0, 240.0, 5.0,
+                                DEFAULT_ALARM_AWAY_SUMMER_MIN, "min",
+                                "mdi:timer-sand"),
+    "alarm_away_delay_winter": ("Via da antifurto ritardo inverno", 1.0, 48.0, 1.0,
+                                DEFAULT_ALARM_AWAY_WINTER_HOURS, "h",
+                                "mdi:timer-sand"),
+}
+# "Quando torni?" for an AUTOMATIC Via inside this window waits for its end.
+OPT_RETURN_QUIET_START = "return_quiet_start"
+OPT_RETURN_QUIET_END = "return_quiet_end"
+DEFAULT_RETURN_QUIET_START = "22:00:00"
+DEFAULT_RETURN_QUIET_END = "07:30:00"
+
 # --- #5 Outdoor free-cooling shutoff -----------------------------------------
 # Summer: when it's cool enough outside, suppress the fancoils (force
 # building_protection) and let the house coast — fewer/shorter compressor runs.

@@ -19,6 +19,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import VillaHvacConfigEntry
 from .const import (
+    ALARM_AWAY_NUMBERS,
     CELLAR_NUMBERS,
     GYM_NUMBERS,
     ZONE_TWINS,
@@ -76,6 +77,10 @@ async def async_setup_entry(
     entities += [CellarNumber(entry, suffix) for suffix in CELLAR_NUMBERS]
     # v0.90.0: the palestra damp knobs (STORY_GYM_DAMP.md).
     entities += [CellarNumber(entry, suffix, GYM_NUMBERS) for suffix in GYM_NUMBERS]
+    # v0.95.0: the alarm->Via delays (STORY_VIA_ANTIFURTO.md).
+    entities += [
+        CellarNumber(entry, suffix, ALARM_AWAY_NUMBERS) for suffix in ALARM_AWAY_NUMBERS
+    ]
     async_add_entities(entities)
 
 

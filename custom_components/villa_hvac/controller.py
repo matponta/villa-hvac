@@ -10,7 +10,7 @@ and never pulled back into a cooling preset.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import logging
 import math
 
@@ -26,6 +26,7 @@ from .const import (
     OPT_SPLIT_RH_FLOOR,
     OPT_CELLAR_WINTER_SETPOINT,
     OPT_SPLIT_CANTINA_SETPOINT,
+    ALARM_AWAY_NUMBERS,
     CELLAR_NUMBERS,
     GYM_NUMBERS,
     COMFORT_FLOOR_MAX,
@@ -253,6 +254,25 @@ def _number_value(
         return float(state.state)
     except (TypeError, ValueError):
         return None
+
+
+def alarm_away_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.95.0: Via from the burglar alarm opt-in (default OFF)."""
+    return _switch_state(hass, entry, "alarm_away") == STATE_ON
+
+
+def alarm_away_delays(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, timedelta]:
+    """v0.95.0: per-season alarm->Via delay from the two number knobs
+    (summer in minutes, winter in hours), clamped; default when unset."""
+    out: dict[str, timedelta] = {}
+    for suffix, season in (("alarm_away_delay_summer", SEASON_SUMMER),
+                           ("alarm_away_delay_winter", SEASON_WINTER)):
+        _name, lo, hi, _step, default, unit, _icon = ALARM_AWAY_NUMBERS[suffix]
+        value = _number_value(hass, entry, suffix)
+        value = min(max(value if value is not None else default, lo), hi)
+        out[season] = (timedelta(minutes=value) if unit == "min"
+                       else timedelta(hours=value))
+    return out
 
 
 def auto_setback_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:

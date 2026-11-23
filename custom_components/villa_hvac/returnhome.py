@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import (
+    async_track_point_in_time,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -37,6 +38,8 @@ from .const import (
     DEFAULT_RETURN_DAYPART_HOURS,
     DEFAULT_RETURN_MARGIN_MIN,
     DEFAULT_RETURN_MAX_LEAD_HOURS,
+    DEFAULT_RETURN_QUIET_END,
+    DEFAULT_RETURN_QUIET_START,
     DEFAULT_WINTER_RETURN_MAX_HOLD,
     DOMAIN,
     HOUSE_MODE_AWAY,
@@ -45,6 +48,8 @@ from .const import (
     OPT_NOTIFY_TARGET,
     OPT_RETURN_MARGIN_MIN,
     OPT_RETURN_MAX_LEAD_HOURS,
+    OPT_RETURN_QUIET_END,
+    OPT_RETURN_QUIET_START,
     OPT_WINTER_RETURN_MAX_HOLD,
     RETURN_ACTION_PREFIX,
     RETURN_ACTION_UNKNOWN,
@@ -289,6 +294,35 @@ class AwayReturnController:
 
 # --- Actionable-notification trigger -----------------------------------------
 
+
+def parse_hms(raw, default: time) -> time:
+    """'HH:MM[:SS]' -> time; `default` on garbage."""
+    parts = str(raw).split(":")
+    try:
+        return time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0,
+                    int(parts[2]) if len(parts) > 2 else 0)
+    except (ValueError, IndexError):
+        return default
+
+
+def quiet_until(local_now: datetime, start: time, end: time) -> datetime | None:
+    """v0.95.0: end of the quiet window `local_now` falls in (None = not quiet).
+
+    The window may wrap midnight (22:00-07:30). start == end = no window."""
+    if start == end:
+        return None
+    t = local_now.timetz().replace(tzinfo=None)
+    today_end = local_now.replace(hour=end.hour, minute=end.minute,
+                                  second=end.second, microsecond=0)
+    if start < end:
+        return today_end if start <= t < end else None
+    if t >= start:
+        return today_end + timedelta(days=1)
+    if t < end:
+        return today_end
+    return None
+
+
 # action id suffix -> (day offset, daypart). UNKNOWN disarms.
 _ACTIONS: dict[str, tuple[int, str]] = {
     "TODAY_EVENING": (0, RETURN_DAYPART_EVENING),
@@ -306,6 +340,8 @@ class ReturnHomeManager:
         self._unsub_mode = None
         self._unsub_action = None
         self._unsub_expiry = None
+        self._unsub_deferred = None
+        self.deferred_until: datetime | None = None
 
     def start(self) -> None:
         mode_id = self._entity_id("select", "house_mode")
@@ -327,6 +363,34 @@ class ReturnHomeManager:
             self._unsub_action()
         if self._unsub_expiry:
             self._unsub_expiry()
+        self._cancel_deferred()
+
+    def _cancel_deferred(self) -> None:
+        if self._unsub_deferred:
+            self._unsub_deferred()
+        self._unsub_deferred = None
+        self.deferred_until = None
+
+    def _quiet_until(self, now: datetime) -> datetime | None:
+        options = self.entry.options
+        start = parse_hms(options.get(OPT_RETURN_QUIET_START, DEFAULT_RETURN_QUIET_START),
+                          time(22, 0))
+        end = parse_hms(options.get(OPT_RETURN_QUIET_END, DEFAULT_RETURN_QUIET_END),
+                        time(7, 30))
+        return quiet_until(dt_util.as_local(now), start, end)
+
+    @callback
+    def _on_deferred(self, _now) -> None:
+        self._unsub_deferred = None
+        self.deferred_until = None
+        # Still worth asking? (someone came back / answered / left Via meanwhile)
+        if current_house_mode(self.hass, self.entry) != HOUSE_MODE_AWAY:
+            return
+        if not return_precond_enabled(self.hass, self.entry):
+            return
+        if return_armed(self.hass, self.entry):
+            return
+        self.hass.async_create_task(self._ask())
 
     @callback
     def _check_expiry(self, now: datetime | None = None) -> None:
@@ -364,6 +428,18 @@ class ReturnHomeManager:
             return
         if return_armed(self.hass, self.entry):
             return  # already told it when we're back
+        # v0.95.0: an AUTOMATIC Via (alarm / 18 h escalation: no user in the
+        # context) inside the quiet window asks at its end, not at 03:00. A Via
+        # chosen by hand at night is asked at once (the phone is in hand).
+        automatic = new.context is None or new.context.user_id is None
+        until = self._quiet_until(dt_util.utcnow()) if automatic else None
+        if until is not None:
+            self._cancel_deferred()
+            self.deferred_until = until
+            self._unsub_deferred = async_track_point_in_time(
+                self.hass, self._on_deferred, until)
+            _LOGGER.info("Return-home ask deferred to %s (quiet hours)", until)
+            return
         self.hass.async_create_task(self._ask())
 
     def _notify_service(self) -> str | None:

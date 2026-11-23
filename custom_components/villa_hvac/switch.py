@@ -64,6 +64,7 @@ async def async_setup_entry(
         CellarAlertsSwitch(entry),
         GymDampSwitch(entry),
         GymDampAlertsSwitch(entry),
+        AlarmAwaySwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
@@ -777,6 +778,40 @@ class GymDampSwitch(SwitchEntity, RestoreEntity):
         engine = getattr(self._entry.runtime_data, "engine", None)
         if engine is not None:
             await engine.async_release_gym()
+
+
+class AlarmAwaySwitch(SwitchEntity, RestoreEntity):
+    """v0.95.0 Via from the burglar alarm (default OFF, deploy-dark).
+
+    When on (and Auto setback is on), an alarm episode (`Inserito`) with the
+    adults away drops the house to Via once, after the season's delay
+    (`number.via_da_antifurto_ritardo_*`). The AlarmAwayController watches
+    this switch's state, so toggling it re-plans at once.
+    """
+
+    # "Via da antifurto" -> switch.via_da_antifurto
+    _attr_has_entity_name = True
+    _attr_name = "Via da antifurto"
+    _attr_icon = "mdi:shield-home"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_alarm_away"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self._attr_is_on = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self._attr_is_on = False
+        self.async_write_ha_state()
 
 
 class GymDampAlertsSwitch(SwitchEntity, RestoreEntity):

@@ -5,7 +5,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, callback
 
-from .away import AwayController
+from .away import AlarmAwayController, AwayController
 from .const import PLATFORMS, ZONE_TWINS
 from .controller import (
     apply_house_mode,
@@ -183,6 +183,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     returns = ReturnHomeManager(hass, entry)
     returns.start()
     entry.async_on_unload(returns.stop)
+
+    # v0.95.0 Via from the burglar alarm (opt-in switch.via_da_antifurto,
+    # default OFF). After the platforms: it resolves our switch/numbers/select.
+    alarm_away = AlarmAwayController(hass, entry)
+    coordinator.alarm_away = alarm_away
+    await alarm_away.async_start()
+    entry.async_on_unload(alarm_away.stop)
 
     # Re-apply the restored house mode once HA has fully started (re-enters
     # camere silenziose after a reboot in Notte). Mirrors the legacy

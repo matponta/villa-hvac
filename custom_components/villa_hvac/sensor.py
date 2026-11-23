@@ -11,6 +11,8 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
@@ -147,7 +149,51 @@ async def async_setup_entry(
     entities.append(GymDampSensor(coordinator, entry))
     entities.append(GymDampRhSensor(coordinator, entry))
     entities.append(GymDewPointSensor(coordinator, entry))
+    # v0.95.0 STORY_VIA_ANTIFURTO: alarm -> Via episode, for debugging.
+    entities.append(AlarmAwaySensor(coordinator, entry))
     async_add_entities(entities)
+
+
+class AlarmAwaySensor(SensorEntity):
+    """v0.95.0: the alarm->Via episode — spento / in_attesa / scattato /
+    annullato / inattivo; attributes armed_since, fire_at, season, delay and
+    `reason` (why it does not fire). Pushed by the AlarmAwayController."""
+
+    # "Via da antifurto" -> sensor.via_da_antifurto
+    _attr_has_entity_name = True
+    _attr_name = "Via da antifurto"
+    _attr_icon = "mdi:shield-home-outline"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = False
+
+    def __init__(self, coordinator, entry) -> None:
+        self._coordinator = coordinator
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_alarm_away_status"
+
+    @property
+    def _view(self) -> dict:
+        ctl = getattr(self._coordinator, "alarm_away", None)
+        return getattr(ctl, "view", None) or {}
+
+    async def async_added_to_hass(self) -> None:
+        from .away import alarm_signal
+
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, alarm_signal(self._entry), self.async_write_ha_state))
+
+    @property
+    def native_value(self) -> str | None:
+        return self._view.get("status", "inattivo")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._view)
+        v.pop("status", None)
+        for key in ("armed_since", "fire_at"):
+            if isinstance(v.get(key), datetime):
+                v[key] = dt_util.as_local(v[key]).isoformat()
+        return v
 
 
 def _gym_view(coordinator) -> dict:

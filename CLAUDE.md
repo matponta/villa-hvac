@@ -354,6 +354,21 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
              + person.ehi) via pure `aggregate_presence`; survives restarts. The
              boot-recreate automation.sistema_ricrea_group_presenza_adulti_all_avvio
              can be retired.
+       - [x] #2c-bis Via from the burglar alarm (v0.95.0, STORY_VIA_ANTIFURTO.md):
+             `AlarmAwayController` (away.py) — episode = mirror
+             `input_select.antifurto_ajax_ultimo_stato` == `Inserito` (NOT the
+             Ajax alarm_control_panel: `unknown` after every restart). ONE Via per
+             episode after the season delay (`current_season`: summer 30 min /
+             winter 8 h, `number.via_da_antifurto_ritardo_*`) with presence
+             not_home + Casa/Notte + `switch.via_da_antifurto` (default OFF) +
+             Auto setback. A mode change by others before the fire cancels it
+             (own writes recognised by Context id); no re-assert after the fire.
+             NEVER restore on `Disinserito` (Ajax disarms on a schedule for the
+             cleaner) — return stays #2c presence. `armed_since` persisted (Store
+             `villa_hvac_alarm_away`), point-in-time timer + 5-min recheck.
+             `sensor.via_da_antifurto` = status + `reason`. The 18 h tracker
+             escalation stays as the safety net. Automatic Via in 22:00–07:30 →
+             "Quando torni?" deferred to 07:30 (`return_quiet_start/end`).
        (Cleanup TODO: delete the now-replaced HA automations/scripts —
        clima_applica_modalita_casa, clima_backup_via_quando_esco,
        clima_rientro_in_casa, clima_risincronizza, notte_guardia_caldo_camera_*,

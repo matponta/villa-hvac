@@ -15,6 +15,8 @@ from homeassistant.core import callback
 
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
+    DEFAULT_RETURN_QUIET_END,
+    DEFAULT_RETURN_QUIET_START,
     DEFAULT_AWAY_HOURS,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
@@ -56,6 +58,8 @@ from .const import (
     HOUSE_MODE_NIGHT,
     OPT_AUTO_WAKE_TIME,
     OPT_AWAY_HOURS,
+    OPT_RETURN_QUIET_END,
+    OPT_RETURN_QUIET_START,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
     OPT_COMFORT_FLOOR,
@@ -193,6 +197,16 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     OPT_AWAY_HOURS,
                     default=options.get(OPT_AWAY_HOURS, DEFAULT_AWAY_HOURS),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=72)),
+                vol.Optional(
+                    OPT_RETURN_QUIET_START,
+                    default=options.get(
+                        OPT_RETURN_QUIET_START, DEFAULT_RETURN_QUIET_START),
+                ): str,
+                vol.Optional(
+                    OPT_RETURN_QUIET_END,
+                    default=options.get(
+                        OPT_RETURN_QUIET_END, DEFAULT_RETURN_QUIET_END),
+                ): str,
                 vol.Optional(
                     OPT_SEASON,
                     default=options.get(OPT_SEASON, SEASON_AUTO),
