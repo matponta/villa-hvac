@@ -214,7 +214,7 @@ class RackGuardController:
     def _base(state, p1) -> float | None:
         if state.house_setpoint is None or state.mode_offset is None:
             return None
-        return state.house_setpoint + state.mode_offset + p1.setpoint_offset
+        return state.house_setpoint + state.mode_offset + p1.setpoint_offset + p1.night_trim
 
     def __call__(self, state) -> dict:
         rack = state.zones.get("rack")
@@ -357,7 +357,7 @@ class P1GuardController:
     def _base(state, zone) -> float | None:
         if state.house_setpoint is None or state.mode_offset is None or zone is None:
             return None
-        return state.house_setpoint + state.mode_offset + zone.setpoint_offset
+        return state.house_setpoint + state.mode_offset + zone.setpoint_offset + zone.night_trim
 
     def __call__(self, state) -> dict:
         p1 = state.zones.get("stairs_p1")

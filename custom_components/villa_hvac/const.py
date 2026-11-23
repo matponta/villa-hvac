@@ -23,6 +23,7 @@ PLATFORMS: list[Platform] = [
     Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
+    Platform.TIME,
 ]
 
 # --- KNX climate presets -----------------------------------------------------
@@ -43,20 +44,51 @@ PRESET_AUTO = "auto"
 # Option strings match the legacy input_select.modalita_casa for easy migration.
 HOUSE_MODE_HOME = "Casa"
 HOUSE_MODE_AWAY = "Via"
+# v0.96.0 (STORY_NIGHT_SCHEDULE.md): "Notte" is NO LONGER a house mode — the
+# night is a clock band inside Casa (supervisor/night_band.py) and "we are
+# sleeping" is the HA helper input_boolean.notte. The name survives only as
+# the key of the season night OFFSET (now the night-band offset) and to map a
+# restored/legacy "Notte" back to Casa.
 HOUSE_MODE_NIGHT = "Notte"
 HOUSE_MODE_VACATION = "Vacanza"
 HOUSE_MODES: list[str] = [
     HOUSE_MODE_HOME,
     HOUSE_MODE_AWAY,
-    HOUSE_MODE_NIGHT,
     HOUSE_MODE_VACATION,
 ]
 MODE_PRESET: dict[str, str] = {
     HOUSE_MODE_HOME: "comfort",
     HOUSE_MODE_AWAY: "standby",
-    HOUSE_MODE_NIGHT: "economy",
     HOUSE_MODE_VACATION: PRESET_BUILDING_PROTECTION,
 }
+
+# --- Night band (v0.96.0, STORY_NIGHT_SCHEDULE.md) ----------------------------
+# In Casa, a clock window trims every room by the season's night offset
+# (winter_notte_offset -1 / summer_notte_offset +3, the old Notte offsets). With
+# an HA alarm set, each room leaves the band `lead` before the wake (winter
+# model recovery, clamped to the max lead) so it is at comfort when you get up.
+NIGHT_BAND_TIMES = {
+    # unique-id suffix -> (name, default HH:MM, icon)
+    "night_band_start": ("Fascia notturna inizio", "21:30", "mdi:weather-night"),
+    "night_band_end": ("Fascia notturna fine", "07:00", "mdi:weather-sunset-up"),
+    # Summer pair (fancoils answer in minutes: 21:30 +3 °C would warm the day
+    # rooms while you are still up) — STORY "Aperto", default 23:30 -> 07:00.
+    "night_band_start_summer": ("Fascia notturna inizio estate", "23:30",
+                                "mdi:weather-night"),
+    "night_band_end_summer": ("Fascia notturna fine estate", "07:00",
+                              "mdi:weather-sunset-up"),
+}
+OPT_WAKE_TIME_ENTITY = "wake_time_entity"
+OPT_WAKE_ACTIVE_ENTITY = "wake_active_entity"
+OPT_SLEEP_ENTITY = "sleep_entity"
+OPT_PREHEAT_MAX_LEAD = "preheat_max_lead_hours"
+DEFAULT_WAKE_TIME_ENTITY = "input_datetime.wake_up_time"
+DEFAULT_WAKE_ACTIVE_ENTITY = "input_boolean.wakeup_active"
+# "We are sleeping": set by Buonanotte, cleared by Sveglia / Via / 12:00. Drives
+# #2b camere silenziose and the VMC night-quiet veto. Unavailable = OFF.
+DEFAULT_SLEEP_ENTITY = "input_boolean.notte"
+DEFAULT_PREHEAT_MAX_LEAD = 3.0          # h — cap on the per-room pre-heat lead
+NIGHT_BAND_SUMMER_LEAD = timedelta(minutes=30)  # fancoils: fixed until the summer model is ready
 
 # When a mode is applied we also push set_temperature = house_setpoint + offset.
 # Setback DEPTH differs by season (cooling wants deeper away setback than

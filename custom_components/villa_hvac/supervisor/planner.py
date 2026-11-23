@@ -277,7 +277,8 @@ def build_feature_graph(
             bool(plan.covers_closing),
             "not cooling season" if not summer else "sun below shading threshold",
         ),
-        "night": row("night", state.night_active, "not night / no bedroom setback"),
+        "night": row("night", state.night_active,
+                     "not sleeping (input_boolean.notte off) / not summer"),
     }
     return tuple(rows[f] for f in FEATURE_ORDER)
 
@@ -994,7 +995,8 @@ def resolve_center(
     if state.house_setpoint is None or state.mode_offset is None:
         return None
     # #2: per-zone comfort trim stacks on the house base (mode offset included).
-    base = state.house_setpoint + state.mode_offset + zone.setpoint_offset
+    base = (state.house_setpoint + state.mode_offset + zone.setpoint_offset
+            + zone.night_trim)
     comp = compose_center(
         base=base,
         pv_mode=state.pv_mode, pv_floor=state.pv_floor,

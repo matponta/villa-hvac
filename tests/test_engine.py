@@ -662,7 +662,7 @@ async def test_stranded_fan_watchdog_yields_zone_parked_in_bp(hass):
 
 
 async def test_stranded_fan_watchdog_yields_bedroom_during_notte(hass):
-    """Negative gate (highest-value): #2b owns a bedroom during Notte and may hold
+    """Negative gate (highest-value): #2b owns a bedroom at night and may hold
     its fan off DELIBERATELY. The watchdog must never spin an UNMANAGED (manuale
     off) bedroom fan while night_active — a telegram war on the exact zone this
     hotfix protects. Mutation guard for the `not (bedroom and night_active)` gate.
@@ -688,7 +688,7 @@ async def test_stranded_fan_watchdog_yields_bedroom_during_notte(hass):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         hass.states.async_set("switch.supervisor", "on")
-        hass.states.async_set("select.house_mode", "Notte")
+        hass.states.async_set("input_boolean.notte", "on")  # v0.96.0: sleeping
         async_mock_service(hass, "climate", "set_preset_mode")
         async_mock_service(hass, "climate", "set_temperature")
         async_mock_service(hass, "switch", "turn_on")

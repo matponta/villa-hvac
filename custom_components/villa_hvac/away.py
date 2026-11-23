@@ -1,9 +1,9 @@
 """Away auto-escalation (#2c) + Via from the burglar alarm (v0.95.0).
 
 Replaces the legacy automation.clima_backup_via_quando_esco: after the adults
-are away for a configurable spell (while the house is in Casa or Notte), drop to
+are away for a configurable spell (while the house is in Casa), drop to
 Via; when they return and the house is still in the *auto-set* Via, restore Casa.
-Restore only triggers from Via, so it never overrides a manual Notte/Vacanza.
+Restore only triggers from Via, so it never overrides a manual Vacanza.
 
 v0.95.0 (STORY_VIA_ANTIFURTO.md): `AlarmAwayController` drops to Via once per
 alarm episode (mirror `Inserito`) after a per-season delay, with the adults'
@@ -48,7 +48,6 @@ from .const import (
     DOMAIN,
     HOUSE_MODE_AWAY,
     HOUSE_MODE_HOME,
-    HOUSE_MODE_NIGHT,
     HOUSE_MODES,
     OPT_AWAY_HOURS,
     PRESENCE_PERSONS,
@@ -83,8 +82,9 @@ def aggregate_presence(states: Iterable[str | None]) -> str | None:
 
 
 def escalation_target(current_mode: str) -> str | None:
-    """Mode to switch to after a long absence (None = no change)."""
-    if current_mode in (HOUSE_MODE_HOME, HOUSE_MODE_NIGHT):
+    """Mode to switch to after a long absence (None = no change).
+    v0.96.0: Notte is no longer a mode — only Casa escalates."""
+    if current_mode == HOUSE_MODE_HOME:
         return HOUSE_MODE_AWAY
     return None
 
@@ -92,7 +92,7 @@ def escalation_target(current_mode: str) -> str | None:
 def restore_target(current_mode: str) -> str | None:
     """Mode to restore when presence returns (None = no change).
 
-    Only the auto-set Via is undone — a manual Notte/Vacanza is left alone.
+    Only the auto-set Via is undone — a manual Vacanza is left alone.
     """
     if current_mode == HOUSE_MODE_AWAY:
         return HOUSE_MODE_HOME
@@ -260,7 +260,7 @@ def alarm_away_due(
     """Pure: should the alarm episode drop the house to Via right now?
 
     All of: opt-in + Auto setback on, mirror `Inserito` (not `Inserito notte`),
-    adults' fused presence not_home (None = can't tell -> no), mode Casa/Notte
+    adults' fused presence not_home (None = can't tell -> no), mode Casa
     (Via/Vacanza untouched), and `now` past armed_since + the season delay.
     Returns (due, reason); the blocking conditions are checked before the
     clock so `reason` says what would stop it even while waiting.

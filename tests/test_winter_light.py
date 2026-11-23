@@ -52,7 +52,7 @@ def _winter(zones, mode="Casa", setpoint=21.0, offset=0.0):
 
 def test_winter_is_setpoint_only_comfort_preset_all_modes():
     zones = [_z("r", "radiant"), _z("f", "fancoil")]
-    for mode, off, want in (("Casa", 0.0, 21.0), ("Via", -2.0, 19.0), ("Notte", -1.0, 20.0)):
+    for mode, off, want in (("Casa", 0.0, 21.0), ("Via", -2.0, 19.0)):
         out = house_mode_policy(_winter(zones, mode=mode, offset=off))
         for zid in ("r", "f"):
             assert out[preset_lever(f"climate.{zid}")] == "comfort"
@@ -149,5 +149,10 @@ async def test_winter_state_reads_winter_slider_trim_and_economy(hass):
 async def test_winter_night_default_is_gentle(hass):
     entry = MockConfigEntry(domain=DOMAIN, data={})
     hass.states.async_set(SEASON_REFERENCE_CLIMATE, "heat")
-    assert mode_offset(hass, entry, "Notte") == -1.0
+    # v0.96.0: Notte is no longer a mode; its -1 is the winter night-band trim.
+    from custom_components.villa_hvac.controller import night_band_offset
+
+    assert mode_offset(hass, entry, "Notte") is None
+    assert night_band_offset(entry, "winter") == -1.0
+    assert night_band_offset(entry, "summer") == 3.0
     assert mode_offset(hass, entry, "Via") == -2.0

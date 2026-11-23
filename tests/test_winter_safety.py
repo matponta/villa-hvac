@@ -82,7 +82,7 @@ async def test_night_silence_not_active_in_winter(hass):
     from homeassistant.util import dt as dt_util
 
     entry = await _setup(hass, "heat")
-    hass.states.async_set("select.house_mode", "Notte")
+    hass.states.async_set("input_boolean.notte", "on")   # v0.96.0: sleeping
     hass.states.async_set("switch.auto_setback", "on")
     # 03:00 local: outside the clock-derived wake window [08:00, 20:00).
     night = dt_util.as_utc(

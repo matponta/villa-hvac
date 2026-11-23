@@ -1,5 +1,26 @@
 # Next session — kickstart prompts
 
+## v0.96.0 — night band + wake pre-heat, Notte out of the modes (2026-11-23) — RELEASED, NOT DEPLOYED
+STORY_NIGHT_SCHEDULE.md. `select.house_mode` = Casa/Via/Vacanza. In Casa,
+`switch.fascia_notturna` (default OFF) trims every room by the season night
+offset inside `time.fascia_notturna_inizio/fine` (21:30→07:00; summer pair
+`_estate` 23:30→07:00). With the HA alarm set each room leaves the band its
+lead before the wake (winter W1 recovery, cap 3 h; summer 30 min fixed).
+#2b + VMC night-quiet now follow `input_boolean.notte`. Debug:
+`sensor.fascia_notturna` (attrs `rooms` per room: lead_min, end, in_band).
+**Phase C (HA side, chat session, the evening of the deploy, before 21:30)** —
+the checklist in the story: deploy + restart, `switch.fascia_notturna` ON;
+Buonanotte → `modalita_casa` Casa (not Notte); remove `select_option Notte`
+from `automation.telecomando_hue_bedroom`; drop Notte from
+`input_select.modalita_casa` and check the two bridges (until then a bridged
+"Notte" fails select validation: the house simply stays in Casa); Gabriele
+automation `["Casa","Notte"]` → Casa; dashboard tile + CoolClima card.
+Open (owner): confirm the two chat assumptions (lead from the model, cap 3 h;
+summer same mechanism) and the summer pair defaults (implemented 23:30→07:00
+as proposed in "Aperto", editable). Summer lead from the summer model is NOT
+implemented (no room is planner-eligible yet): fixed 30 min.
+Not done in the repo: the PDF manual.
+
 ## v0.95.0 — Via from the burglar alarm (2026-11-23) — RELEASED, NOT DEPLOYED
 STORY_VIA_ANTIFURTO.md. `AlarmAwayController` (away.py): episode = mirror
 `input_select.antifurto_ajax_ultimo_stato` == `Inserito`; once per episode,

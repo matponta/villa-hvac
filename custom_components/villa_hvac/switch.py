@@ -65,6 +65,7 @@ async def async_setup_entry(
         GymDampSwitch(entry),
         GymDampAlertsSwitch(entry),
         AlarmAwaySwitch(entry),
+        NightBandSwitch(entry),
         FreeCoolSwitch(entry),
         WindowsFreeCoolSwitch(entry),
         RackGuardSwitch(entry),
@@ -812,6 +813,44 @@ class AlarmAwaySwitch(SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False
         self.async_write_ha_state()
+
+
+class NightBandSwitch(SwitchEntity, RestoreEntity):
+    """v0.96.0 night band (default OFF, deploy-dark; STORY_NIGHT_SCHEDULE.md).
+
+    When on (and Auto setback is on, house in Casa), every room is trimmed by
+    the season night offset inside `time.fascia_notturna_*`; with an HA alarm
+    set each room leaves the band early enough to be at comfort at the wake.
+    """
+
+    # "Fascia notturna" -> switch.fascia_notturna
+    _attr_has_entity_name = True
+    _attr_name = "Fascia notturna"
+    _attr_icon = "mdi:weather-night"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_night_band"
+        self._attr_is_on = False
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if (last := await self.async_get_last_state()) is not None:
+            self._attr_is_on = last.state == STATE_ON
+
+    async def _changed(self, on: bool) -> None:
+        self._attr_is_on = on
+        self.async_write_ha_state()
+        engine = getattr(self._entry.runtime_data, "engine", None)
+        if engine is not None:
+            await engine.request_run()
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await self._changed(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await self._changed(False)
 
 
 class GymDampAlertsSwitch(SwitchEntity, RestoreEntity):

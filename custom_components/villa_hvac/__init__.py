@@ -21,6 +21,7 @@ from .engine import (
 )
 from .governor import SteadyGovernorController
 from .night import NightSilenceController
+from .nightband import NightBand
 from .policies import (
     POLICIES,
     CoolingController,
@@ -51,6 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     # Camere silenziose controller (#2b, C1): an engine merge controller. Attached
     # to the coordinator (build_house_state reads its wake latch) and added to the
     # engine's controllers below so its bedroom writes flow through the arbiter.
+    # v0.96.0 night band: computed inside build_house_state (trims per room).
+    coordinator.night_band = NightBand()
     night = NightSilenceController(hass, entry, coordinator)
     coordinator.night = night
     night.start()

@@ -266,7 +266,7 @@ def precool_policy(state: HouseState) -> Desired:
     base = state.house_setpoint + state.mode_offset - state.precool_offset
     return {
         # #2: per-zone comfort trim stacks on the pre-cool target.
-        temperature_lever(z.climate): round(base + z.setpoint_offset, 1)
+        temperature_lever(z.climate): round(base + z.setpoint_offset + z.night_trim, 1)
         for z in state.zones.values()
         if _controllable(z) and z.emitter == "fancoil" and z.enabled and not z.paused
     }
@@ -296,7 +296,8 @@ def house_mode_policy(state: HouseState) -> Desired:
         out[preset_lever(z.climate)] = preset
         if state.mode_offset is not None and state.house_setpoint is not None:
             out[temperature_lever(z.climate)] = round(
-                state.house_setpoint + state.mode_offset + z.setpoint_offset, 1
+                state.house_setpoint + state.mode_offset + z.setpoint_offset
+                + z.night_trim, 1
             )
     return out
 
@@ -304,9 +305,9 @@ def house_mode_policy(state: HouseState) -> Desired:
 def _winter_house_mode(state: HouseState, preset: str) -> Desired:
     """v0.77.0 winter light: heat through the thermostats, SETPOINT ONLY.
 
-    Casa/Via/Notte all hold the `comfort` preset (Vacanza keeps building_
+    Casa/Via all hold the `comfort` preset (Vacanza keeps building_
     protection = frost only); the setback lives in the written temperature:
-    winter slider + mode offset (Via/Notte) + room trim (+ Economy), clamped to
+    winter slider + mode offset (Via) + room trim (+ Economy) + night-band trim, clamped to
     [WINTER_SETPOINT_MIN, WINTER_SETPOINT_MAX]. Radiant zones included. Disabled
     and window-paused zones are left to the higher-priority policies.
     """
@@ -318,7 +319,8 @@ def _winter_house_mode(state: HouseState, preset: str) -> Desired:
             continue
         out[preset_lever(z.climate)] = preset
         if state.mode_offset is not None and state.house_setpoint is not None:
-            target = state.house_setpoint + state.mode_offset + z.setpoint_offset
+            target = (state.house_setpoint + state.mode_offset + z.setpoint_offset
+                      + z.night_trim)
             out[temperature_lever(z.climate)] = round(
                 max(WINTER_SETPOINT_MIN, min(WINTER_SETPOINT_MAX, target)), 1
             )
@@ -608,7 +610,8 @@ class FanBandController:
             # the band degrades to the base center meanwhile.
             # #2: the fallback base gets the per-zone trim too (the resolved
             # center already includes it via resolve_center).
-            center = None if center_base is None else center_base + z.setpoint_offset
+            center = (None if center_base is None
+                      else center_base + z.setpoint_offset + z.night_trim)
             if eligible and z.resolved_center is not None:
                 center = z.resolved_center
             # F3c: when the regime coordinator coalesces, it dictates the phase;
@@ -1306,7 +1309,8 @@ class CoolingController:
             # the band degrades to the base center meanwhile.
             # #2: the fallback base gets the per-zone trim too (the resolved
             # center already includes it via resolve_center).
-            center = None if center_base is None else center_base + z.setpoint_offset
+            center = (None if center_base is None
+                      else center_base + z.setpoint_offset + z.night_trim)
             if eligible and z.resolved_center is not None:
                 center = z.resolved_center
             # F3c: when the regime coordinator coalesces, it dictates the phase;

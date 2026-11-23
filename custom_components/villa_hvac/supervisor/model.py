@@ -34,6 +34,12 @@ class ZoneSnapshot:
     bedroom: bool = False          # camere silenziose zone (#2b)
     fan_min: int = 0               # rest/min-circulation fan % for this zone (#3 v2)
     setpoint_offset: float = 0.0   # #2: °C added to this zone's base center (per-room trim)
+    # v0.96.0 night band: the season night offset while this room is in the
+    # band (0 outside it). Added wherever the MODE target is computed
+    # (house_setpoint + mode_offset + setpoint_offset + night_trim) — NOT to
+    # the comfort target (house_setpoint + setpoint_offset) the recovery /
+    # return advisors aim at.
+    night_trim: float = 0.0
     fancoil: str | None = None     # primary fan entity
     manuale: str | None = None     # primary manuale switch entity
     follows: str | None = None     # leader zone_id this zone defers to (open-space)
@@ -160,6 +166,7 @@ class HouseState:
     pv_floor: float | None = None
     pv_coast_relax: float = 0.0
     night_active: bool = False          # #2b camere silenziose in effect
+    sleeping: bool = False              # v0.96.0: HA sleep helper (input_boolean.notte) on
     fan_pacing_enabled: bool = False    # #3 fan pacing switch
     steady_pacing_enabled: bool = False
     paced_living_room: bool = False

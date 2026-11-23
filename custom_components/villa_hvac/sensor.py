@@ -151,7 +151,50 @@ async def async_setup_entry(
     entities.append(GymDewPointSensor(coordinator, entry))
     # v0.95.0 STORY_VIA_ANTIFURTO: alarm -> Via episode, for debugging.
     entities.append(AlarmAwaySensor(coordinator, entry))
+    # v0.96.0 STORY_NIGHT_SCHEDULE: the night band, per room.
+    entities.append(NightBandSensor(coordinator, entry))
     async_add_entities(entities)
+
+
+class NightBandSensor(SensorEntity):
+    """v0.96.0: night band — spenta / inattiva / attiva / preriscaldo.
+    Attributes: start/end, the alarm used, offset, season and per room the
+    pre-heat lead + when it leaves the band (`rooms`). Pushed by the engine
+    cycle whenever the view changes."""
+
+    # "Fascia notturna" -> sensor.fascia_notturna
+    _attr_has_entity_name = True
+    _attr_name = "Fascia notturna"
+    _attr_icon = "mdi:weather-night"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_should_poll = False
+    _unrecorded_attributes = frozenset({"rooms"})
+
+    def __init__(self, coordinator, entry) -> None:
+        self._coordinator = coordinator
+        self._entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_night_band_status"
+
+    @property
+    def _view(self) -> dict:
+        band = getattr(self._coordinator, "night_band", None)
+        return getattr(band, "view", None) or {}
+
+    async def async_added_to_hass(self) -> None:
+        from .nightband import night_band_signal
+
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, night_band_signal(self._entry), self.async_write_ha_state))
+
+    @property
+    def native_value(self) -> str | None:
+        return self._view.get("status", "spenta")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._view)
+        v.pop("status", None)
+        return v
 
 
 class AlarmAwaySensor(SensorEntity):

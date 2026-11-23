@@ -255,7 +255,7 @@ async def test_occupied_notte_flushes_the_bedroom_unit_at_mid_speed(hass):
     _fans(hass)
     _arm(hass, entry, palestra_rh=50.0, out_t=18.0, out_rh=60.0)
     entry.runtime_data.data["zone_temps"]["main_bedroom"] = {"value": 26.0}
-    hass.states.async_set("select.house_mode", "Notte")
+    hass.states.async_set("input_boolean.notte", "on")   # v0.96.0: sleeping
     for p in ("person.mattia_pontacolone", "person.ehi"):
         hass.states.async_set(p, "home")
 

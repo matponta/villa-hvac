@@ -37,13 +37,18 @@ import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_change,
+)
 from homeassistant.util import dt as dt_util
 
 from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_NIGHT_THRESHOLD,
-    HOUSE_MODE_NIGHT,
+    DEFAULT_SLEEP_ENTITY,
+    DEFAULT_WAKE_ACTIVE_ENTITY,
+    DEFAULT_WAKE_TIME_ENTITY,
     NIGHT_GUARD_FAN_PCT,
     NIGHT_GUARD_HIGH,
     NIGHT_GUARD_LOW,
@@ -52,11 +57,14 @@ from .const import (
     NIGHT_WAKE_DAY_MINUTES,
     OPT_AUTO_WAKE_TIME,
     OPT_NIGHT_THRESHOLD,
+    OPT_SLEEP_ENTITY,
+    OPT_WAKE_ACTIVE_ENTITY,
+    OPT_WAKE_TIME_ENTITY,
     SEASON_SUMMER,
     SEASON_WINTER,
     ZONES,
 )
-from .controller import current_house_mode
+from .controller import sleeping, wake_alarm
 from .supervisor import (
     _is_free_cooling,
     fan_lever,
@@ -165,9 +173,15 @@ class NightSilenceController:
         self._nudged: dict[str, float] = {}
         self._woken = False
         self._unsub_wake = None
+        self._unsub_alarm = None
+        self._unsub_sleep = None
 
     def _wake_hms(self) -> tuple[int, int, int]:
-        """Parse the configured auto-wake time ('HH:MM[:SS]'); 08:00 on garbage."""
+        """The auto-wake time: v0.96.0 the HA alarm when one is set, else the
+        configured 'HH:MM[:SS]' option; 08:00 on garbage."""
+        alarm = wake_alarm(self.hass, self.entry) if self.hass is not None else None
+        if alarm is not None:
+            return alarm.hour, alarm.minute, alarm.second
         raw = str(self.entry.options.get(OPT_AUTO_WAKE_TIME, DEFAULT_AUTO_WAKE_TIME))
         parts = raw.split(":")
         try:
@@ -204,11 +218,49 @@ class NightSilenceController:
 
     def start(self) -> None:
         self._schedule_wake()
+        # v0.96.0: the wake follows the HA alarm -> re-plan when it changes.
+        opts = self.entry.options
+        self._unsub_alarm = async_track_state_change_event(
+            self.hass,
+            [opts.get(OPT_WAKE_ACTIVE_ENTITY) or DEFAULT_WAKE_ACTIVE_ENTITY,
+             opts.get(OPT_WAKE_TIME_ENTITY) or DEFAULT_WAKE_TIME_ENTITY],
+            self._on_alarm_change,
+        )
+        # Buonanotte / Sveglia flip the sleep helper: run the engine now, not
+        # at the next 30 s tick.
+        self._unsub_sleep = async_track_state_change_event(
+            self.hass, [opts.get(OPT_SLEEP_ENTITY) or DEFAULT_SLEEP_ENTITY],
+            self._on_sleep_change,
+        )
 
     def stop(self) -> None:
         if self._unsub_wake:
             self._unsub_wake()
             self._unsub_wake = None
+        if self._unsub_alarm:
+            self._unsub_alarm()
+            self._unsub_alarm = None
+        if self._unsub_sleep:
+            self._unsub_sleep()
+            self._unsub_sleep = None
+
+    @callback
+    def _on_alarm_change(self, _event) -> None:
+        if self._unsub_wake:
+            self._unsub_wake()
+        self._schedule_wake()
+        self._kick("villa_hvac_alarm_change")   # the night band end moved too
+
+    @callback
+    def _on_sleep_change(self, _event) -> None:
+        self._kick("villa_hvac_sleep_change")
+
+    def _kick(self, name: str) -> None:
+        engine = getattr(self.coordinator, "engine", None)
+        if engine is not None:
+            self.entry.async_create_background_task(
+                self.hass, engine.request_run(), name
+            )
 
     def _threshold(self) -> float:
         try:
@@ -217,8 +269,10 @@ class NightSilenceController:
             return DEFAULT_NIGHT_THRESHOLD
 
     def __call__(self, state) -> dict:
-        # Reset the wake latch once we've left Notte, so a fresh Notte re-silences.
-        if state.house_mode != HOUSE_MODE_NIGHT:
+        # Reset the wake latch once nobody is sleeping (v0.96.0: the HA helper
+        # input_boolean.notte, was house_mode != Notte), so the next night
+        # re-silences.
+        if not state.sleeping:
             self._woken = False
         if not state.night_active:
             return self._release(state)
@@ -272,7 +326,7 @@ class NightSilenceController:
         per-room trim); None when not computable (e.g. Vacanza has no offset)."""
         if state.house_setpoint is None or state.mode_offset is None:
             return None
-        return state.house_setpoint + state.mode_offset + z.setpoint_offset
+        return state.house_setpoint + state.mode_offset + z.setpoint_offset + z.night_trim
 
     def _nudge_target(self, state, z, threshold: float, base: float | None) -> float | None:
         """The chilled-water setpoint for a guard-active bedroom, or None to
@@ -394,7 +448,7 @@ class NightSilenceController:
     def _on_wake(self, now: datetime) -> None:
         # Auto-wake: latch the silence off (until the mode leaves Notte) + nudge the
         # engine to hand the bedrooms back this cycle rather than the next tick.
-        if current_house_mode(self.hass, self.entry) != HOUSE_MODE_NIGHT or self._woken:
+        if not sleeping(self.hass, self.entry) or self._woken:
             return
         self._woken = True
         engine = getattr(self.coordinator, "engine", None)

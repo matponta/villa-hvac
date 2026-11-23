@@ -31,7 +31,7 @@ async def async_setup_entry(
 
 
 class HouseModeSelect(SelectEntity, RestoreEntity):
-    """Casa / Via / Notte / Vacanza house mode (drives KNX presets)."""
+    """Casa / Via / Vacanza house mode (drives KNX presets). v0.96.0: no Notte."""
 
     _attr_has_entity_name = True
     _attr_name = "House mode"
@@ -48,6 +48,8 @@ class HouseModeSelect(SelectEntity, RestoreEntity):
         await super().async_added_to_hass()
         if (last := await self.async_get_last_state()) and last.state in HOUSE_MODES:
             self._attr_current_option = last.state
+        # v0.96.0: a restored "Notte" (no longer a mode) comes back as Casa —
+        # the night is the clock band + the HA sleep helper now.
 
     async def async_select_option(self, option: str) -> None:
         """Select a mode and apply its preset across the house."""

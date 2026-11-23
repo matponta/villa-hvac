@@ -82,8 +82,10 @@ def test_away_modes_are_left_alone(mode):
         False, f"{ALARM_REASON_MODE}{mode.lower()}")
 
 
-def test_notte_escalates_like_casa():
-    assert _due(T0 + timedelta(hours=9), mode="Notte")[0] is True
+def test_only_casa_escalates():
+    """v0.96.0: Notte is no longer a house mode — only Casa drops to Via."""
+    assert _due(T0 + timedelta(hours=9), mode="Casa")[0] is True
+    assert _due(T0 + timedelta(hours=9), mode="Notte")[0] is False
 
 
 def test_switches_off_block():
@@ -200,10 +202,11 @@ async def test_manual_mode_change_before_the_fire_cancels(hass, freezer):
     await _setup(hass, season_mode="cool")
     await _leave(hass)
     await _advance(hass, freezer, timedelta(minutes=10))
-    await _select(hass, "Notte")
+    await _select(hass, "Vacanza")
     assert hass.states.get(SENSOR).state == "annullato"
+    await _select(hass, "Casa")
     await _advance(hass, freezer, timedelta(hours=1))
-    assert hass.states.get(SELECT).state == "Notte"
+    assert hass.states.get(SELECT).state == "Casa"
 
 
 async def test_restart_mid_episode_keeps_fire_at(hass, freezer):

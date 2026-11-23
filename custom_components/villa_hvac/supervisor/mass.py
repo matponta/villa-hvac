@@ -92,7 +92,8 @@ def _unit_demand(state: HouseState, zone_id: str) -> bool:
 def _base_target(state: HouseState, z) -> float | None:
     if state.house_setpoint is None or state.mode_offset is None:
         return None
-    return round(state.house_setpoint + state.mode_offset + z.setpoint_offset, 1)
+    return round(
+        state.house_setpoint + state.mode_offset + z.setpoint_offset + z.night_trim, 1)
 
 
 class DemandShedController:

@@ -207,5 +207,7 @@ covers carry an orientation label.)
 | Winter brain W1: radiant observer + time-to-temperature (STORY_WINTER_BRAIN) | v0.80.0 | read-only |
 | Winter brain W2–W4: setback advisor, winter return pre-cond, PV heating | v0.81.0 | opt-in (pv_heat / return_precond) |
 | **BACKLOG: winter rack cooling via the rack fancoil fan** | — | owner 2026-10-07; exception to fancoils-off when the rack is hot |
-| BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter |
+| Via from the burglar alarm (STORY_VIA_ANTIFURTO) | v0.95.0 | opt-in `switch.via_da_antifurto` |
+| Night band + wake pre-heat; Notte out of the house modes (STORY_NIGHT_SCHEDULE) | v0.96.0 | opt-in `switch.fascia_notturna`; #2b/VMC on `input_boolean.notte` |
+| BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter (the night band's wake pre-heat is its first piece) |
 

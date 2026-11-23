@@ -30,7 +30,7 @@ AUTO = "switch.auto_setback"
 def test_preset_for_mode():
     assert preset_for_mode("Casa") == "comfort"
     assert preset_for_mode("Via") == "standby"
-    assert preset_for_mode("Notte") == "economy"
+    assert preset_for_mode("Notte") is None  # v0.96.0: no longer a mode
     assert preset_for_mode("Vacanza") == "building_protection"
     assert preset_for_mode("nonsense") is None
 
@@ -65,25 +65,17 @@ async def _select_mode(hass, mode):
     )
 
 
-async def test_selecting_night_applies_economy_to_all_controllable(hass):
+async def test_notte_is_no_longer_a_mode(hass):
+    """v0.96.0 (STORY_NIGHT_SCHEDULE): the select offers Casa/Via/Vacanza only;
+    the night is the clock band + the HA sleep helper."""
+    import pytest
+    from homeassistant.exceptions import ServiceValidationError
+
     await _setup(hass)
-    await enable_supervisor(hass)
-    seed_thermostats(hass, preset="comfort")
-    calls = async_mock_service(hass, "climate", "set_preset_mode")
-    async_mock_service(hass, "climate", "set_temperature")
-    # Notte also triggers the camere-silenziose overlay (#2b) on the bedrooms.
-    async_mock_service(hass, "switch", "turn_on")
-    async_mock_service(hass, "fan", "turn_off")
-    async_mock_service(hass, "fan", "set_percentage")  # paired 0% disarm
-
-    await _select_mode(hass, "Notte")
-
-    targeted = {c.data["entity_id"]: c.data["preset_mode"] for c in calls}
-    assert len(targeted) == 17
-    assert all(p == "economy" for p in targeted.values())
-    # Split-AC zones are never touched.
-    assert "climate.aircon_cantina_vini_2" not in targeted
-    assert "climate.aircon_garage_2" not in targeted
+    assert hass.states.get(SELECT).attributes["options"] == ["Casa", "Via", "Vacanza"]
+    with pytest.raises(ServiceValidationError):
+        await _select_mode(hass, "Notte")
+    assert hass.states.get(SELECT).state == "Casa"
 
 
 async def test_auto_setback_off_writes_nothing(hass):

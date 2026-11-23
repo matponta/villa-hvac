@@ -287,7 +287,7 @@ async def _armed(hass):
 
 async def test_bedroom_unit_quiet_during_occupied_notte(hass):
     entry, vmc, on = await _armed(hass)
-    hass.states.async_set("select.house_mode", "Notte")
+    hass.states.async_set("input_boolean.notte", "on")   # v0.96.0: sleeping
     _persons(hass, home=True)                       # someone home
 
     await vmc._evaluate()
@@ -298,7 +298,7 @@ async def test_bedroom_unit_quiet_during_occupied_notte(hass):
 
 async def test_bedroom_unit_boosts_when_empty_at_night(hass):
     entry, vmc, on = await _armed(hass)
-    hass.states.async_set("select.house_mode", "Notte")
+    hass.states.async_set("input_boolean.notte", "on")
     _persons(hass, home=False)                      # house free -> no quiet veto
 
     await vmc._evaluate()
@@ -308,12 +308,23 @@ async def test_bedroom_unit_boosts_when_empty_at_night(hass):
 
 async def test_bedroom_unit_boosts_daytime_occupied(hass):
     entry, vmc, on = await _armed(hass)
-    hass.states.async_set("select.house_mode", "Casa")   # not Notte
+    hass.states.async_set("input_boolean.notte", "off")   # not sleeping
     _persons(hass, home=True)
 
     await vmc._evaluate()
 
-    assert any(c.data["entity_id"] == LIVING for c in on)  # quiet only during Notte
+    assert any(c.data["entity_id"] == LIVING for c in on)  # quiet only while sleeping
+
+
+async def test_sleep_helper_unavailable_is_not_sleeping(hass):
+    """v0.96.0: an unavailable helper = not sleeping -> no night-quiet veto."""
+    entry, vmc, on = await _armed(hass)
+    hass.states.async_set("input_boolean.notte", "unavailable")
+    _persons(hass, home=True)
+
+    await vmc._evaluate()
+
+    assert any(c.data["entity_id"] == LIVING for c in on)
 
 
 

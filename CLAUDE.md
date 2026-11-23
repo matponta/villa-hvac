@@ -286,9 +286,36 @@ at once. The new optimization layer (#5/#6/#9/#7) lands on this same engine.
        bias — see `EP_TEMP_OFFSETS`); reserved for occupancy (#2). TODO: circle
        back to EP-primary with time-varying offset.
 4. [~] #2 Occupancy / night setback. Integration owns a house-mode `select`
-       (Casa/Via/Notte/Vacanza) → KNX presets comfort/standby/economy/
-       building_protection (validated map; replaces legacy
-       `automation.clima_applica_modalita_casa`). Also pushes set_temperature =
+       (Casa/Via/Vacanza since v0.96.0 — was Casa/Via/Notte/Vacanza) → KNX
+       presets comfort/standby/building_protection (validated map; replaces legacy
+       `automation.clima_applica_modalita_casa`).
+       - [x] **v0.96.0 NIGHT BAND (STORY_NIGHT_SCHEDULE.md) — "Notte" is NO
+         LONGER a house mode.** The night is (a) a clock band in Casa and (b)
+         the HA helper `input_boolean.notte` ("we are sleeping": Buonanotte ON,
+         Sveglia / Via / 12:00 OFF; unavailable = OFF). (a) `switch.fascia_notturna`
+         (default OFF) + `time.fascia_notturna_inizio/fine` (21:30→07:00) and a
+         summer pair `_estate` (23:30→07:00, STORY "Aperto"): every controllable
+         room gets `ZoneSnapshot.night_trim` = the season night offset (the old
+         `winter_notte_offset` −1 / `summer_notte_offset` +3, keys unchanged),
+         summed wherever the MODE target is built (`house_setpoint + mode_offset
+         + setpoint_offset + night_trim`: #2a, precool, band center, resolve_center,
+         rack/P1, #2b base, mass) — NOT into the comfort target the W1/W2/W4
+         advisors aim at (W4 stays inert in Casa). With an HA alarm
+         (`input_boolean.wakeup_active` + `input_datetime.wake_up_time`) each room
+         leaves the band `lead` before the wake: winter = W1 recovery from
+         target−|offset|, clamped [0, `preheat_max_lead_hours` 3 h], cap when
+         conf < 0.5 or unreachable; summer = fixed 30 min. The alarm only ENDS the
+         band earlier, never stretches it; an alarm > 14 h after the start is
+         ignored; a room whose pre-heat started stays out (latch). Pure core
+         `supervisor/night_band.py` (UTC arithmetic, DST-safe), HA wiring
+         `nightband.py` (in `build_house_state`), `sensor.fascia_notturna`
+         (spenta/inattiva/attiva/preriscaldo + per-room lead/end). Edges are a
+         desired-value change → arbiter fresh write + v0.94.0 time gate (no
+         phantom override). (b) #2b `night_active` = summer ∧ helper ∧ Auto
+         setback ∧ not woken; wake latch resets on helper OFF; auto-wake = HA
+         alarm if set, else `auto_wake_time`. VMC night-quiet = helper ON. A
+         restored "Notte" select comes back as Casa; #2c/alarm escalate from Casa
+         only. Options: wake/sleep entities, `preheat_max_lead_hours`. Also pushes set_temperature =
        `number.villa_hvac_house_setpoint` (dashboard slider) + a SEASON-AWARE
        offset so the integration, not ETS, owns setpoints. Offsets editable in the
        options flow; season auto-detected from the reference thermostat's

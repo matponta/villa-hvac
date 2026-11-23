@@ -103,7 +103,6 @@ from .const import (
     HEAT_VALVES,
     FORECAST_REFRESH,
     HOUSE_MODE_AWAY,
-    HOUSE_MODE_NIGHT,
     HOUSE_MODE_VACATION,
     NIGHT_GUARD_FAN_PCT,
     PLAN_SIM_DOWNSAMPLE_MIN,
@@ -172,6 +171,7 @@ from .controller import (
     windows_free_cool_enabled,
     demand_shedding_enabled,
     mass_maintenance_enabled,
+    sleeping,
 )
 from .policies import (
     CoolingController,
@@ -719,23 +719,41 @@ def build_house_state(
     cellar = cellar_settings(hass, entry)
     gym = gym_settings(hass, entry)
     gym_plug = hass.states.get(GYM_DEHUM_SWITCH)
-    # #2b night_active is DERIVED (C1): Notte + Auto-setback on + not auto-woken.
-    # Computed here (not from a NightController.active flag) so it's consistent
-    # with what NightSilenceController computes THIS cycle (no transition lag) and
-    # so a reboot-in-Notte re-silences with no startup-resync branch.
+    # #2b night_active is DERIVED (C1): sleeping + Auto-setback on + not
+    # auto-woken. Computed here (not from a NightController.active flag) so it's
+    # consistent with what NightSilenceController computes THIS cycle (no
+    # transition lag) and so a reboot while sleeping re-silences with no
+    # startup-resync branch. v0.96.0: "sleeping" is the HA helper
+    # (input_boolean.notte), no longer house_mode == Notte.
     night = getattr(coordinator, "night", None)
     setback_on = auto_setback_enabled(hass, entry)
+    is_sleeping = sleeping(hass, entry)
     # v0.76.0: SUMMER only. Camere silenziose is a fancoil-noise feature; in winter
     # the bedrooms heat through the radiant floor and silencing (manuale on + fan
     # 0 each night, one-shot fan-on each morning) was pure bus churn. A season
-    # flip mid-Notte lands in the controller's release path (full hand-back).
+    # flip mid-night lands in the controller's release path (full hand-back).
     night_active = (
         season == SEASON_SUMMER
-        and mode == HOUSE_MODE_NIGHT and setback_on
+        and is_sleeping and setback_on
         and not getattr(night, "woken", False)
     )
     now = dt_util.utcnow()
     outdoor = _outdoor_temp(hass)
+    # v0.96.0 night band: per-room trim while the room is in the clock band
+    # (Casa only); rides on ZoneSnapshot.night_trim into every mode target.
+    band = getattr(coordinator, "night_band", None)
+    if band is not None:
+        trims = band.step(
+            hass, entry, now=now, season=season, mode=mode,
+            auto_setback=setback_on, house_setpoint=house_setpoint,
+            zones=zones, outdoor=outdoor, forecast=forecast,
+            winter=getattr(eng, "winter", None),
+        )
+        if trims:
+            zones = {
+                zid: replace(z, night_trim=trims[zid]) if zid in trims else z
+                for zid, z in zones.items()
+            }
     # Windows → free-cool inference (v0.56.0, owner rule 2): enough window
     # CONTACTS open + outdoor meaningfully cooler than the house indoor mean →
     # the house is being aired deliberately; `_is_free_cooling` ORs the verdict
@@ -818,6 +836,7 @@ def build_house_state(
         precool=plan.precool,
         precool_offset=cfg.precool_offset,
         night_active=night_active,
+        sleeping=is_sleeping,
         fan_pacing_enabled=fan_pacing_enabled(hass, entry),
         steady_pacing_enabled=steady_pacing_enabled(hass, entry),
         paced_living_room=paced_living_room_enabled(hass, entry),

@@ -41,7 +41,7 @@ def test_aggregate_presence():
 
 def test_escalation_target():
     assert escalation_target("Casa") == "Via"
-    assert escalation_target("Notte") == "Via"
+    assert escalation_target("Notte") is None  # v0.96.0: not a mode any more
     assert escalation_target("Via") is None  # already away
     assert escalation_target("Vacanza") is None  # don't downgrade vacation
 

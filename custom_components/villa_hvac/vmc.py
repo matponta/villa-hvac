@@ -50,7 +50,6 @@ from .away import aggregate_presence
 from .const import (
     CELLAR_SAMPLE_MAX_AGE,
     CELLAR_ZONE,
-    HOUSE_MODE_NIGHT,
     OPT_WINDOW_ALERT_TARGETS,
     OUTDOOR_RH,
     OUTDOOR_TEMP,
@@ -88,7 +87,7 @@ from .const import (
 )
 from .controller import (
     cellar_settings,
-    current_house_mode,
+    sleeping,
     current_season,
     vmc_alerts_enabled,
     vmc_boost_enabled,
@@ -338,7 +337,9 @@ class VmcController:
             return
         # A bedroom-serving unit stays quiet during Notte WHILE the house is
         # occupied; an empty house lets it flush at night (owner rule 2026-07-10).
-        night = current_house_mode(self.hass, self.entry) == HOUSE_MODE_NIGHT
+        # v0.96.0: "night" = the HA sleep helper (input_boolean.notte), no
+        # longer house_mode == Notte; unavailable = not sleeping (no veto).
+        night = sleeping(self.hass, self.entry)
         occupied = self._occupied()
         for group, cfg in VMC_GROUPS.items():
             d = dehum[group]

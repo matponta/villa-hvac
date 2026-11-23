@@ -10,7 +10,7 @@ and never pulled back into a cooling preset.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 import logging
 import math
 
@@ -27,6 +27,15 @@ from .const import (
     OPT_CELLAR_WINTER_SETPOINT,
     OPT_SPLIT_CANTINA_SETPOINT,
     ALARM_AWAY_NUMBERS,
+    DEFAULT_PREHEAT_MAX_LEAD,
+    DEFAULT_SLEEP_ENTITY,
+    DEFAULT_WAKE_ACTIVE_ENTITY,
+    DEFAULT_WAKE_TIME_ENTITY,
+    NIGHT_BAND_TIMES,
+    OPT_PREHEAT_MAX_LEAD,
+    OPT_SLEEP_ENTITY,
+    OPT_WAKE_ACTIVE_ENTITY,
+    OPT_WAKE_TIME_ENTITY,
     CELLAR_NUMBERS,
     GYM_NUMBERS,
     COMFORT_FLOOR_MAX,
@@ -155,19 +164,105 @@ def calendar_season(day: date) -> str:
 def mode_offset(hass: HomeAssistant, entry: ConfigEntry, mode: str) -> float | None:
     """Setpoint offset for a mode (season-aware, options-editable).
 
-    Casa -> +0; Vacanza -> None (building_protection, no setpoint). Via/Notte use
-    the current season's editable offset.
+    Casa -> +0; Vacanza -> None (building_protection, no setpoint). Via uses
+    the current season's editable offset. v0.96.0: Notte is no longer a mode
+    (its offset is the night band's, `night_band_offset`).
     """
     if mode == HOUSE_MODE_HOME:
         return 0.0
-    if mode not in (HOUSE_MODE_AWAY, HOUSE_MODE_NIGHT):
+    if mode != HOUSE_MODE_AWAY:
         return None  # Vacanza / unknown
-    season = current_season(hass, entry)
-    default = SEASON_OFFSET_DEFAULTS[season][mode]
+    return _season_offset(entry, current_season(hass, entry), HOUSE_MODE_AWAY)
+
+
+def _season_offset(entry: ConfigEntry, season: str, key: str) -> float:
+    default = SEASON_OFFSET_DEFAULTS[season][key]
     try:
-        return float(entry.options.get(SEASON_OFFSET_OPTS[season][mode], default))
+        return float(entry.options.get(SEASON_OFFSET_OPTS[season][key], default))
     except (TypeError, ValueError):
         return default
+
+
+def night_band_offset(entry: ConfigEntry, season: str) -> float:
+    """v0.96.0: the night-band trim for `season` — the old Notte offset options
+    (winter_notte_offset / summer_notte_offset, keys unchanged)."""
+    return _season_offset(entry, season, HOUSE_MODE_NIGHT)
+
+
+def night_band_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.96.0 night band opt-in (default OFF)."""
+    return _switch_state(hass, entry, "night_band") == STATE_ON
+
+
+def _parse_time_strict(raw) -> time:
+    parts = str(raw).split(":")
+    return time(int(parts[0]), int(parts[1]) if len(parts) > 1 else 0,
+                int(float(parts[2])) if len(parts) > 2 else 0)
+
+
+def _parse_time(raw, default: time) -> time:
+    try:
+        return _parse_time_strict(raw)
+    except (ValueError, IndexError, TypeError):
+        return default
+
+
+def night_band_times(
+    hass: HomeAssistant, entry: ConfigEntry, season: str,
+) -> tuple[time, time]:
+    """v0.96.0: (start, end) of the night band for `season` from the time
+    entities (summer has its own pair), else the defaults."""
+    keys = (("night_band_start_summer", "night_band_end_summer")
+            if season == SEASON_SUMMER else ("night_band_start", "night_band_end"))
+    out = []
+    registry = er.async_get(hass)
+    for suffix in keys:
+        default = _parse_time(NIGHT_BAND_TIMES[suffix][1], time(0, 0))
+        entity_id = registry.async_get_entity_id(
+            "time", DOMAIN, f"{entry.entry_id}_{suffix}")
+        state = hass.states.get(entity_id) if entity_id else None
+        out.append(_parse_time(state.state, default)
+                   if state is not None and state.state not in ("unknown", "unavailable")
+                   else default)
+    return out[0], out[1]
+
+
+def wake_alarm(hass: HomeAssistant, entry: ConfigEntry) -> time | None:
+    """v0.96.0: the HA alarm time when an alarm is set (None = no alarm).
+    Entities from the options (default input_boolean.wakeup_active +
+    input_datetime.wake_up_time); anything unavailable = no alarm."""
+    active_id = entry.options.get(OPT_WAKE_ACTIVE_ENTITY) or DEFAULT_WAKE_ACTIVE_ENTITY
+    time_id = entry.options.get(OPT_WAKE_TIME_ENTITY) or DEFAULT_WAKE_TIME_ENTITY
+    active = hass.states.get(active_id)
+    if active is None or active.state != STATE_ON:
+        return None
+    wake = hass.states.get(time_id)
+    if wake is None or wake.state in ("unknown", "unavailable", ""):
+        return None
+    # A date+time helper reads "YYYY-MM-DD HH:MM:SS": keep the time part.
+    raw = wake.state.split(" ")[-1]
+    if ":" not in raw:
+        return None
+    try:
+        return _parse_time_strict(raw)
+    except (ValueError, IndexError, TypeError):
+        return None
+
+
+def sleeping(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.96.0: "we are sleeping" — the HA helper (default input_boolean.notte).
+    Unavailable / missing = NOT sleeping (no silence, no VMC veto)."""
+    entity_id = entry.options.get(OPT_SLEEP_ENTITY) or DEFAULT_SLEEP_ENTITY
+    state = hass.states.get(entity_id)
+    return state is not None and state.state == STATE_ON
+
+
+def preheat_max_lead(entry: ConfigEntry) -> timedelta:
+    try:
+        hours = float(entry.options.get(OPT_PREHEAT_MAX_LEAD, DEFAULT_PREHEAT_MAX_LEAD))
+    except (TypeError, ValueError):
+        hours = DEFAULT_PREHEAT_MAX_LEAD
+    return timedelta(hours=max(0.0, hours))
 
 
 def controllable_zones() -> list[tuple[str, str]]:

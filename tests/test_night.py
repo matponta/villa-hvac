@@ -86,6 +86,13 @@ async def _select_mode(hass, mode):
     await hass.async_block_till_done()
 
 
+async def _sleep(hass, on: bool):
+    """v0.96.0: going to bed / waking = the HA helper input_boolean.notte
+    (Buonanotte / Sveglia), no longer house_mode Notte."""
+    hass.states.async_set("input_boolean.notte", "on" if on else "off")
+    await hass.async_block_till_done()
+
+
 async def test_night_silence_selection_switches_default_on(hass):
     await _setup(hass)
     assert hass.states.get("switch.main_bedroom_night_silence").state == "on"
@@ -123,7 +130,7 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     fan_pct = async_mock_service(hass, "fan", "set_percentage")
     fan_on = async_mock_service(hass, "fan", "turn_on")
 
-    await _select_mode(hass, "Notte")
+    await _sleep(hass, True)
 
     on_targets = {c.data["entity_id"] for c in sw_on}
     assert "switch.fancoil_camera_padronale_manuale" in on_targets
@@ -141,7 +148,7 @@ async def test_night_silences_bedrooms_and_casa_wakes(hass):
     hass.states.async_set("fan.fancoil_camera_padronale", "off", {"percentage": 0})
     hass.states.async_set("fan.fancoil_camera_gabriele", "off", {"percentage": 0})
 
-    await _select_mode(hass, "Casa")
+    await _sleep(hass, False)
 
     off_targets = {c.data["entity_id"] for c in sw_off}
     assert "switch.fancoil_camera_padronale_manuale" in off_targets
@@ -160,7 +167,7 @@ def _night_state(
     *, mode="Notte", night_active=True, temps=None, now=T0,
     season="summer", house_setpoint=24.0, mode_offset=3.0,
     enabled=True, paused=False, setpoint_offset=0.0,
-    auto_setback=False, free_cooling=False,
+    auto_setback=False, free_cooling=False, night_trim=0.0,
 ):
     from custom_components.villa_hvac.supervisor import HouseState, ZoneSnapshot
 
@@ -171,6 +178,7 @@ def _night_state(
             zone_id=zid, name=zone["name"], climate=zone.get("climate"),
             emitter="fancoil", temp=temps.get(zid), bedroom=True,
             enabled=enabled, paused=paused, setpoint_offset=setpoint_offset,
+            night_trim=night_trim,
             fancoil_units=((zone["fancoils"][0], zone["manuale_switch"]),),
         )
     return HouseState(
@@ -544,13 +552,16 @@ def test_guard_setpoint_outranks_house_mode_in_the_merge():
     c = _night_ctrl()
     hot = {"main_bedroom": 26.5, "gabriroom": 26.5}
     c(_night_state(temps=hot, now=T0))
+    # v0.96.0: Casa + the night band's +3 trim (was house_mode Notte +3).
     state = dc_replace(
-        _night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH), auto_setback=True
+        _night_state(temps=hot, now=T0 + NIGHT_GUARD_HIGH, mode="Casa",
+                     mode_offset=0.0, night_trim=3.0),
+        auto_setback=True,
     )
     night_out = c(state)
     house_out = house_mode_policy(state)
     lever = temperature_lever(dict(bedrooms())["main_bedroom"]["climate"])
-    assert house_out[lever] == 27.0                      # #2a wants the Notte base
+    assert house_out[lever] == 27.0                      # #2a wants the night-band base
     assert merge_desired([night_out, house_out])[lever] == 25.5  # the guard wins
 
 
@@ -624,7 +635,7 @@ async def test_failsafe_revives_supervisor_silenced_fan(hass):
         async_mock_service(hass, "fan", "set_percentage")
         fan_on = async_mock_service(hass, "fan", "turn_on")
 
-        await _select_mode(hass, "Notte")            # silence -> fan.turn_off dispatched
+        await _sleep(hass, True)                     # silence -> fan.turn_off dispatched
         engine = entry.runtime_data.engine
         assert engine._fans_turned_off == {
             "fan.fancoil_camera_padronale", "fan.fancoil_camera_gabriele",
@@ -651,7 +662,7 @@ async def test_engine_cycle_delivers_chilled_water(hass):
     await hass.config.async_set_time_zone("UTC")
     with freeze_time("2026-07-04 23:30:00") as frozen:
         entry = await _setup(hass)
-        seed_thermostats(hass, temperature=27.0)     # Notte base already applied
+        seed_thermostats(hass, temperature=27.0)     # night-band base already applied
         hass.states.async_set("number.house_setpoint", "24.0")
         for fan, man in (
             ("fan.fancoil_camera_padronale", "switch.fancoil_camera_padronale_manuale"),
@@ -669,7 +680,10 @@ async def test_engine_cycle_delivers_chilled_water(hass):
         temps = async_mock_service(hass, "climate", "set_temperature")
         await enable_supervisor(hass)
 
-        await _select_mode(hass, "Notte")            # pass 1: above-timer starts
+        # v0.96.0: the +3 night base now comes from the night band (summer
+        # pair 23:30 -> 07:00) in Casa, not from house_mode Notte.
+        hass.states.async_set("switch.fascia_notturna", "on")
+        await _sleep(hass, True)                     # pass 1: above-timer starts
         frozen.move_to("2026-07-04 23:34:00")        # > NIGHT_GUARD_HIGH later
         await entry.runtime_data.engine._run()       # pass 2: guard fires
         await hass.async_block_till_done()
@@ -716,11 +730,11 @@ async def test_reboot_in_notte_after_wake_does_not_resilence(hass):
 
     await hass.config.async_set_time_zone("UTC")
     entry = await _setup(hass)  # fresh NightSilenceController: no wake latch
-    hass.states.async_set("select.house_mode", "Notte")
+    hass.states.async_set("input_boolean.notte", "on")   # still "sleeping"
 
     with freeze_time("2026-07-04 10:30:00"):
         state = build_house_state(hass, entry, entry.runtime_data)
-        assert state.house_mode == "Notte"
+        assert state.sleeping is True
         assert state.night_active is False  # clock says woken -> band keeps control
     with freeze_time("2026-07-04 03:00:00"):
         state = build_house_state(hass, entry, entry.runtime_data)

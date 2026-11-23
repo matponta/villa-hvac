@@ -17,6 +17,10 @@ from .const import (
     DEFAULT_AUTO_WAKE_TIME,
     DEFAULT_RETURN_QUIET_END,
     DEFAULT_RETURN_QUIET_START,
+    DEFAULT_PREHEAT_MAX_LEAD,
+    DEFAULT_SLEEP_ENTITY,
+    DEFAULT_WAKE_ACTIVE_ENTITY,
+    DEFAULT_WAKE_TIME_ENTITY,
     DEFAULT_AWAY_HOURS,
     DEFAULT_BAND_SLAM,
     DEFAULT_BAND_WIDTH,
@@ -60,6 +64,10 @@ from .const import (
     OPT_AWAY_HOURS,
     OPT_RETURN_QUIET_END,
     OPT_RETURN_QUIET_START,
+    OPT_PREHEAT_MAX_LEAD,
+    OPT_SLEEP_ENTITY,
+    OPT_WAKE_ACTIVE_ENTITY,
+    OPT_WAKE_TIME_ENTITY,
     OPT_BAND_SLAM,
     OPT_BAND_WIDTH,
     OPT_COMFORT_FLOOR,
@@ -207,6 +215,24 @@ class VillaHvacOptionsFlow(OptionsFlow):
                     default=options.get(
                         OPT_RETURN_QUIET_END, DEFAULT_RETURN_QUIET_END),
                 ): str,
+                # v0.96.0 night band: the HA alarm + sleep helper + lead cap.
+                vol.Optional(
+                    OPT_WAKE_ACTIVE_ENTITY,
+                    default=options.get(
+                        OPT_WAKE_ACTIVE_ENTITY, DEFAULT_WAKE_ACTIVE_ENTITY),
+                ): str,
+                vol.Optional(
+                    OPT_WAKE_TIME_ENTITY,
+                    default=options.get(OPT_WAKE_TIME_ENTITY, DEFAULT_WAKE_TIME_ENTITY),
+                ): str,
+                vol.Optional(
+                    OPT_SLEEP_ENTITY,
+                    default=options.get(OPT_SLEEP_ENTITY, DEFAULT_SLEEP_ENTITY),
+                ): str,
+                vol.Optional(
+                    OPT_PREHEAT_MAX_LEAD,
+                    default=options.get(OPT_PREHEAT_MAX_LEAD, DEFAULT_PREHEAT_MAX_LEAD),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=8)),
                 vol.Optional(
                     OPT_SEASON,
                     default=options.get(OPT_SEASON, SEASON_AUTO),
