@@ -1293,9 +1293,15 @@ CONDOMINIO_BATTERY_CAPACITY = "sensor.battery_capacity_2"
 CONDOMINIO_BATTERY_POWER = (
     "sensor.energy_battery_battery_consumption_power_2_battery_injection_power_2_net_power"
 )  # W, NEGATIVE = charging, POSITIVE = discharging
-CONDOMINIO_GRID_POWER = (
-    "sensor.energy_grid_grid_consumption_power_2_grid_injection_power_2_net_power"
-)  # W, POSITIVE = import, NEGATIVE = export (export ~never; self-consumption ~100%)
+# v0.94.1: the Shelly Pro 3EM on the parti comuni main incomer (local, ~1 s) —
+# same convention, W, POSITIVE = import, NEGATIVE = export (verified 16–22/11:
+# min −5.4 kW while exporting; within 1 % of the Huawei DTSU since its 11/11
+# fix). The former `sensor.energy_grid_..._2_net_power` was a combined sensor
+# the Energy dashboard generates from its grid source: when that source moved
+# to this Shelly (29/10) it was orphaned -> unavailable -> PV heating "no data".
+# The battery term stays FusionSolar (~5 min cadence): no local meter sees the
+# DC-coupled battery alone; the W4 dwells (10 min) absorb that lag.
+CONDOMINIO_GRID_POWER = "sensor.shellypro3em_ece334f6c64c_power"
 CONDOMINIO_PV_REMAINING = "sensor.fusion_solar_condominio_panel_production_remaining_today"  # kWh
 
 OPT_PV_BIAS_FLOOR_RICH = "pv_floor_rich"     # bank band-center floor when solar-rich (°C)

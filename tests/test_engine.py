@@ -1174,6 +1174,19 @@ async def test_mode_change_burst_does_not_concede_levers(hass):
     assert engine._lever_states[lever].override_until is None
 
 
+async def test_condo_grid_power_reads_the_parti_comuni_shelly(hass):
+    """v0.94.1: PV heating's grid term comes from the parti comuni Shelly
+    (W, + import / - export). The old Energy-generated combined sensor was
+    orphaned on 29/10 and left W4 at "no data" for weeks."""
+    from custom_components.villa_hvac.const import CONDOMINIO_GRID_POWER
+
+    assert CONDOMINIO_GRID_POWER == "sensor.shellypro3em_ece334f6c64c_power"
+    entry = await _setup(hass)
+    hass.states.async_set(CONDOMINIO_GRID_POWER, "-1234.5", {"unit_of_measurement": "W"})
+    state = build_house_state(hass, entry, entry.runtime_data)
+    assert state.condo_grid_w == -1234.5
+
+
 async def test_duty_off_releases_a_blocked_villa_via_engine(hass):
     """Duty disabled + a live block -> the engine actively clears it in one pass
     (DutyController emits an explicit BLOCCO_RELEASE, not a silent {})."""
