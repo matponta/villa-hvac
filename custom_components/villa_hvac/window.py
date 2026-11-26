@@ -21,6 +21,9 @@ v0.57.0 (owner rule 3): a CONTACT open longer than OPT_WINDOW_ALERT_MINUTES
 (default 30, 0 disables) pages Mattia + Ehi once per opening episode — unless
 the house is deliberately airing (free_air on, or windows-free-cool armed with
 enough contacts open).
+
+v0.97.0: the lavanderia vasistas during a drying purge of the laundry
+controller (`laundry.py`) does not pause the room; an opening by hand still does.
 """
 from __future__ import annotations
 
@@ -150,7 +153,16 @@ class WindowController:
         Actuation is the engine's `window_pause_policy` (building_protection for
         a paused, still-enabled zone); here we only flip the flag the policy
         reads and nudge an immediate pass. No-op write while the master is off.
+
+        v0.97.0: a short drying purge of the laundry controller is NOT a window
+        left open — the radiant keeps heating (warm air is what dries the
+        laundry). Re-checked every debounce while the opening lasts, so a purge
+        that overstays its cap is paused like any open window.
         """
+        laundry = getattr(self.entry.runtime_data, "laundry", None)
+        if laundry is not None and laundry.owns_purge(zone_id):
+            self._schedule_pause(zone_id)
+            return
         self.paused.add(zone_id)
         await self._request_run()
 

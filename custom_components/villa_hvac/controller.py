@@ -573,6 +573,11 @@ def zone_return_key(hass: HomeAssistant, entry: ConfigEntry, zone: str) -> bool:
     return _switch_state(hass, entry, f"{zone}_return_key") == STATE_ON
 
 
+def laundry_drying_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """v0.97.0 laundry drying switch — default ON (only OFF disables)."""
+    return _switch_state(hass, entry, "laundry_drying") != STATE_OFF
+
+
 def winter_sun_enabled(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """v0.78.0 winter solar gain switch — default ON (only OFF disables)."""
     return _switch_state(hass, entry, "winter_sun") != STATE_OFF

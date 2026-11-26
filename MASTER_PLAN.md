@@ -209,5 +209,6 @@ covers carry an orientation label.)
 | **BACKLOG: winter rack cooling via the rack fancoil fan** | — | owner 2026-10-07; exception to fancoils-off when the rack is hot |
 | Via from the burglar alarm (STORY_VIA_ANTIFURTO) | v0.95.0 | opt-in `switch.via_da_antifurto` |
 | Night band + wake pre-heat; Notte out of the house modes (STORY_NIGHT_SCHEDULE) | v0.96.0 | opt-in `switch.fascia_notturna`; #2b/VMC on `input_boolean.notte` |
+| Laundry drying: short purges via the lavanderia vasistas, heating kept on (STORY_LAUNDRY) | v0.97.0 | default ON `switch.laundry_drying`; replaces HA a/c 3 + 8 h safety |
 | BACKLOG: #7 radiant pre-heat (anticipatory) | — | home for the F4c planner in winter (the night band's wake pre-heat is its first piece) |
 

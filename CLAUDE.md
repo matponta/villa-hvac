@@ -203,6 +203,17 @@ do local bang-bang regulation.
   fan run (the reading swings ±1.5 °C within one run), and above t_high the
   dry-air relax is dropped and the head is pushed 1 °C under the setpoint (≥18;
   its own probe reads ~2 °C low) — reason `troppo_calda`.
+- **Laundry drying (v0.97.0, `STORY_LAUNDRY.md`)** — `LaundryController`
+  (`laundry.py`, pure `supervisor/laundry.py`), edge-triggered, outside the
+  arbiter, owns `cover.vasistas_lavanderia`: short PURGES while hung laundry
+  raises the room (RH ≥ 55 %, outside ≥ 1 g/m³ drier by absolute humidity, no
+  rain, room ≥ 17 °C; cold < 15 °C: 5–15 min open, 20 min rest), ends at RH ≤ 50.
+  The #4 window pause SKIPS our purges (`owns_purge`: radiant stays on — the
+  25/11 incident was a legacy automation that dropped its close + BP all night).
+  A hand opening is closed after 60 min when cold (8 h mild) + page. Default ON
+  `switch.laundry_drying`; OFF / HA stop / unload close only OUR purge. Store
+  `villa_hvac_laundry`. `sensor.lavanderia_asciugatura`. Deploy gate: disable
+  `automation.vasistas_lavanderia_a_c_3` + `close_laundry_vasistas_if_open_too_long`.
 - **Palestra damp (v0.90.0, `STORY_GYM_DAMP.md`)** — `GymDampController` (before
   `SplitGroupController`) drives the bagno-palestra dehumidifier plug
   (`switch.shellyplugsg3_9070694d542c`, Shelly-native ONLY — the same plug is also

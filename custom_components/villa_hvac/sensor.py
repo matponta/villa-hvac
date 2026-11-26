@@ -149,6 +149,8 @@ async def async_setup_entry(
     entities.append(GymDampSensor(coordinator, entry))
     entities.append(GymDampRhSensor(coordinator, entry))
     entities.append(GymDewPointSensor(coordinator, entry))
+    # v0.97.0 STORY_LAUNDRY: laundry drying through the lavanderia vasistas.
+    entities.append(LaundrySensor(coordinator, entry))
     # v0.95.0 STORY_VIA_ANTIFURTO: alarm -> Via episode, for debugging.
     entities.append(AlarmAwaySensor(coordinator, entry))
     # v0.96.0 STORY_NIGHT_SCHEDULE: the night band, per room.
@@ -236,6 +238,40 @@ class AlarmAwaySensor(SensorEntity):
         for key in ("armed_since", "fire_at"):
             if isinstance(v.get(key), datetime):
                 v[key] = dt_util.as_local(v[key]).isoformat()
+        return v
+
+
+class LaundrySensor(CoordinatorEntity[VillaHvacCoordinator], SensorEntity):
+    """v0.97.0: what the laundry controller is doing with the vasistas —
+    chiuso / pausa / ricambio / aperto_a_mano / fuori_umido / pioggia /
+    stanza_fredda / sensori_ko / vasistas_ignoto / spento."""
+
+    # "Lavanderia asciugatura" -> sensor.lavanderia_asciugatura
+    _attr_has_entity_name = True
+    _attr_name = "Lavanderia asciugatura"
+    _attr_icon = "mdi:tshirt-crew-outline"
+    _unrecorded_attributes = frozenset({
+        "room_temp", "room_rh", "outdoor_temp", "outdoor_rh", "ah_room",
+        "ah_outdoor", "rh_start", "rh_stop", "cold", "raining",
+    })
+
+    def __init__(self, coordinator, entry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_laundry_status"
+
+    @property
+    def _v(self) -> dict:
+        laundry = getattr(self.coordinator, "laundry", None)
+        return getattr(laundry, "view", None) or {}
+
+    @property
+    def native_value(self) -> str | None:
+        return self._v.get("reason")
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        v = dict(self._v)
+        v.pop("reason", None)
         return v
 
 

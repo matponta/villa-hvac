@@ -76,6 +76,7 @@ async def async_setup_entry(
         GovernorOptInSwitch(entry, "mass_maintenance", "Mass maintenance"),
         GovernorOptInSwitch(entry, "demand_shedding", "Demand shedding"),
         WinterSunSwitch(entry),
+        LaundryDryingSwitch(entry),
         GovernorOptInSwitch(entry, "pv_heat", "PV heating"),
     ]
     entities += [
@@ -1074,6 +1075,35 @@ class WinterSunSwitch(SwitchEntity, RestoreEntity):
     async def async_turn_off(self, **kwargs) -> None:
         self._attr_is_on = False
         self.async_write_ha_state()
+
+
+class LaundryDryingSwitch(WinterSunSwitch):
+    """v0.97.0 laundry drying (default ON, restored): the lavanderia vasistas
+    does short purges while hung laundry raises the room (outside drier, not
+    raining, room ≥ 17 °C), heating stays on during them, and an opening by
+    hand is closed after 60 min when it is cold outside (8 h when mild). OFF
+    closes a purge of ours and then leaves the vasistas alone."""
+
+    _attr_name = "Laundry drying"
+    _attr_icon = "mdi:tshirt-crew-outline"
+
+    def __init__(self, entry: VillaHvacConfigEntry) -> None:
+        super().__init__(entry)
+        self._attr_unique_id = f"{entry.entry_id}_laundry_drying"
+
+    async def async_turn_on(self, **kwargs) -> None:
+        await super().async_turn_on(**kwargs)
+        await self._nudge()
+
+    async def async_turn_off(self, **kwargs) -> None:
+        await super().async_turn_off(**kwargs)
+        await self._nudge()
+
+    async def _nudge(self) -> None:
+        """Decide at once (OFF closes a purge of ours without waiting a tick)."""
+        laundry = getattr(self._entry.runtime_data, "laundry", None)
+        if laundry is not None:
+            await laundry.async_evaluate()
 
 
 class ZonePvHeatSwitch(ZoneEconomySwitch):

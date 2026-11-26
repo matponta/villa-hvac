@@ -32,6 +32,7 @@ from .rack import P1GuardController, RackGuardController
 from .supervisor.mass import DemandShedController
 from .returnhome import ReturnHomeManager
 from .sungain import WinterSunController
+from .laundry import LaundryController
 from .cellar import CellarAlerts
 from .damp import GymDampAlerts
 from .vmc import VmcController
@@ -161,6 +162,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     coordinator.winter_sun = winter_sun
     await winter_sun.async_start()
     entry.async_on_unload(winter_sun.async_stop)
+    # v0.97.0 laundry drying: short purges through the lavanderia vasistas
+    # (default ON switch.laundry_drying + master). Edge-triggered, outside the
+    # arbiter; the #4 window pause skips its purges (heating stays on).
+    laundry = LaundryController(hass, entry)
+    coordinator.laundry = laundry
+    await laundry.async_start()
+    entry.async_on_unload(laundry.async_stop)
 
     # Safety hooks that config-entry *unload* does not cover:
     #  - HA shutdown/reboot fires EVENT_HOMEASSISTANT_STOP but does NOT run the
@@ -169,6 +177,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VillaHvacConfigEntry) ->
     async def _on_stop(_event: Event) -> None:
         await engine.async_fail_safe()
         await vmc.async_release()  # v0.86.0: a raised VMC speed/boost too
+        await laundry.async_release()  # v0.97.0: never leave a purge open
 
     entry.async_on_unload(
         hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _on_stop)

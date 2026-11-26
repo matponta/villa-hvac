@@ -1,5 +1,17 @@
 # Next session — kickstart prompts
 
+## v0.97.0 — laundry drying via the lavanderia vasistas (2026-11-26) — RELEASED, NOT DEPLOYED
+STORY_LAUNDRY.md. Incident 25–26/11: HA automation "Vasistas Lavanderia a/c 3"
+dropped its close (timer condition) → vasistas open 23:47→07:47, #4 held the
+room at BP all night. `LaundryController` (laundry.py, pure core
+supervisor/laundry.py) does short purges (RH ≥ 55 %, outside ≥ 1 g/m³ drier,
+no rain, room ≥ 17 °C; cold: ≤ 15 min open, 20 min rest), keeps the radiant
+ON during OUR purges (window pause skips them), closes a hand opening after
+60 min when cold (+ page). Default ON `switch.laundry_drying`; debug
+`sensor.lavanderia_asciugatura`. **Deploy gate:** disable
+`automation.vasistas_lavanderia_a_c_3` + `automation.close_laundry_vasistas_
+if_open_too_long`. Then watch the first laundry day (purges_today, RH curve).
+
 ## v0.96.0 — night band + wake pre-heat, Notte out of the modes (2026-11-23) — RELEASED, NOT DEPLOYED
 STORY_NIGHT_SCHEDULE.md. `select.house_mode` = Casa/Via/Vacanza. In Casa,
 `switch.fascia_notturna` (default OFF) trims every room by the season night

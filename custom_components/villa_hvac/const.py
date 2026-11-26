@@ -979,6 +979,20 @@ WINTER_SUN_CLOSE_RETRIES = 10        # failed put-backs retried per cover
 WINTER_SUN_DIM_CLOSE_MIN = 30        # min under the threshold before the put-back
 WINTER_SUN_MAX_OPENS = 3             # opens per cover per local day
 WINTER_SUN_RAIN_RATE = 0.1           # mm/h (gw3000a) at/above = raining: put back, no open
+# v0.97.0 laundry drying (switch.laundry_drying, default ON; STORY_LAUNDRY.md):
+# the lavanderia vasistas does short purges while hung laundry raises the room,
+# heating stays on during OUR purges, an opening by hand is capped (60 min when
+# cold). Replaces the HA automations "Vasistas Lavanderia a/c 3" + "Close
+# laundry vasistas if open too long" (disable both at deploy). Thresholds and
+# timings are the pure-core defaults (`supervisor/laundry.py` LaundryParams).
+LAUNDRY_ZONE = "lavanderia"
+LAUNDRY_VASISTAS = "cover.vasistas_lavanderia"
+LAUNDRY_RH = "sensor.umidita_lavanderia"        # KNX thermostat RH (GA 1.3.86)
+LAUNDRY_TEMP = "sensor.clima_lavanderia"        # KNX thermostat temperature
+LAUNDRY_SENSOR_STALE = timedelta(minutes=30)    # both report every ~5 min
+LAUNDRY_RAIN_RATE = 0.1                          # mm/h (gw3000a) at/above = raining
+LAUNDRY_ALERT_TAG = "villa_hvac_laundry"
+LAUNDRY_CLOSE_RETRIES = 10   # a close that keeps failing: give up + WARN
 SHADE_POSITION_TOLERANCE = 4.0  # ±position counts as "there" (covers don't land exact)
 SHADING_MIN_ELEVATION = 5.0     # deg: sun must be this far above the horizon
 SHADING_ORIENTATIONS = ("north", "east", "south", "west")
