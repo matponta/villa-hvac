@@ -1,6 +1,6 @@
 # Next session — kickstart prompts
 
-## v0.97.0 — laundry drying via the lavanderia vasistas (2026-11-26) — RELEASED, NOT DEPLOYED
+## v0.97.0 — laundry drying via the lavanderia vasistas (2026-11-26) — DEPLOYED 26/11 12:15 (with v0.95 + v0.96)
 STORY_LAUNDRY.md. Incident 25–26/11: HA automation "Vasistas Lavanderia a/c 3"
 dropped its close (timer condition) → vasistas open 23:47→07:47, #4 held the
 room at BP all night. `LaundryController` (laundry.py, pure core
@@ -10,9 +10,9 @@ ON during OUR purges (window pause skips them), closes a hand opening after
 60 min when cold (+ page). Default ON `switch.laundry_drying`; debug
 `sensor.lavanderia_asciugatura`. **Deploy gate:** disable
 `automation.vasistas_lavanderia_a_c_3` + `automation.close_laundry_vasistas_
-if_open_too_long`. Then watch the first laundry day (purges_today, RH curve).
+if_open_too_long` — DONE 26/11. Watch the first laundry day (purges_today, RH curve).
 
-## v0.96.0 — night band + wake pre-heat, Notte out of the modes (2026-11-23) — RELEASED, NOT DEPLOYED
+## v0.96.0 — night band + wake pre-heat, Notte out of the modes (2026-11-23) — DEPLOYED 26/11, Fase C DONE (see STORY)
 STORY_NIGHT_SCHEDULE.md. `select.house_mode` = Casa/Via/Vacanza. In Casa,
 `switch.fascia_notturna` (default OFF) trims every room by the season night
 offset inside `time.fascia_notturna_inizio/fine` (21:30→07:00; summer pair
@@ -33,7 +33,7 @@ as proposed in "Aperto", editable). Summer lead from the summer model is NOT
 implemented (no room is planner-eligible yet): fixed 30 min.
 Not done in the repo: the PDF manual.
 
-## v0.95.0 — Via from the burglar alarm (2026-11-23) — RELEASED, NOT DEPLOYED
+## v0.95.0 — Via from the burglar alarm (2026-11-23) — DEPLOYED 26/11 (switch.via_da_antifurto still OFF)
 STORY_VIA_ANTIFURTO.md. `AlarmAwayController` (away.py): episode = mirror
 `input_select.antifurto_ajax_ultimo_stato` == `Inserito`; once per episode,
 after the season delay (summer 30 min, winter 8 h — `number.via_da_antifurto_
