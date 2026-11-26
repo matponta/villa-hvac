@@ -109,9 +109,9 @@ ripristino select da "Notte"; escalation away senza Notte; passaggio d'ora legal
 
 ## Fase C — checklist lato HA (sessione chat, la sera del deploy, prima delle 21:30)
 **Fatta il 26/11/2026 (deploy v0.97.0, Claude Code):** punti 1–5 e 7 fatti; in più
-Notte tolta anche dal bridge di ritorno e da `script.arrivo_apri_casa`. Punto 6
-(eliminare le automazioni legacy disabilitate) in attesa di Mattia; punto 8 = la
-prima notte in Casa.
+Notte tolta anche dal bridge di ritorno e da `script.arrivo_apri_casa`. Punto 6:
+le 4 automazioni legacy `clima_*` eliminate il 26/11 su OK di Mattia (backup in
+`legacy_automations_clima_notte_2026-11-26.json`); punto 8 = la prima notte in Casa.
 1. Deploy + restart; accendere `switch.fascia_notturna`; controllare
    `sensor.fascia_notturna` (inizio/fine, sveglia, lead per stanza).
 2. `automation.spegni_tutto_e_chiudi` (Buonanotte): `input_select.modalita_casa`
